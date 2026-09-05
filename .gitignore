@@ -1,0 +1,9 @@
+Source/bin/
+Source/obj/
+Tests/**/bin/
+Tests/**/obj/
+.vs/
+*.user
+*.suo
+1.6/Assemblies/*
+!1.6/Assemblies/.gitkeep

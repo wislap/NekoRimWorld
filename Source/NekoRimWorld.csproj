@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Deterministic>true</Deterministic>
+    <DebugType>portable</DebugType>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>..\1.6\Assemblies\</OutputPath>
+    <AssemblyName>NekoRimWorld</AssemblyName>
+    <RootNamespace>Neko.RimWorld</RootNamespace>
+    <Version>0.1.0</Version>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Krafs.Rimworld.Ref" Version="1.6.4871" />
+    <PackageReference Include="Lib.Harmony.Ref" Version="2.4.1" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472"
+                      Version="1.0.3"
+                      PrivateAssets="all" />
+  </ItemGroup>
+</Project>

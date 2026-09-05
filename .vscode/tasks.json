@@ -1,0 +1,48 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build N.E.K.O RimWorld Mod",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/../../scripts/Build-RimWorldMod.ps1"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Verify RimWorld Dev Environment",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/../../scripts/Test-RimWorldDevEnv.ps1"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Launch RimWorld Dev Quicktest",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/../../scripts/Start-RimWorldDev.ps1"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

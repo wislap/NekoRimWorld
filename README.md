@@ -112,3 +112,7 @@ Compile-time target remains RimWorld 1.6.4871 / net472. Restart the game after
 rebuilding; an already running Unity process keeps its previously loaded DLL.
 Native Thing and component regressions run in Tests/BridgeSmoke/ThingQueryTests.cs;
 these deterministic tests do not replace in-game Mod compatibility validation.
+
+## License
+
+[MIT](LICENSE). Third-party dependencies retain their respective licenses.

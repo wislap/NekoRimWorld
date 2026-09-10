@@ -11,11 +11,13 @@
     <OutputPath>..\1.6\Assemblies\</OutputPath>
     <AssemblyName>NekoRimWorld</AssemblyName>
     <RootNamespace>Neko.RimWorld</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>1.0.0</Version>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="GraphQL.NewtonsoftJson" Version="8.8.4" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Krafs.Rimworld.Ref" Version="1.6.4871" />
     <PackageReference Include="Lib.Harmony.Ref" Version="2.4.1" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472"

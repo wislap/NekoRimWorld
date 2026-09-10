@@ -3,7 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.Serialization;
-using System.Runtime.Serialization.Json;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Security.Cryptography;
 using System.Text;
 namespace Neko.RimWorld;
@@ -52,7 +53,7 @@ public sealed class ProtocolException : Exception
 
 public static class ProtocolAuthentication
 {
-    public const string Domain = "neko-rimworld-bridge/v1";
+    public const string Domain = "neko-rimworld-bridge/v2";
     public const int HexLength = 64;
     public static string GenerateNonce()
     {
@@ -147,7 +148,7 @@ public sealed class SessionDescriptor
     public long SnapshotSequence { get; set; }
 }
 [DataContract]
-public sealed class ProtocolPayload : IExtensibleDataObject
+public sealed class ProtocolPayload
 {
     [DataMember(Name = "mod_version", Order = 0, EmitDefaultValue = false)] public string? ModVersion { get; set; }
     [DataMember(Name = "game_version", Order = 1, EmitDefaultValue = false)] public string? GameVersion { get; set; }
@@ -155,104 +156,26 @@ public sealed class ProtocolPayload : IExtensibleDataObject
     [DataMember(Name = "client_nonce", Order = 3, EmitDefaultValue = false)] public string? ClientNonce { get; set; }
     [DataMember(Name = "server_nonce", Order = 4, EmitDefaultValue = false)] public string? ServerNonce { get; set; }
     [DataMember(Name = "proof", Order = 5, EmitDefaultValue = false)] public string? Proof { get; set; }
-    [DataMember(Name = "query", Order = 6, EmitDefaultValue = false)] public string? Query { get; set; }
+    [DataMember(Name = "operation", Order = 6, EmitDefaultValue = false)] public string? Operation { get; set; }
+    [DataMember(Name = "arguments", Order = 12, EmitDefaultValue = false)] public JObject? Arguments { get; set; }
+    [DataMember(Name = "issues", Order = 13, EmitDefaultValue = false)] public QueryIssue[]? Issues { get; set; }
+    [DataMember(Name = "execution", Order = 14, EmitDefaultValue = false)] public JObject? Execution { get; set; }
     [DataMember(Name = "status", Order = 7, EmitDefaultValue = false)] public string? Status { get; set; }
-    [DataMember(Name = "data", Order = 8, EmitDefaultValue = false)] public QueryDataDto? Data { get; set; }
+    [DataMember(Name = "data", Order = 8, EmitDefaultValue = false)] public JObject? Data { get; set; }
     [DataMember(Name = "error_code", Order = 9, EmitDefaultValue = false)] public string? ErrorCode { get; set; }
     [DataMember(Name = "message", Order = 10, EmitDefaultValue = false)] public string? Message { get; set; }
     [DataMember(Name = "reason", Order = 11, EmitDefaultValue = false)] public string? Reason { get; set; }
-    public ExtensionDataObject? ExtensionData { get; set; }
 }
 [DataContract]
-
-public sealed class QueryDataDto : IExtensibleDataObject
+public sealed class QueryIssue
 {
-    public const string ColonyDigestKind = "colony_digest";
-    public QueryDataDto()
-    {
-        Kind = string.Empty;
-        Omissions = Array.Empty<QueryOmissionDto>();
-    }
-    [DataMember(Name = "kind", Order = 0, IsRequired = true)] public string Kind { get; set; }
-    [DataMember(Name = "colony_digest", Order = 1, EmitDefaultValue = false)] public ColonyDigestDto? ColonyDigest { get; set; }
-    [DataMember(Name = "omissions", Order = 2, IsRequired = true)] public QueryOmissionDto[] Omissions { get; set; }
-    public ExtensionDataObject? ExtensionData { get; set; }
-    public static QueryDataDto FromColonyDigest(
-        ColonyDigestDto digest,
-        QueryOmissionDto[]? omissions = null) =>
-        new QueryDataDto
-        {
-            Kind = ColonyDigestKind,
-            ColonyDigest = digest ?? throw new ArgumentNullException(nameof(digest)),
-            Omissions = omissions ?? Array.Empty<QueryOmissionDto>(),
-        };
+    [DataMember(Name = "code", IsRequired = true)] public string Code { get; set; } = "";
+    [DataMember(Name = "path", IsRequired = true)] public JArray Path { get; set; } = new JArray();
+    [DataMember(Name = "message", EmitDefaultValue = false)] public string? Message { get; set; }
+    [DataMember(Name = "omitted_count", EmitDefaultValue = false)] public int? OmittedCount { get; set; }
 }
 [DataContract]
-public sealed class QueryOmissionDto
-{
-    public QueryOmissionDto()
-    {
-        Scope = string.Empty;
-        Code = string.Empty;
-    }
-    [DataMember(Name = "scope", Order = 0, IsRequired = true)] public string Scope { get; set; }
-    [DataMember(Name = "code", Order = 1, IsRequired = true)] public string Code { get; set; }
-    [DataMember(Name = "omitted_count", Order = 2, IsRequired = true)] public int OmittedCount { get; set; }
-    [DataMember(Name = "message", Order = 3, EmitDefaultValue = false)] public string? Message { get; set; }
-}
-[DataContract]
-
-public sealed class ColonyDigestDto
-{
-    public ColonyDigestDto() => Maps = Array.Empty<MapDigestDto>();
-    [DataMember(Name = "game_tick", Order = 0, IsRequired = true)] public long GameTick { get; set; }
-    [DataMember(Name = "paused", Order = 1, IsRequired = true)] public bool Paused { get; set; }
-    [DataMember(Name = "snapshot_sequence", Order = 2, IsRequired = true)] public long SnapshotSequence { get; set; }
-    [DataMember(Name = "has_visible_threat", Order = 3, IsRequired = true)] public bool HasVisibleThreat { get; set; }
-    [DataMember(Name = "current_map_id", Order = 4, EmitDefaultValue = false)] public string? CurrentMapId { get; set; }
-    [DataMember(Name = "map_count", Order = 5, IsRequired = true)] public int MapCount { get; set; }
-    [DataMember(Name = "maps", Order = 6, IsRequired = true)] public MapDigestDto[] Maps { get; set; }
-}
-[DataContract]
-public sealed class MapDigestDto
-{
-    public MapDigestDto()
-    {
-        Id = string.Empty;
-        Label = string.Empty;
-        FreeColonistsSpawned = Array.Empty<PawnDigestDto>();
-    }
-    [DataMember(Name = "id", Order = 0, IsRequired = true)] public string Id { get; set; }
-    [DataMember(Name = "index", Order = 1, IsRequired = true)] public int Index { get; set; }
-    [DataMember(Name = "label", Order = 2, IsRequired = true)] public string Label { get; set; }
-    [DataMember(Name = "is_current", Order = 3, IsRequired = true)] public bool IsCurrent { get; set; }
-    [DataMember(Name = "is_player_home", Order = 4, IsRequired = true)] public bool IsPlayerHome { get; set; }
-    [DataMember(Name = "has_visible_threat", Order = 5, IsRequired = true)] public bool HasVisibleThreat { get; set; }
-    [DataMember(Name = "free_colonist_count", Order = 6, IsRequired = true)] public int FreeColonistCount { get; set; }
-    [DataMember(Name = "free_colonists_spawned", Order = 7, IsRequired = true)] public PawnDigestDto[] FreeColonistsSpawned { get; set; }
-}
-[DataContract]
-public sealed class PawnDigestDto
-{
-    public PawnDigestDto()
-    {
-        Id = string.Empty;
-        Label = string.Empty;
-    }
-    [DataMember(Name = "id", Order = 0, IsRequired = true)] public string Id { get; set; }
-    [DataMember(Name = "label", Order = 1, IsRequired = true)] public string Label { get; set; }
-    [DataMember(Name = "downed", Order = 2, IsRequired = true)] public bool Downed { get; set; }
-    [DataMember(Name = "drafted", Order = 3, IsRequired = true)] public bool Drafted { get; set; }
-    [DataMember(Name = "in_mental_state", Order = 4, IsRequired = true)] public bool InMentalState { get; set; }
-    [DataMember(Name = "health_percent", Order = 5, EmitDefaultValue = false)] public double? HealthPercent { get; set; }
-    [DataMember(Name = "job", Order = 6, EmitDefaultValue = false)] public string? Job { get; set; }
-    [DataMember(Name = "mental_state", Order = 7, EmitDefaultValue = false)] public string? MentalState { get; set; }
-    [DataMember(Name = "mood", Order = 8, EmitDefaultValue = false)] public double? Mood { get; set; }
-    [DataMember(Name = "food", Order = 9, EmitDefaultValue = false)] public double? Food { get; set; }
-    [DataMember(Name = "rest", Order = 10, EmitDefaultValue = false)] public double? Rest { get; set; }
-}
-[DataContract]
-public sealed class ProtocolEnvelope : IExtensibleDataObject
+public sealed class ProtocolEnvelope
 {
     public ProtocolEnvelope()
     {
@@ -276,7 +199,6 @@ public sealed class ProtocolEnvelope : IExtensibleDataObject
     [DataMember(Name = "game_tick", Order = 7, IsRequired = true)] public long GameTick { get; set; }
     [DataMember(Name = "snapshot_sequence", Order = 8, IsRequired = true)] public long SnapshotSequence { get; set; }
     [DataMember(Name = "payload", Order = 9, IsRequired = true)] public ProtocolPayload Payload { get; set; }
-    public ExtensionDataObject? ExtensionData { get; set; }
     public static ProtocolEnvelope Create(
         string type,
         string connectionEpoch,
@@ -352,16 +274,18 @@ public sealed class ProtocolEnvelope : IExtensibleDataObject
         long sequence,
         SessionDescriptor session,
         string status,
-        QueryDataDto? data = null,
+        JObject? data = null,
+        QueryIssue[]? issues = null,
         string? errorCode = null,
-        string? message = null)
+        string? message = null,
+        JObject? execution = null)
     {
         if (request is null) throw new ArgumentNullException(nameof(request));
         return Create(
             ProtocolMessageTypes.QueryResult,
             connectionEpoch,
             sequence,
-            new ProtocolPayload { Status = status, Data = data, ErrorCode = errorCode, Message = message },
+            new ProtocolPayload { Status = status, Data = data, Issues = issues ?? Array.Empty<QueryIssue>(), Execution = execution, ErrorCode = errorCode, Message = message },
             session,
             request.RequestId);
     }
@@ -393,28 +317,28 @@ public sealed class ProtocolEnvelope : IExtensibleDataObject
 
 public static class ProtocolCodec
 {
-    public const int Version = 1;
+    public const int Version = 2;
     public const int MaxFrameBytes = 1024 * 1024;
     public const int MaxInboundFrameBytes = 64 * 1024;
     private const int HeaderBytes = 4;
-    private const int MaxJsonDepth = 16;
+    private const int MaxJsonDepth = 32;
     private const int MaxItems = 65_536;
     private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
     private const int ModVersionField = 1 << 0, GameVersionField = 1 << 1;
     private const int CapabilitiesField = 1 << 2, ClientNonceField = 1 << 3;
     private const int ServerNonceField = 1 << 4, ProofField = 1 << 5, QueryField = 1 << 6;
     private const int StatusField = 1 << 7, DataField = 1 << 8, ErrorCodeField = 1 << 9;
-    private const int MessageField = 1 << 10, ReasonField = 1 << 11;
+    private const int MessageField = 1 << 10, ReasonField = 1 << 11, ArgumentsField = 1 << 12, IssuesField = 1 << 13, ExecutionField = 1 << 14;
     public static byte[] Serialize(ProtocolEnvelope envelope)
     {
         Validate(envelope);
         try
         {
-            using var stream = new MemoryStream();
-            Serializer().WriteObject(stream, envelope);
-            if (stream.Length == 0) throw Error(ProtocolErrorCodes.InvalidJson, "Empty JSON output.");
-            if (stream.Length > MaxFrameBytes) throw TooLarge(stream.Length);
-            return stream.ToArray();
+            var token = JObject.FromObject(envelope, Serializer());
+            ValidateTree(token);
+            var bytes = Utf8.GetBytes(token.ToString(Formatting.None));
+            if (bytes.Length > MaxFrameBytes) throw TooLarge(bytes.Length);
+            return bytes;
         }
         catch (ProtocolException) { throw; }
         catch (Exception exception) when (IsCodecException(exception))
@@ -431,8 +355,11 @@ public static class ProtocolCodec
         {
             var json = Utf8.GetString(jsonBytes);
             ValidateJsonShape(json);
-            using var stream = new MemoryStream(Utf8.GetBytes(json), false);
-            var envelope = Serializer().ReadObject(stream) as ProtocolEnvelope
+            using var reader = new JsonTextReader(new StringReader(json)) { DateParseHandling = DateParseHandling.None, MaxDepth = MaxJsonDepth };
+            var tree = JObject.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error, CommentHandling = CommentHandling.Load });
+            ValidateTree(tree);
+            ValidateWireTypes(tree);
+            var envelope = tree.ToObject<ProtocolEnvelope>(Serializer())
                 ?? throw Error(ProtocolErrorCodes.InvalidEnvelope, "JSON root is not an envelope.");
             Validate(envelope);
             return envelope;
@@ -516,7 +443,7 @@ public static class ProtocolCodec
         if (envelope.Version != Version)
             throw Error(ProtocolErrorCodes.UnsupportedVersion, $"Expected protocol v{Version}.");
         if (!IsKnownMessageType(envelope.Type))
-            throw Field("type", "is not a protocol v1 message type");
+            throw Field("type", "is not a protocol v2 message type");
         ValidateGuid(envelope.ConnectionEpoch, "connection_epoch", true);
         ValidateGuid(envelope.ColonyId, "colony_id", false);
         ValidateGuid(envelope.LoadEpoch, "load_epoch", false);
@@ -524,7 +451,6 @@ public static class ProtocolCodec
         if (envelope.Sequence < 0) throw Field("seq", "must be non-negative");
         if (envelope.GameTick < -1) throw Field("game_tick", "must be -1 or greater");
         if (envelope.SnapshotSequence < -1) throw Field("snapshot_sequence", "must be -1 or greater");
-        RejectUnknown(envelope, "Unknown envelope field.");
         var hasSession = envelope.ColonyId.Length != 0;
         if (hasSession != (envelope.LoadEpoch.Length != 0))
             throw Field("load_epoch", "must be present exactly when colony_id is present");
@@ -546,7 +472,6 @@ public static class ProtocolCodec
     private static void ValidatePayload(ProtocolEnvelope envelope)
     {
         var payload = envelope.Payload;
-        RejectUnknown(payload, "Unknown payload field.");
         var present = PresentFields(payload);
         var allowed = AllowedFields(envelope.Type);
         if ((present & ~allowed) != 0) throw Payload($"Payload contains a field not allowed for {envelope.Type}.");
@@ -572,7 +497,8 @@ public static class ProtocolCodec
                 Required(payload.Reason, "reason", 256);
                 break;
             case ProtocolMessageTypes.QueryRequest:
-                Required(payload.Query, "query", 128);
+                Required(payload.Operation, "operation", 128);
+                if (payload.Arguments is null) throw Payload("arguments must be an object.");
                 break;
             case ProtocolMessageTypes.QueryResult:
                 ValidateQueryResult(payload, envelope);
@@ -595,104 +521,90 @@ public static class ProtocolCodec
         {
             Required(payload.ErrorCode, "error_code", 128);
             Required(payload.Message, "message", 2048);
+            if (payload.Issues is null || payload.Issues.Length > 256) throw Payload("issues is required.");
+            ValidateIssues(payload.Issues);
             return;
         }
         if (payload.ErrorCode is not null) Required(payload.ErrorCode, "error_code", 128);
         if (payload.Message is not null) Required(payload.Message, "message", 2048);
-        var data = payload.Data!;
-        RejectUnknown(data, "Unknown query data field.");
-        Required(data.Kind, "data.kind", 64);
-        if (data.Kind != QueryDataDto.ColonyDigestKind || data.ColonyDigest is null)
-            throw Payload("data must contain exactly the declared one-of value.");
-        if (data.Omissions is null || data.Omissions.Length > 256)
-            throw Payload("data.omissions must contain at most 256 entries.");
-        var isPartial = payload.Status == ProtocolStatuses.Partial;
-        if (isPartial != (data.Omissions.Length != 0))
-            throw Payload("partial status requires omissions; ok status forbids them.");
-        foreach (var omission in data.Omissions)
-        {
-            if (omission is null) throw Payload("Invalid omission entry.");
-            Required(omission.Scope, "omission.scope", 256);
-            Required(omission.Code, "omission.code", 128);
-            if (omission.OmittedCount <= 0) throw Payload("omitted_count must be positive.");
-            if (omission.Message is not null) Required(omission.Message, "omission.message", 512);
-        }
-        ValidateDigest(data.ColonyDigest, envelope, isPartial);
+        if (payload.Issues is null || payload.Issues.Length > 256)
+            throw Payload("issues must be an array of at most 256 entries.");
+        if ((payload.Status == ProtocolStatuses.Partial) != (payload.Issues.Length > 0))
+            throw Payload("partial requires issues; ok forbids issues.");
+        ValidateIssues(payload.Issues);
     }
-    private static void ValidateDigest(
-        ColonyDigestDto digest,
-        ProtocolEnvelope envelope,
-        bool partial)
+    private static void ValidateIssues(QueryIssue[] issues)
     {
-        if (digest.GameTick < 0 || digest.SnapshotSequence < 0)
-            throw Payload("Digest counters must be non-negative.");
-        if (digest.GameTick != envelope.GameTick || digest.SnapshotSequence != envelope.SnapshotSequence)
-            throw Payload("Digest counters must match the envelope.");
-        if (digest.CurrentMapId is not null) Required(digest.CurrentMapId, "current_map_id", 256);
-        if (digest.MapCount < 0 || digest.Maps is null || digest.Maps.Length > digest.MapCount ||
-            digest.Maps.Length > 1024 || (!partial && digest.Maps.Length != digest.MapCount))
-            throw Payload("Map count and returned maps are inconsistent.");
-        var currentMaps = 0;
-        foreach (var map in digest.Maps)
+        foreach (var issue in issues)
         {
-            if (map is null) throw Payload("Invalid map entry.");
-            Required(map.Id, "map.id", 256);
-            Required(map.Label, "map.label", 512);
-            if (map.IsCurrent)
+            if (issue is null) throw Payload("Invalid issue.");
+            Required(issue.Code, "issue.code", 128);
+            if (issue.Path is null || issue.Path.Count > MaxJsonDepth) throw Payload("Invalid issue.path.");
+            foreach (var part in issue.Path)
             {
-                currentMaps++;
-                if (map.Id != digest.CurrentMapId) throw Payload("The current map must match current_map_id.");
+                if (part.Type == JTokenType.String) Required((string?)part, "path", 256);
+                else if (part.Type != JTokenType.Integer || (long)part < 0 || (long)part > int.MaxValue)
+                    throw Payload("Invalid issue path segment.");
             }
-            if (map.Index < 0 || map.FreeColonistCount < 0 || map.FreeColonistsSpawned is null ||
-                map.FreeColonistsSpawned.Length > map.FreeColonistCount ||
-                map.FreeColonistsSpawned.Length > 4096 ||
-                (!partial && map.FreeColonistsSpawned.Length != map.FreeColonistCount))
-                throw Payload("Free-colonist count and returned pawns are inconsistent.");
-            foreach (var pawn in map.FreeColonistsSpawned)
-            {
-                if (pawn is null) throw Payload("Invalid pawn entry.");
-                Required(pawn.Id, "pawn.id", 256);
-                Required(pawn.Label, "pawn.label", 512);
-                if (pawn.HealthPercent.HasValue) Fraction(pawn.HealthPercent.Value, "health_percent");
-                Optional(pawn.Job, "job", 256);
-                Optional(pawn.MentalState, "mental_state", 256);
-                if (pawn.Mood.HasValue) Fraction(pawn.Mood.Value, "mood");
-                if (pawn.Food.HasValue) Fraction(pawn.Food.Value, "food");
-                if (pawn.Rest.HasValue) Fraction(pawn.Rest.Value, "rest");
-            }
+            if (issue.Message is not null) Required(issue.Message, "issue.message", 512);
+            if (issue.OmittedCount.HasValue && issue.OmittedCount <= 0) throw Payload("Invalid omitted_count.");
         }
-        if (currentMaps > 1) throw Payload("At most one returned map may be current.");
-        if (!partial && digest.CurrentMapId is not null && currentMaps != 1)
-            throw Payload("current_map_id must identify the current returned map.");
     }
-    private static DataContractJsonSerializer Serializer() => Serializer(typeof(ProtocolEnvelope));
-    private static DataContractJsonSerializer Serializer(Type type) =>
-        new DataContractJsonSerializer(type, new DataContractJsonSerializerSettings
+    private static JsonSerializer Serializer() => JsonSerializer.Create(new JsonSerializerSettings
+    {
+        MissingMemberHandling = MissingMemberHandling.Error,
+        DateParseHandling = DateParseHandling.None,
+        TypeNameHandling = TypeNameHandling.None,
+        MetadataPropertyHandling = MetadataPropertyHandling.Ignore,
+        MaxDepth = MaxJsonDepth,
+    });
+    private static void ValidateWireTypes(JObject root)
+    {
+        void Types(JObject obj, string[] fields, JTokenType type)
         {
-            UseSimpleDictionaryFormat = true,
-            EmitTypeInformation = EmitTypeInformation.Never,
-            MaxItemsInObjectGraph = MaxItems,
-        });
-    private static void RejectUnknown(IExtensibleDataObject value, string message)
-    {
-        if (value.ExtensionData is null) return;
-        var withExtension = SerializeContract(value);
-        value.ExtensionData = null;
-        var withoutExtension = SerializeContract(value);
-        if (!Equal(withExtension, withoutExtension)) throw Payload(message);
+            foreach (var field in fields)
+                if (obj.TryGetValue(field, out var value) && value.Type != type)
+                    throw Payload($"{field} has an invalid JSON type.");
+        }
+        Types(root, new[] { "v", "seq", "game_tick", "snapshot_sequence" }, JTokenType.Integer);
+        Types(root, new[] { "type", "connection_epoch", "colony_id", "load_epoch", "request_id" }, JTokenType.String);
+        if (root["payload"] is not JObject payload) throw Payload("payload must be an object.");
+        Types(payload, new[] { "operation", "status", "error_code", "message", "reason", "mod_version", "game_version", "client_nonce", "server_nonce", "proof" }, JTokenType.String);
+        Types(payload, new[] { "arguments", "data", "execution" }, JTokenType.Object);
+        Types(payload, new[] { "issues", "capabilities" }, JTokenType.Array);
+        if (payload["capabilities"] is JArray capabilities)
+            foreach (var item in capabilities) if (item.Type != JTokenType.String) throw Payload("capability must be text.");
+        if (payload["issues"] is JArray issues)
+            foreach (var item in issues)
+            {
+                if (item is not JObject issue) throw Payload("issue must be an object.");
+                Types(issue, new[] { "code", "message" }, JTokenType.String);
+                Types(issue, new[] { "omitted_count" }, JTokenType.Integer);
+                Types(issue, new[] { "path" }, JTokenType.Array);
+            }
     }
-    private static byte[] SerializeContract(object value)
+    private static void ValidateTree(JToken root)
     {
-        using var stream = new MemoryStream();
-        Serializer(value.GetType()).WriteObject(stream, value);
-        return stream.ToArray();
-    }
-    private static bool Equal(byte[] left, byte[] right)
-    {
-        if (left.Length != right.Length) return false;
-        var difference = 0;
-        for (var index = 0; index < left.Length; index++) difference |= left[index] ^ right[index];
-        return difference == 0;
+        var count = 0;
+        void Visit(JToken value, int depth)
+        {
+            if (++count > MaxItems || depth > MaxJsonDepth) throw Payload("JSON resource limit exceeded.");
+            if (value is JObject obj)
+            {
+                foreach (var property in obj.Properties()) { count++; Visit(property.Value, depth + 1); }
+            }
+            else if (value is JArray array) foreach (var item in array) Visit(item, depth + 1);
+            else if (value.Type == JTokenType.Float)
+            {
+                var number = (double)value;
+                if (double.IsNaN(number) || double.IsInfinity(number)) throw Payload("Non-finite JSON number.");
+            }
+            else if (value.Type != JTokenType.String && value.Type != JTokenType.Integer &&
+                     value.Type != JTokenType.Boolean && value.Type != JTokenType.Null)
+                throw Payload("Unsupported JSON value.");
+        }
+        Visit(root, 1);
+        if (count > MaxItems) throw Payload("JSON resource limit exceeded.");
     }
     private static void ValidateJsonShape(string json)
     {
@@ -750,7 +662,10 @@ public static class ProtocolCodec
         if (payload.ClientNonce is not null) fields |= ClientNonceField;
         if (payload.ServerNonce is not null) fields |= ServerNonceField;
         if (payload.Proof is not null) fields |= ProofField;
-        if (payload.Query is not null) fields |= QueryField;
+        if (payload.Operation is not null) fields |= QueryField;
+        if (payload.Arguments is not null) fields |= ArgumentsField;
+        if (payload.Issues is not null) fields |= IssuesField;
+        if (payload.Execution is not null) fields |= ExecutionField;
         if (payload.Status is not null) fields |= StatusField;
         if (payload.Data is not null) fields |= DataField;
         if (payload.ErrorCode is not null) fields |= ErrorCodeField;
@@ -766,9 +681,9 @@ public static class ProtocolCodec
             return ClientNonceField | ServerNonceField | ProofField;
         if (type == ProtocolMessageTypes.Welcome) return StatusField;
         if (type == ProtocolMessageTypes.SessionStale) return ReasonField;
-        if (type == ProtocolMessageTypes.QueryRequest) return QueryField;
+        if (type == ProtocolMessageTypes.QueryRequest) return QueryField | ArgumentsField;
         if (type == ProtocolMessageTypes.QueryResult)
-            return StatusField | DataField | ErrorCodeField | MessageField;
+            return StatusField | DataField | IssuesField | ExecutionField | ErrorCodeField | MessageField;
         if (type == ProtocolMessageTypes.ProtocolError)
             return ErrorCodeField | MessageField;
         return 0;
@@ -825,13 +740,8 @@ public static class ProtocolCodec
         if (!ProtocolAuthentication.IsCanonicalHex(value))
             throw Payload($"{field} must be 64 lowercase hexadecimal characters.");
     }
-    private static void Fraction(double value, string field)
-    {
-        if (double.IsNaN(value) || double.IsInfinity(value) || value < 0 || value > 1)
-            throw Payload($"{field} must be a finite number from 0 to 1.");
-    }
     private static bool IsCodecException(Exception exception) =>
-        exception is SerializationException || exception is InvalidDataContractException ||
+        exception is JsonException || exception is OverflowException || exception is SerializationException || exception is InvalidDataContractException ||
         exception is DecoderFallbackException || exception is ArgumentException;
     private static ProtocolException Field(string name, string reason) =>
         Error(ProtocolErrorCodes.InvalidField, $"Envelope field '{name}' {reason}.");

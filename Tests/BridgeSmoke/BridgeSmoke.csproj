@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net472</TargetFramework>
+    <TargetFrameworks>net472;net8.0</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
@@ -10,6 +10,17 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="..\..\Source\ResourceReports.cs" Link="ResourceReports.cs" />
+    <Compile Include="..\..\Source\ThingSchema.cs" Link="ThingSchema.cs" />
+    <Compile Include="..\..\Source\PawnSchema.cs" Link="PawnSchema.cs" />
+    <Compile Include="..\..\Source\QueryArguments.cs" Link="QueryArguments.cs" />
+    <Compile Include="..\..\Source\QueryExecution.cs" Link="QueryExecution.cs" />
+    <Compile Include="..\..\Source\GameData.cs" Link="GameData.cs" />
+    <Compile Include="..\..\Source\GameQueryEngine.cs" Link="GameQueryEngine.cs" />
+    <Compile Include="..\..\Source\TemplateCatalog.cs" Link="TemplateCatalog.cs" />
+
+    <PackageReference Include="GraphQL.NewtonsoftJson" Version="8.8.4" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Compile Include="..\..\Source\Protocol.cs" Link="Protocol.cs" />
     <Compile Include="..\..\Source\BridgeRuntime.cs" Link="BridgeRuntime.cs" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472"

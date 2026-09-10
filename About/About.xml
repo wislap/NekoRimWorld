@@ -3,7 +3,7 @@
   <name>N.E.K.O RimWorld Bridge (Dev)</name>
   <author>N.E.K.O Team</author>
   <packageId>neko.rimworld.bridge</packageId>
-  <modVersion>0.1.0-dev</modVersion>
+  <modVersion>1.0.0</modVersion>
   <supportedVersions>
     <li>1.6</li>
   </supportedVersions>
@@ -21,6 +21,7 @@
   <description>
 Read-only development bridge between RimWorld and N.E.K.O. This build provides
 an authenticated loopback protocol, save/load session identity, and a bounded
-colony-digest query. It does not execute gameplay actions or automate the colony.
+resource-evidence query with scoped quantities, item identity, overlap and completeness.
+Native exact queries remain available. It does not execute gameplay actions or automate the colony.
   </description>
 </ModMetaData>

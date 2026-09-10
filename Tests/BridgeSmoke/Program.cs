@@ -1,4 +1,5 @@
 using System;
+using Newtonsoft.Json.Linq;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -16,6 +17,9 @@ internal static class Program
     {
         try
         {
+            QueryEngineTests.Run();
+            ThingQueryTests.Run();
+            ResourceReportTests.Run();
             ProtocolRoundTrip();
             AuthenticationMatchesCrossLanguageVector();
             StrictSchemaRejectsUnexpectedInput();
@@ -45,11 +49,11 @@ internal static class Program
         var clientProof = ProtocolAuthentication.ComputeClientProof(Token, epoch, clientNonce, serverNonce);
         Require(
             serverProof ==
-            "69826430fc5cebe86d61f08a38749ab5c0d57e3f1459ac21559a98dd7015068e",
+            "a674d3dcd9959a6a1127b7385a3c09d3fa788ab3b8821123f3b7c75f172a6d7f",
             $"server proof differs from the Python hmac test vector: {serverProof}");
         Require(
             clientProof ==
-            "7d8c68b95d01f6d08b10b2a06266d867f64729069f058be50979e56a9cec5204",
+            "919804556751bfda38f7d06832b32e288c8e96e218afe7d3f393fca9275ed172",
             $"client proof differs from the Python hmac test vector: {clientProof}");
     }
 
@@ -61,17 +65,27 @@ internal static class Program
             ProtocolMessageTypes.QueryRequest,
             epoch,
             1,
-            new ProtocolPayload { Query = "colony_digest" },
+            new ProtocolPayload { Operation = "colony_snapshot", Arguments = new JObject() },
             session,
             Id('4'));
         var json = Encoding.UTF8.GetString(ProtocolCodec.Serialize(valid));
         var withUnknownField = json.Replace(
-            "\"query\":\"colony_digest\"",
-            "\"query\":\"colony_digest\",\"unexpected\":true");
+            "\"operation\":\"colony_snapshot\"",
+            "\"operation\":\"colony_snapshot\",\"unexpected\":true");
         ExpectProtocolError(
             () => ProtocolCodec.Deserialize(Encoding.UTF8.GetBytes(withUnknownField)),
-            ProtocolErrorCodes.InvalidPayload,
+            ProtocolErrorCodes.InvalidJson,
             "unknown payload field was accepted");
+
+        ExpectProtocolError(
+            () => ProtocolCodec.Deserialize(Encoding.UTF8.GetBytes(json.Replace("\"v\":2", "\"v\":1"))),
+            ProtocolErrorCodes.UnsupportedVersion, "old protocol was accepted");
+        ExpectProtocolError(
+            () => ProtocolCodec.Deserialize(Encoding.UTF8.GetBytes(json.Replace("\"arguments\":{}", "\"arguments\":[]"))),
+            ProtocolErrorCodes.InvalidPayload, "non-object arguments were accepted");
+        ExpectProtocolError(
+            () => ProtocolCodec.Deserialize(Encoding.UTF8.GetBytes(json.Replace("\"arguments\":{}", "\"arguments\":{\"x\":1,\"x\":2}"))),
+            ProtocolErrorCodes.InvalidJson, "duplicate argument keys were accepted");
 
         valid.RequestId = Guid.Parse(valid.RequestId).ToString("D");
         ExpectProtocolError(
@@ -99,41 +113,10 @@ internal static class Program
             ProtocolMessageTypes.QueryRequest,
             epoch,
             4,
-            new ProtocolPayload { Query = "colony_digest" },
+            new ProtocolPayload { Operation = "colony_snapshot", Arguments = new JObject() },
             session,
             Id('4'));
-        var data = QueryDataDto.FromColonyDigest(new ColonyDigestDto
-        {
-            GameTick = 1234,
-            Paused = true,
-            SnapshotSequence = 7,
-            HasVisibleThreat = false,
-            CurrentMapId = "Map_1",
-            MapCount = 1,
-            Maps = new[]
-            {
-                new MapDigestDto
-                {
-                    Id = "Map_1",
-                    Index = 0,
-                    Label = "Home",
-                    IsCurrent = true,
-                    IsPlayerHome = true,
-                    HasVisibleThreat = false,
-                    FreeColonistCount = 1,
-                    FreeColonistsSpawned = new[]
-                    {
-                        new PawnDigestDto
-                        {
-                            Id = "Thing_Human1",
-                            Label = "Ada",
-                            HealthPercent = 0.875,
-                            Mood = 0.5,
-                        },
-                    },
-                },
-            },
-        });
+        var data = JObject.Parse("{\"maps\":[{\"new_field\":{\"nullable\":null,\"values\":[true,0.875,\"2026-09-05\"]}}]}");
         var response = ProtocolEnvelope.CreateQueryResult(
             request,
             epoch,
@@ -149,8 +132,10 @@ internal static class Program
         Require(!json.Contains("__type") && !json.Contains("KeyValuePair"), "wire JSON leaked .NET types");
 
         var decoded = ProtocolCodec.Deserialize(jsonBytes);
-        var pawn = decoded.Payload.Data!.ColonyDigest!.Maps[0].FreeColonistsSpawned[0];
-        Require(pawn.Id == "Thing_Human1" && pawn.HealthPercent == 0.875, "typed round-trip lost pawn data");
+        Require(JToken.DeepEquals(data, decoded.Payload.Data), "generic round-trip changed nested fields or nulls");
+        // Shared fixture consumed by Python: this is actual C# wire output.
+        var fixture = Environment.GetEnvironmentVariable("NEKO_WIRE_FIXTURE");
+        if (!string.IsNullOrEmpty(fixture)) File.WriteAllBytes(fixture, jsonBytes);
 
         var hello = ProtocolEnvelope.CreateHello(
             epoch,
@@ -158,7 +143,7 @@ internal static class Program
             "0.1.0-dev",
             "1.6.4871 rev591",
             new string('a', ProtocolAuthentication.HexLength),
-            new[] { "query.colony_digest.v1" });
+            new[] { "query.execute.v2" });
         Require(!Encoding.UTF8.GetString(ProtocolCodec.Serialize(hello)).Contains(Token), "hello leaked pairing token");
 
         using var fragmented = new FragmentedReadStream(ProtocolCodec.EncodeFrame(response));
@@ -199,7 +184,7 @@ internal static class Program
             "0.1.0-dev",
             "1.6.4871 rev591",
             new string('a', ProtocolAuthentication.HexLength),
-            new[] { "query.colony_digest.v1" });
+            new[] { "query.execute.v2" });
         using var slow = new SlowFragmentedReadStream(ProtocolCodec.EncodeFrame(hello), 20);
         ExpectProtocolError(
             () => ProtocolCodec.ReadFrame(slow, ProtocolCodec.MaxInboundFrameBytes, Deadline(50)),
@@ -272,7 +257,7 @@ internal static class Program
                     ProtocolMessageTypes.QueryRequest,
                     hello.ConnectionEpoch,
                     2,
-                    new ProtocolPayload { Query = "colony_digest" },
+                    new ProtocolPayload { Operation = "colony_snapshot", Arguments = new JObject() },
                     session,
                     Id('7'));
                 ProtocolCodec.WriteFrame(stream, request);
@@ -305,7 +290,7 @@ internal static class Program
             Token,
             "0.1.0-dev",
             "1.6.4871 rev591",
-            new[] { "query.colony_digest.v1" });
+            new[] { "query.execute.v2" });
         runtime.AttachSession(session);
 
         var deadline = DateTime.UtcNow.AddSeconds(8);
@@ -322,14 +307,7 @@ internal static class Program
         }
         Require(query is not null, "runtime did not deliver the loopback query");
 
-        var responseData = QueryDataDto.FromColonyDigest(new ColonyDigestDto
-        {
-            GameTick = session.GameTick,
-            Paused = false,
-            SnapshotSequence = session.SnapshotSequence,
-            MapCount = 0,
-            Maps = Array.Empty<MapDigestDto>(),
-        });
+        var responseData = new JObject { ["paused"] = false, ["maps"] = new JArray() };
         Require(
             runtime.EnqueueControl(ProtocolEnvelope.CreateQueryResult(
                 query!,

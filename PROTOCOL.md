@@ -1,124 +1,64 @@
-# N.E.K.O RimWorld Bridge Protocol v1
+# N.E.K.O RimWorld protocol v2
 
-`Protocol.cs` is the executable authority for this contract. This document is
-the interoperability guide for the future Python peer.
+The executable contract is Source/Protocol.cs and the Python plugin protocol.py.
+The complete v2 request/response contract, ownership and extension procedure are
+in [DATA_PATH.md](../../N.E.K.O/plugin/plugins/neko_rimworld/DATA_PATH.md).
 
-## Transport
+Transport: 4-byte unsigned big-endian length followed by UTF-8 JSON. Loopback
+only. Mod is the client; Python is the listener. Mutual authentication uses
+hello/challenge/authenticate/welcome, HMAC-SHA256, connection epoch and both
+nonces. Authentication domain: neko-rimworld-bridge/v2. Capability: query.execute.v2.
 
-- TCP over IPv4 loopback only; the plugin listens and the RimWorld Mod connects.
-- Default port: `48919`, configurable at both ends.
-- Each frame is `uint32` big-endian payload length followed by UTF-8 JSON.
-- Mod-to-plugin frame limit: 1 MiB.
-- Plugin-to-Mod frame limit: 64 KiB.
-- JSON has one object root. Protocol v1 rejects unknown envelope, payload, and
-  typed-data fields instead of guessing their meaning.
+Session messages, heartbeat, request correlation and strictly increasing
+per-direction sequence numbers are unchanged in purpose. colony_id identifies
+the save and load_epoch identifies this load. One query_result belongs to one
+session and sample. Only the protocol-v2 wire shape is accepted.
 
-Every UUID is exactly 32 lowercase hexadecimal characters (`Guid` format `N`).
-Every nonce and HMAC proof is exactly 64 lowercase hexadecimal characters.
-Sequence numbers start at zero and increase independently in each direction for
-the lifetime of one TCP connection.
+query_request payload: operation (nonempty text), arguments (JSON object).
+query_result payload: status, optional data object, issues array; non-data
+statuses additionally require error_code and message. Game field meanings are
+owned by query readers; protocol code does not validate a gameplay DTO union.
 
-## Mutual authentication
+Current operations: query_catalog, template_query and graphql. colony_snapshot
+is removed. query_result may include a generic execution object containing the
+expanded query, variables, schema ID and template-root bindings. See DATA_PATH.md
+for supported fields, limits, pagination and error paths.
 
-The pairing token is 32-128 characters and is never transmitted. Both sides use
-its UTF-8 bytes as the HMAC-SHA256 key.
+Version 0.5.0 template arguments are requests[{target:{type,id?},sections:[...]}].
+Selectors: pawn + required id, colony, or colonists with discovery filters.
+Sections are applicable to the target and merge by exact target identity.
+Nested data remains generic JSON; maximum wire depth is 32. No type/args fallback.
+# Resource evidence extension (1.2 development)
 
-```text
-Mod                                      Plugin
- |-- hello(client_nonce) ----------------->|
- |<-- challenge(client_nonce,
- |              server_nonce,
- |              server_proof) -------------|
- |-- authenticate(client_nonce,
- |                 server_nonce,
- |                 client_proof) ---------->|
- |<-- welcome(status="ok") -----------------|
-```
+Wire version and authentication are unchanged. `query_catalog` now advertises
+`resource_parameters` and `resource_contract` (`resource_evidence.v2`). A
+`query_request` with operation `resource_report` uses that JSON parameter schema.
+The normal `query_result` envelope retains sample and request correlation.
 
-The exact UTF-8 HMAC messages are:
+The resource domain reports game-computed per-definition quantities for ground,
+native storage cells, free-colonist inventory/worn/equipment/carried items and
+cached resource counters. Physical scopes use stable Thing IDs for deduplication;
+cached values never enter the physical union. The union is restricted to the
+selected map/scopes and is not a universal colony total.
 
-```text
-neko-rimworld-bridge/v1/server\n{connection_epoch}\n{client_nonce}\n{server_nonce}
-neko-rimworld-bridge/v1/client\n{connection_epoch}\n{client_nonce}\n{server_nonce}
-```
+Ground defaults to fog-filtered; native stored counts, pawn scopes and cached
+counts are not made visible-only by that flag. Partial physical quantities are
+null with explicit observed lower bounds. Missing cached keys differ from zero.
+Conflicting item identity fails the report. The12ms read budget, bounded scans
+and bounded response remain in force; no Verse handles reach network workers.
 
-The Mod sends no session or colony data before it has verified `server_proof`
-and received a successful `welcome`. Proof comparison must be fixed-time.
+This extension does not remove GraphQL, templates or schema discovery. Older
+plugins ignore the additional catalog properties; new plugins only advertise
+resource mode when the catalog supports it.
 
-Cross-language test vector:
+V2 groups each definition's readings under `rows[].scopes`: physical readings
+contain `units`, `known_units`, `item_count`, `status`, and `fog_filter`; cached
+readings contain `units`, `entry_present`, and `fog_filter`. Top-level coverage
+retains scan diagnostics. `row_page.total_rows/returned_rows` describe selected
+definition rows across scopes, never a count of ground categories. This replaces
+v1's parallel quantity maps, cached presence field and `view`; v1 field meanings
+are not silently reused. Physical membership and counting rules are unchanged.
 
-```text
-token            = 0123456789abcdef0123456789abcdef
-connection_epoch = 11111111111111111111111111111111
-client_nonce     = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-server_nonce     = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-server_proof     = 69826430fc5cebe86d61f08a38749ab5c0d57e3f1459ac21559a98dd7015068e
-client_proof     = 7d8c68b95d01f6d08b10b2a06266d867f64729069f058be50979e56a9cec5204
-```
-
-## Envelope
-
-All fields are present; values without a session use empty IDs and `-1` for
-game/snapshot counters.
-
-```json
-{
-  "v": 1,
-  "type": "query_request",
-  "connection_epoch": "32-lowercase-hex",
-  "colony_id": "32-lowercase-hex",
-  "load_epoch": "32-lowercase-hex",
-  "seq": 2,
-  "request_id": "32-lowercase-hex",
-  "game_tick": 12345,
-  "snapshot_sequence": 0,
-  "payload": {
-    "query": "colony_digest"
-  }
-}
-```
-
-`colony_id` persists in the save. `load_epoch` changes on every new-game or
-load-game activation. A request is valid only for the current connection,
-colony, and load epoch.
-
-## Direction and lifecycle
-
-Before authentication, only the four authentication messages are valid. After
-authentication:
-
-| Mod to plugin | Plugin to Mod |
-|---|---|
-| `session_open` | `query_request` |
-| `session_stale` | `heartbeat` |
-| `heartbeat` | `protocol_error` |
-| `query_result` | |
-| `protocol_error` | |
-
-The Mod emits a heartbeat every two seconds. The plugin must send authenticated
-traffic regularly; the Mod closes a connection after ten seconds without a
-valid inbound message. A loaded-game session becomes stale when its main-thread
-component has not pumped for five seconds.
-
-## Read-only query v1
-
-The only query is `colony_digest`. A successful result uses:
-
-```json
-{
-  "status": "ok",
-  "data": {
-    "kind": "colony_digest",
-    "colony_digest": {},
-    "omissions": []
-  }
-}
-```
-
-If a deadline, entity limit, invalid Mod value, or recoverable getter failure
-prevents a complete view, status is `partial` and `omissions` is non-empty.
-Other terminal statuses are `not_found`, `stale_session`, `unsupported`,
-`busy`, and `failed` and carry `error_code` plus `message` instead of data.
-
-Events and gameplay actions are intentionally outside protocol v1's implemented
-capability set.
+`thing_defs` also accepts optional boolean `isMedicine`, mapped to template
+target `is_medicine`. It filters native `ThingDef.IsMedicine`, intersects other
+selectors and participates in cursor identity; false is a filter, not omission.

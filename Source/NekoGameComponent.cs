@@ -57,9 +57,6 @@ public sealed class NekoGameComponent : GameComponent
             snapshotSequence);
 
         var startedAt = Stopwatch.GetTimestamp();
-        var deadlineTimestamp = startedAt > long.MaxValue - QueryBudgetStopwatchTicks
-            ? long.MaxValue
-            : startedAt + QueryBudgetStopwatchTicks;
         var processed = 0;
 
         while (processed < MaxQueriesPerUpdate &&
@@ -67,7 +64,7 @@ public sealed class NekoGameComponent : GameComponent
                runtime.TryDequeueInbound(out var request))
         {
             processed++;
-            HandleInbound(runtime, request, deadlineTimestamp);
+            HandleInbound(runtime, request);
         }
     }
 
@@ -83,8 +80,7 @@ public sealed class NekoGameComponent : GameComponent
 
     private void HandleInbound(
         BridgeRuntime runtime,
-        ProtocolEnvelope request,
-        long deadlineTimestamp)
+        ProtocolEnvelope request)
     {
         var session = CurrentSession();
 
@@ -124,113 +120,31 @@ public sealed class NekoGameComponent : GameComponent
             return;
         }
 
-        if (!TryReadQueryName(request.Payload, out var queryName))
-        {
-            EnqueueQueryFailure(
-                runtime,
-                request,
-                session,
-                "invalid_query",
-                "payload.query must be a non-empty string.");
-            return;
-        }
-
-        if (!string.Equals(queryName, ColonyQueries.ColonyDigest, StringComparison.Ordinal))
-        {
-            runtime.EnqueueControl(ProtocolEnvelope.CreateQueryResult(
-                request,
-                request.ConnectionEpoch,
-                sequence: 0,
-                session,
-                status: ProtocolStatuses.Unsupported,
-                errorCode: "unsupported_query",
-                message: "The requested query is not supported."));
-            return;
-        }
-
+        var next = checked(snapshotSequence + 1);
+        var sampledSession = new SessionDescriptor(colonyId, loadEpoch, session.GameTick, next);
+        QueryOutcome outcome;
         try
         {
-            var nextSnapshotSequence = checked(snapshotSequence + 1);
-            QueryDataDto data;
-            try
-            {
-                data = ColonyQueries.BuildColonyDigest(
-                    nextSnapshotSequence,
-                    deadlineTimestamp);
-            }
-            catch (Exception exception) when (IsRecoverable(exception))
-            {
-                Log.WarningOnce(
-                    $"[N.E.K.O RimWorld] Snapshot read failed unexpectedly: {exception.GetType().Name}",
-                    0x4e4b5110);
-                data = ColonyQueries.CreateFailureDigest(
-                    nextSnapshotSequence,
-                    session.GameTick,
-                    ReadPausedSafely());
-            }
-
-            var digest = data.ColonyDigest!;
-            var isPartial = data.Omissions.Length != 0;
-            snapshotSequence = nextSnapshotSequence;
-            session = new SessionDescriptor(
-                colonyId,
-                loadEpoch,
-                digest.GameTick,
-                snapshotSequence);
-            runtime.TouchSession(
-                loadEpoch,
-                session.GameTick,
-                session.SnapshotSequence);
-            runtime.EnqueueControl(ProtocolEnvelope.CreateQueryResult(
-                request,
-                request.ConnectionEpoch,
-                sequence: 0,
-                session,
-                status: isPartial
-                    ? ProtocolStatuses.Partial
-                    : ProtocolStatuses.Ok,
-                data: data,
-                message: isPartial
-                    ? "The colony snapshot is partial; inspect data.omissions."
-                    : null));
+            outcome = QueryExecutor.Execute(request.Payload.Operation!, request.Payload.Arguments!, sampledSession);
         }
         catch (Exception exception) when (IsRecoverable(exception))
         {
-            Log.ErrorOnce(
-                $"[N.E.K.O RimWorld] colony_digest failed: {exception}",
-                0x4e454b51);
-            EnqueueQueryFailure(
-                runtime,
-                request,
-                CurrentSession(),
-                "query_failed",
-                "The colony query failed inside RimWorld.");
+            Log.WarningOnce($"[N.E.K.O RimWorld] Query read failed: {exception.GetType().Name}", 0x4e4b5110);
+            outcome = QueryOutcome.Failure("query_failed", "The game-thread query could not complete.");
         }
-    }
-
-    private static bool TryReadQueryName(
-        ProtocolPayload payload,
-        out string queryName)
-    {
-        queryName = payload.Query?.Trim() ?? string.Empty;
-        return queryName.Length > 0;
-    }
-
-    private static void EnqueueQueryFailure(
-        BridgeRuntime runtime,
-        ProtocolEnvelope request,
-        SessionDescriptor session,
-        string errorCode,
-        string message)
-    {
-        runtime.EnqueueControl(ProtocolEnvelope.CreateQueryResult(
-            request,
-            request.ConnectionEpoch,
-            sequence: 0,
-            session,
-            status: ProtocolStatuses.Failed,
-            errorCode: errorCode,
-            message: message));
+        snapshotSequence = next;
+        runtime.TouchSession(loadEpoch, sampledSession.GameTick, next);
+        var response = ProtocolEnvelope.CreateQueryResult(request, request.ConnectionEpoch, 0,
+            sampledSession, outcome.Status, outcome.Data, outcome.Issues, outcome.ErrorCode, outcome.Message, outcome.Execution);
+        // Validate the whole output before queuing it. Never silently crop business data.
+        try { ProtocolCodec.Serialize(response); }
+        catch (ProtocolException exception)
+        {
+            response = ProtocolEnvelope.CreateQueryResult(request, request.ConnectionEpoch, 0,
+                sampledSession, ProtocolStatuses.Failed, errorCode: exception.ErrorCode,
+                message: "The query result exceeded transport limits or contained invalid data.");
+        }
+        runtime.EnqueueControl(response);
     }
 
     private static void EnqueueProtocolError(
@@ -277,18 +191,6 @@ public sealed class NekoGameComponent : GameComponent
             Log.WarningOnce(
                 "[N.E.K.O RimWorld] Invalid persisted colony_id was replaced with a new UUID.",
                 0x4e4b5111);
-        }
-    }
-
-    private static bool ReadPausedSafely()
-    {
-        try
-        {
-            return Find.TickManager?.Paused ?? true;
-        }
-        catch (Exception exception) when (IsRecoverable(exception))
-        {
-            return true;
         }
     }
 

@@ -34,15 +34,28 @@ internal static class ThingData
         var seen = new HashSet<Thing>(new IdentityComparer<Thing>());
         var definitionMatches = new Dictionary<ThingDef,bool>();
         bool Selected(Thing t) {
-            if (t.Destroyed || !requestGroup.Includes(t.def) || names != null && !names.Contains(t.def.defName) || visible && (!t.SpawnedOrAnyParentSpawned || t.PositionHeld.Fogged(t.MapHeld))) return false;
-            if (definitionFilter == null) return true;
-            if (!definitionMatches.TryGetValue(t.def,out var matches)) definitionMatches.Add(t.def,matches = definitionFilter(Definition(t.def)));
-            return matches;
+            if (t.Destroyed || requestGroup != ThingRequestGroup.Everything && !requestGroup.Includes(t.def) || names != null && !names.Contains(t.def.defName)) return false;
+            GraphQL.ExecutionError? membershipError = null;
+            if (definitionFilter != null) {
+                try {
+                    if (!definitionMatches.TryGetValue(t.def,out var matches)) definitionMatches.Add(t.def,matches = definitionFilter(Definition(t.def)));
+                    if (!matches) return false;
+                } catch (GraphQL.ExecutionError error) when (error.Code is not ("deadline_exceeded" or "wrong_thread")) { membershipError = error; }
+            }
+            context.Check();
+            if (visible && (!t.SpawnedOrAnyParentSpawned || t.PositionHeld.Fogged(t.MapHeld))) return false;
+            if (membershipError != null) throw membershipError; // Invisible objects are outside this population even if their definition read failed.
+            return true;
         }
         foreach (var map in maps)
         {
             var spawned = defs == null ? map.listerThings.ThingsInGroup(requestGroup).AsEnumerable() : defs.SelectMany(d => map.listerThings.ThingsOfDef(d));
-            foreach (var thing in spawned) { context.Check(); if (Selected(thing) && seen.Add(thing)) yield return Node(thing); }
+            var inspected = 0;
+            foreach (var thing in spawned) {
+                // Between checks only plain fields and cached definition decisions are read; every selected object/getter checks immediately.
+                if ((inspected++ & 127) == 0) context.Check();
+                if (Selected(thing) && seen.Add(thing)) yield return Node(thing);
+            }
             if (!includeHeld) continue;
             // Holder traversal is independent of emitted objects: a spawned container can still contain unseen things.
             var visited = new HashSet<IThingHolder>(new IdentityComparer<IThingHolder>()) { map };

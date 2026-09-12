@@ -258,18 +258,26 @@ internal sealed class SelectionConditions
     {
         var owner = schema.AllTypes[type] as IComplexGraphType ?? throw Error("Unknown public object type " + type);
         var definition = owner.GetField(field) ?? throw Error("Unknown public field " + type + "." + field);
-        return ReadField(owner, definition, value, args.ToDictionary(p => p.Key, p => p.Value), context);
+        return ReadField(owner, definition, value, args, context);
     }
-    private object? ReadField(IComplexGraphType owner, FieldType field, object value, Dictionary<string, object?> arguments, ReadContext state)
+    internal object? ReadField(IComplexGraphType owner, FieldType field, object value, IReadOnlyDictionary<string, object?> arguments, ReadContext state)
     {
         state.Check();
+        if (field.Metadata.TryGetValue("projection_path",out var projection) && projection is string[] path) {
+            var node = value is GameEntity entity ? new GameNode(owner.Name,"pawn",entity,entity.Handle) : (GameNode)value;
+            return state.ProjectContents(node,path,(bool)field.Metadata["projection_single"]!);
+        }
         if (field.Metadata.ContainsKey("slice"))
         {
             var node = value is GameEntity entity ? new GameNode(owner.Name, "pawn", entity, entity.Handle) : (GameNode)value;
             return state.ReadNode(node, field.Name, arguments);
         }
         var actual = owner is IAbstractGraphType abstractType ? abstractType.ResolveType!(value)! : (IObjectGraphType)owner;
-        var definition = actual.GetField(field.Name)!;
+        var definition = owner is IAbstractGraphType ? actual.GetField(field.Name)! : field;
+        if (definition.Metadata.ContainsKey("node_member")) {
+            var node = value is GameEntity entity ? new GameNode(owner.Name,"pawn",entity,entity.Handle) : (GameNode)value;
+            return state.ReadNode(node,definition.Name,arguments);
+        }
         var context = new ResolveFieldContext {
             Source = value, FieldDefinition = definition, ParentType = actual, Schema = schema,
             Arguments = arguments.ToDictionary(p => p.Key, p => new ArgumentValue(p.Value, ArgumentSource.Literal)),

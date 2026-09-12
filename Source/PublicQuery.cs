@@ -18,7 +18,7 @@ internal interface IQueryData
 /// <summary>Bounded relational reads over the existing executable field schema. No model-side joins or arithmetic.</summary>
 internal sealed class PublicQuery
 {
-    internal const string Version = "public_query.v1";
+    internal const string Version = "public_query.v2";
     private readonly PublicFields registry;
     private readonly SelectionConditions conditions;
     private readonly Dictionary<string, FieldType> roots;
@@ -41,6 +41,8 @@ internal sealed class PublicQuery
         public readonly ReadContext Context;
         public readonly List<QueryIssue> Issues = new();
         public int Objects;
+        public readonly JArray Phases = new();
+        public readonly Dictionary<(object Value,string Type,string Path),JToken> PathValues = new();
         public Run(ReadContext context) { Context = context; }
         public void Check() { Context.Check(); if (++Objects > 20000) throw ReadContext.Error("query_limit","Query exceeds 20000 projected objects; narrow fields or rows."); }
         public void Fail(ExecutionError error,string path) => Issues.Add(new QueryIssue { Code = error.Code ?? "field_unavailable", Message = error.Message, Path = new JArray(path.Split('/').Where(s => s.Length > 0)) });
@@ -62,12 +64,11 @@ internal sealed class PublicQuery
         ["version"] = Version,
         ["parameters"] = JObject.Parse(@"{'type':'object','properties':{'requests':{'type':'array','minItems':1,'maxItems':8,'items':{'type':'object','properties':{'from':{'type':'string'},'args':{'type':'object'},'where':{'type':'object'},'select':{'description':'Array of canonical field paths, or object mapping fields to true or nested selection options. Collections do not need items/nodes wrappers.','anyOf':[{'type':'array','items':{'type':'string'}},{'type':'object'}]},'aggregate':{'type':'object','description':'Named measures, e.g. {quantity:{op:sum,field:stack_count},records:{op:count}}. Operates on all matches before output limits; sum only for declared additive fields.'},'group_by':{'type':'array','items':{'type':'string'},'maxItems':12},'order_by':{'type':'array','items':{'type':'object','properties':{'field':{'type':'string'},'direction':{'type':'string','enum':['asc','desc']}},'required':['field'],'additionalProperties':false}},'limit':{'type':'integer','minimum':0,'maximum':100},'offset':{'type':'integer','minimum':0,'maximum':8192}},'required':['from'],'additionalProperties':false}}},'required':['requests'],'additionalProperties':false}"),
         ["roots"] = new JArray(roots.Select(p => new JObject { ["from"] = p.Key, ["type"] = RootType(p.Key), ["description"] = p.Value.Description ?? RootDescription(p.Key), ["args"] = new JArray((p.Value.Arguments?.ToArray() ?? Array.Empty<QueryArgument>()).Where(a => a.Name is not ("first" or "after" or "offset" or "where")).Select(a => new JObject { ["name"] = PublicFields.Name(a.Name), ["required"] = a.ResolvedType is NonNullGraphType, ["default"] = a.DefaultValue == null ? JValue.CreateNull() : JToken.FromObject(a.DefaultValue) })) })),
-        ["rules"] = "One vocabulary for selection/filter/group/order and returned fields. where is {field.path:{eq:value}}, clauses AND; all/any/not combine conditions. Scalar ops eq/ne/in/gt/gte/lt/lte/contains/starts_with/ends_with/is_null; case_sensitive:false for text. Collection conditions use some/every/none with another where object. Object conditions use where. Use on for supported concrete component types. reach:{field:parent,some:{...},include_self:true} traverses a declared same-type relation with cycle/depth limits. Nested select options: select, args, where, aggregate, group_by, order_by, limit, offset, on. Selected objects default to their scalar fields and parameter-free collections; objects with no scalars expose their related fields. Long description text and argument-dependent scans require explicit selection. Collections use limit20 by default. Aggregates cover all matches, never just displayed rows. Count is records, sum(stack_count) is item units. Group rows may overlap only if querying overlapping sources separately; never add independent query totals. Missing/failed is not zero. scan_complete differs from fields_complete and page.has_more. Every request and continuation is a fresh observation, not a retained snapshot. ResourceCounter is a separate native readout with its own scope/filter/update cadence; never add it to physical counts. UI-visible record defaults remain in effect. Map selectors accept map_id:current (map root: id:current), resolved once to the actual map ID returned in scope; no preliminary game/maps lookup is needed. No task/category presets.",
+        ["rules"] = "One vocabulary for selection/filter/group/order and returned fields. where is {field.path:{eq:value}}, clauses AND; all/any/not combine conditions. Scalar ops eq/ne/in/gt/gte/lt/lte/contains/starts_with/ends_with/is_null; case_sensitive:false for text. Collection conditions use some/every/none with another where object. Object conditions use where. Use on for supported concrete component types. reach:{field:parent,some:{...},include_self:true} traverses a declared same-type relation with cycle/depth limits. Nested select options: select, args, where, aggregate, group_by, order_by, limit, offset, on. Selected objects default to their scalar fields and parameter-free collections; objects with no scalars expose their related fields. Long description text and argument-dependent scans require explicit selection. Collections use limit20 by default. inventory/equipment/apparel/carried are direct Thing collections on Pawn; contents reads a Thing container. Use the same select/where/group_by/aggregate/limit on every collection. Tracker/inner_container traversal is internal. Grouped select returns shared values in rows.values without adding display fields to group_by. Varying selected values become null with an issue, never an arbitrary representative. Aggregates cover all matches, never just displayed rows. Count is records, sum(stack_count) is item units. Group rows may overlap only if querying overlapping sources separately; never add independent query totals. Missing/failed is not zero. scan_complete differs from fields_complete and page.has_more. Every request and continuation is a fresh observation, not a retained snapshot. ResourceCounter is a separate native readout with its own scope/filter/update cadence; never add it to physical counts. UI-visible record defaults remain in effect. Map selectors accept map_id:current (map root: id:current), resolved once to the actual map ID returned in scope; no preliminary game/maps lookup is needed. No task/category presets.",
         ["common_fields"] = registry.Describe(new[] { "Thing","ThingDef","Pawn","Map","Game" }),
         ["field_index"] = registry.CompactDirectory(roots.Keys.Select(RootType)),
         ["examples"] = JArray.Parse(@"[
-            {'requests':[{'from':'things','where':{'definition.category':{'eq':'Item'}},'group_by':['definition.def_name','definition.label'],'aggregate':{'quantity':{'op':'sum','field':'stack_count'},'records':{'op':'count'}}}]},
-            {'requests':[{'from':'spawned_free_colonists','select':{'id':true,'name':true,'status':{'select':['downed','current_job.report']},'health':{'select':{'summary':true,'conditions':{'limit':20}}},'inventory':{'select':{'inner_container':{'select':{'items':{'select':['id','definition.def_name','stack_count']}}}}}}}]}
+            {'requests':[{'from':'things','args':{'map_id':'current','include_held':false},'where':{'definition.category':{'eq':'Item'}},'group_by':['definition.def_name'],'select':{'definition':['def_name','label','category','is_ingestible','is_weapon']},'aggregate':{'quantity':{'op':'sum','field':'stack_count'}}},{'from':'spawned_free_colonists','args':{'map_id':'current'},'select':['id','name','inventory','equipment','apparel','carried']}]}
         ]")
         };
         var properties = (JObject)catalog["parameters"]!["properties"]!["requests"]!["items"]!["properties"]!;
@@ -78,6 +79,11 @@ internal sealed class PublicQuery
             foreach (var argument in root.Arguments?.ToArray() ?? Array.Empty<QueryArgument>())
                 if (argument.Name is not ("where" or "first" or "after" or "offset")) arguments[PublicFields.Name(argument.Name)] = PublicFields.ArgumentSchema(argument);
         properties["args"] = new JObject { ["type"] = "object",["properties"] = arguments,["additionalProperties"] = false,["description"] = "Root arguments go ONLY here. Each root accepts the subset in its directory; map_id/current (map root id/current) avoids a preliminary map lookup." };
+        var envelope = (JObject)catalog["parameters"]!;
+        foreach (var property in properties.Properties()) envelope["properties"]![property.Name] = property.Value.DeepClone();
+        envelope.Remove("required");
+        envelope["oneOf"] = JArray.Parse("[{'required':['from'],'not':{'required':['requests']}},{'required':['requests'],'not':{'required':['from']}}]");
+        envelope["description"] = "Send one query directly with from/args/where/select, or send requests:[...] for a shared-sample batch. The query shape is identical; do not mix envelope and query fields.";
         return catalog;
     }
     private static string RootDescription(string name) => name switch {
@@ -90,11 +96,12 @@ internal sealed class PublicQuery
     private string RootType(string name) => name is "things" ? "Thing" : name is "pawns" or "spawned_free_colonists" ? "Pawn" : PublicFields.ValueType(roots[name]).Name;
     internal QueryOutcome Execute(JObject input, IGameData source, SessionDescriptor session, double budget, string schemaId)
     {
+        if (input["from"] != null && input["requests"] == null) input = new JObject { ["requests"] = new JArray(input.DeepClone()) };
         Keys(input,"requests");
         if (input["requests"] is not JArray requests || requests.Count is < 1 or > 8) throw PublicFields.Error("requests must contain 1..8 queries.");
         compiledFields = 0;
         paths.Clear();
-        var plans = new List<(string Root,Dictionary<string,object?> Args,Selection Select,SelectionConditions.Predicate? DefinitionFilter)>();
+        var plans = new List<(string Root,Dictionary<string,object?> Args,Selection Select,SelectionConditions.Predicate? DefinitionFilter,bool FullyPushed)>();
         foreach (var token in requests)
         {
             if (token is not JObject obj || obj["from"]?.Type != JTokenType.String) throw PublicFields.Error("Each request needs from.");
@@ -102,12 +109,16 @@ internal sealed class PublicQuery
             if (!roots.TryGetValue(name,out var root)) throw PublicFields.Error("Unknown from. Available: " + string.Join(", ",roots.Keys));
             var arguments = registry.Arguments(root,obj["args"],name);
             SelectionConditions.Predicate? definitionFilter = null;
+            var fullyPushed = false;
             if (name == "things" && obj["where"] is JObject where)
             {
                 var definitionWhere = new JObject(where.Properties().Where(p => p.Name.StartsWith("definition.",StringComparison.Ordinal)).Select(p => new JProperty(p.Name.Substring(11),p.Value.DeepClone())));
                 if (definitionWhere.Count > 0) definitionFilter = conditions.Compile("ThingDef",registry.Predicate("ThingDef",definitionWhere));
+                fullyPushed = definitionWhere.Count > 0 && definitionWhere.Count == where.Count;
             }
-            plans.Add((name,arguments,Compile(RootType(name),obj,0,true),definitionFilter));
+            var selection = Compile(RootType(name),obj,0,true);
+            if (fullyPushed) selection.Predicate = null; // The data source applies the entire validated predicate once per definition.
+            plans.Add((name,arguments,selection,definitionFilter,fullyPushed));
         }
         // Validate the whole batch before touching game state.
         var state = new ReadContext(source,session,budget) { Conditions = conditions }; var run = new Run(state); var results = new JArray();
@@ -115,7 +126,11 @@ internal sealed class PublicQuery
         {
             var path = "/results/" + results.Count;
             // Pushdown can discard only definitely false candidates. Unknown must reach the full AND predicate.
-            Func<GameNode,bool>? filter = plan.DefinitionFilter == null ? null : n => plan.DefinitionFilter(n,state) != false;
+            Func<GameNode,bool>? filter = plan.DefinitionFilter == null ? null : n => {
+                var match = plan.DefinitionFilter(n,state);
+                if (match == null && plan.FullyPushed) throw ReadContext.Error("filter_unavailable","Definition membership is unknown.");
+                return match != false;
+            };
             var result = Collection(plan.Select, () => ReadRoot(plan.Root,plan.Args,source,state,filter), run,path);
             result["from"] = plan.Root;
             result["scope"] = new JObject { ["args"] = JObject.FromObject(plan.Args.ToDictionary(p => PublicFields.Name(p.Key),p => p.Value)), ["description"] = roots[plan.Root].Description ?? RootDescription(plan.Root) };
@@ -124,7 +139,7 @@ internal sealed class PublicQuery
         }
         var data = new JObject { ["results"] = results, ["sample"] = new JObject { ["load_epoch"] = session.LoadEpoch,["game_tick"] = session.GameTick,["sequence"] = session.SnapshotSequence } };
         if (data.ToString(Formatting.None).Length > 80000) return QueryOutcome.Failure("query_result_too_large","Request fewer fields or displayed rows.");
-        return new QueryOutcome { Status = run.Issues.Count == 0 ? "ok" : "partial", Data = data, Issues = run.Issues.Take(256).ToArray(), Execution = new JObject { ["schema_id"] = schemaId,["contract"] = Version,["requests"] = input["requests"]!.DeepClone() } };
+        return new QueryOutcome { Status = run.Issues.Count == 0 ? "ok" : "partial", Data = data, Issues = run.Issues.Take(256).ToArray(), Execution = new JObject { ["schema_id"] = schemaId,["contract"] = Version,["requests"] = input["requests"]!.DeepClone(),["phases"] = run.Phases } };
     }
     private IEnumerable<object> ReadRoot(string root, Dictionary<string,object?> args, IGameData source, ReadContext state,Func<GameNode,bool>? definitionFilter)
     {
@@ -224,11 +239,6 @@ internal sealed class PublicQuery
                 plan.Order.Add((path,direction == "desc"));
             }
         }
-        if (plan.GroupBy.Length > 0 && options["select"] != null) {
-            var permitted = Normalize(new JArray(plan.GroupBy));
-            bool Covered(JObject actual,JObject allowed) => actual.Properties().All(p => allowed[p.Name] != null && (p.Value is JValue ? allowed[p.Name] is JValue : p.Value["select"] is JObject nested && allowed[p.Name]?["select"] is JObject accepted && Covered(nested,accepted)));
-            if (!Covered(selected,permitted)) throw PublicFields.Error("Grouped select may contain only grouping keys; use a separate detail request for individual rows.");
-        }
         return plan;
     }
     private JArray Defaults(string type)
@@ -236,7 +246,7 @@ internal sealed class PublicQuery
         var fields = registry.Fields(type);
         // A selected object must not silently become {} just because it is a tracker/container.
         // The same structural rule covers every public type, without task/category presets.
-        bool Usable(FieldType f) => !(f.Arguments?.Any(a => a.Name is not ("where" or "first" or "offset" or "after") && a.DefaultValue == null) ?? false);
+        bool Usable(FieldType f) => !f.Metadata.ContainsKey("explicit_selection") && !(f.Arguments?.Any(a => a.Name is not ("where" or "first" or "offset" or "after") && a.DefaultValue == null) ?? false);
         var readable = fields.Where(p => Usable(p.Value)).ToArray();
         var scalar = readable.Where(p => PublicFields.IsScalar(p.Value) && p.Key != "description").Select(p => p.Key).ToArray();
         var names = scalar.Concat(readable.Where(p => PublicFields.IsList(p.Value)).Select(p => p.Key)).ToArray();
@@ -278,6 +288,10 @@ internal sealed class PublicQuery
     }
     private JToken PathValue(string type,object? value,string path,Run run)
     {
+        run.Context.Check();
+        if (value == null) return JValue.CreateNull();
+        var lookup = (value,type,path);
+        if (run.PathValues.TryGetValue(lookup,out var cached)) return cached;
         var key = type + ":" + path;
         if (!paths.TryGetValue(key,out var steps)) {
             steps = new();
@@ -288,10 +302,13 @@ internal sealed class PublicQuery
             if (value == null) return JValue.CreateNull();
             value = registry.Read(step.Type,value,step.Field,step.Args,run.Context);
         }
-        return value == null ? JValue.CreateNull() : JToken.FromObject(value);
+        var result = value == null ? JValue.CreateNull() : new JValue(value);
+        run.PathValues[lookup] = result;
+        return result;
     }
     private JObject Collection(Selection plan,Func<IEnumerable<object>> read,Run run,string path)
     {
+        var started = run.Context.ElapsedMilliseconds;
         var values = new List<object>(); var identities = new HashSet<string>(StringComparer.Ordinal); var scan = true;
         try {
             var scanned = 0;
@@ -309,18 +326,26 @@ internal sealed class PublicQuery
         } catch (ExecutionError error) { scan = false; run.Fail(error,path); }
         catch (Exception error) when (ReadContext.Recoverable(error)) { scan = false; run.Fail(ReadContext.Error("field_unavailable","Collection read failed."),path); }
         var result = new JObject { ["scan_complete"] = scan,["matched_count"] = scan ? new JValue(values.Count) : JValue.CreateNull(),["known_matches"] = values.Count };
+        var scannedAt = run.Context.ElapsedMilliseconds;
         var before = run.Issues.Count;
         if (plan.Measures.Count > 0) result["aggregates"] = Measures(plan,values,scan,run,path);
+        var measuredAt = run.Context.ElapsedMilliseconds;
         var rows = new JArray(); bool ordered = true;
         try {
             if (plan.GroupBy.Length > 0)
             {
-                var groups = new SortedDictionary<string,(JObject Key,List<object> Values)>(StringComparer.Ordinal);
+                var groups = new Dictionary<JToken,(JObject Key,List<object> Values,string Signature)>(new JTokenEqualityComparer());
+                var members = new Dictionary<string,List<object>>(StringComparer.Ordinal);
                 foreach (var value in values) {
-                    var key = new JObject(plan.GroupBy.Select(p => new JProperty(p,PathValue(plan.Type,value,p,run)))); var encoded = key.ToString(Formatting.None);
-                    if (!groups.TryGetValue(encoded,out var group)) { group = (key,new List<object>()); groups.Add(encoded,group); } group.Values.Add(value);
+                    var keyValues = new JArray(plan.GroupBy.Select(p => PathValue(plan.Type,value,p,run)));
+                    if (!groups.TryGetValue(keyValues,out var group)) {
+                        var key = new JObject(plan.GroupBy.Select((name,index) => new JProperty(name,keyValues[index].DeepClone())));
+                        group = (key,new List<object>(),key.ToString(Formatting.None));
+                        groups.Add(keyValues,group); members.Add(group.Signature,group.Values);
+                    }
+                    group.Values.Add(value);
                 }
-                var groupRows = groups.Values.Select((group,index) => new JObject { ["key"] = group.Key,["aggregates"] = Measures(plan,group.Values,scan,run,path + "/groups/" + index) }).ToList();
+                var groupRows = groups.Values.OrderBy(g => g.Signature,StringComparer.Ordinal).Select((group,index) => new JObject { ["key"] = group.Key,["aggregates"] = Measures(plan,group.Values,scan,run,path + "/groups/" + index) }).ToList();
                 if (plan.Order.Count > 0) groupRows.Sort((a,b) => {
                     foreach (var order in plan.Order) {
                         var left = a["key"]![order.Path] ?? a["aggregates"]![order.Path]!["value"]!;
@@ -329,7 +354,10 @@ internal sealed class PublicQuery
                     }
                     return StringComparer.Ordinal.Compare(a["key"]!.ToString(Formatting.None),b["key"]!.ToString(Formatting.None));
                 });
-                foreach (var row in groupRows.Skip(plan.Offset).Take(plan.Limit)) rows.Add(row);
+                foreach (var row in groupRows.Skip(plan.Offset).Take(plan.Limit)) {
+                    row["values"] = GroupValues(plan,members[row["key"]!.ToString(Formatting.None)],scan,run,path + "/rows/" + rows.Count + "/values");
+                    rows.Add(row);
+                }
                 result["page"] = Page(groups.Count,rows.Count,plan,scan);
             }
             else
@@ -346,6 +374,7 @@ internal sealed class PublicQuery
             }
         } catch (ExecutionError error) { ordered = false; run.Fail(error,path); result["page"] = Page(values.Count,rows.Count,plan,false); }
         result["rows"] = rows; result["fields_complete"] = run.Issues.Count == before && ordered;
+        if (path.Count(c => c == '/') == 2) run.Phases.Add(new JObject { ["path"] = path,["scan_ms"] = scannedAt-started,["aggregate_ms"] = measuredAt-scannedAt,["output_ms"] = run.Context.ElapsedMilliseconds-measuredAt,["known_matches"] = values.Count,["returned"] = rows.Count });
         return result;
     }
     private static int Compare(JToken a,JToken b)
@@ -384,7 +413,7 @@ internal sealed class PublicQuery
             try {
                 var raw = registry.Read(plan.Type,value,selected.Field,selected.Args,run.Context);
                 if (raw == null) result[selected.Name] = JValue.CreateNull();
-                else if (selected.Child == null) result[selected.Name] = JToken.FromObject(raw);
+                else if (selected.Child == null) result[selected.Name] = raw is IEnumerable && raw is not string ? JToken.FromObject(raw) : new JValue(raw);
                 else if (PublicFields.IsList(selected.Field)) result[selected.Name] = Collection(selected.Child,() => ((IEnumerable)raw).Cast<object>(),run,at);
                 else result[selected.Name] = Project(selected.Child,raw,run,at);
             } catch (ExecutionError error) { result[selected.Name] = JValue.CreateNull(); run.Fail(error,at); }
@@ -394,6 +423,50 @@ internal sealed class PublicQuery
             foreach (var p in Project(variant,value,run,path).Properties()) result[p.Name] = p.Value.DeepClone();
         return result;
     }
+    private JToken GroupValues(Selection plan,List<object> values,bool complete,Run run,string path)
+    {
+        if (values.Count == 0 || plan.Fields.Count == 0 && plan.On.Count == 0) return new JObject();
+        if (!complete) {
+            run.Fail(ReadContext.Error("group_membership_incomplete","Unscanned members could have different values; shared values are unknown."),path);
+            return JValue.CreateNull();
+        }
+        var first = values[0]; var result = Project(plan,first,run,path); var varied = new HashSet<string>();
+        var originals = new Dictionary<string,object?>();
+        foreach (var field in plan.Fields) {
+            try { originals[field.Name] = registry.Read(plan.Type,first,field.Field,field.Args,run.Context); }
+            catch (ExecutionError) { varied.Add(field.Name); } // Project already recorded the failed field.
+        }
+        foreach (var value in values.Skip(1)) {
+            run.Context.Check(); JObject? projected = null;
+            foreach (var field in plan.Fields) {
+                if (varied.Contains(field.Name)) continue;
+                try {
+                    var next = registry.Read(plan.Type,value,field.Field,field.Args,run.Context);
+                    if (SameValue(originals[field.Name],next)) continue;
+                    projected ??= Project(plan,value,run,path);
+                    if (!JToken.DeepEquals(result[field.Name],projected[field.Name]) || HasWindow(projected[field.Name])) Varies(field.Name);
+                } catch (ExecutionError error) { result[field.Name] = JValue.CreateNull(); varied.Add(field.Name); run.Fail(error,path + "/" + field.Name); }
+            }
+            if (plan.On.Count > 0) {
+                projected ??= Project(plan,value,run,path);
+                foreach (var name in result.Properties().Select(p => p.Name).Concat(projected.Properties().Select(p => p.Name)).Distinct().ToArray())
+                    if (!varied.Contains(name) && !JToken.DeepEquals(result[name],projected[name])) Varies(name);
+            }
+        }
+        return result;
+        void Varies(string name) {
+            varied.Add(name); result[name] = JValue.CreateNull();
+            run.Fail(ReadContext.Error("group_field_varies","Selected field differs within this group; no arbitrary representative is returned. Select shared fields, refine grouping, or request details."),path + "/" + name);
+        }
+    }
+    private static bool SameValue(object? a,object? b)
+    {
+        if (ReferenceEquals(a,b)) return true;
+        if (a is GameNode left && b is GameNode right) return left.Kind == right.Kind && left.Key == right.Key && left.Owner.Id == right.Owner.Id;
+        if (a is GameEntity x && b is GameEntity y) return x.Id == y.Id;
+        return a != null && a is not IEnumerable && a is not GameNode && a is not GameEntity ? a.Equals(b) : a is string text && b is string other && text == other;
+    }
+    private static bool HasWindow(JToken? value) => value is JObject obj && ((bool?)obj["page"]?["has_more"] == true || (bool?)obj["scan_complete"] == false || obj.Properties().Any(p => HasWindow(p.Value))) || value is JArray array && array.Any(HasWindow);
     private static JObject Page(int count,int returned,Selection plan,bool scan) => new JObject { ["offset"] = plan.Offset,["returned"] = returned,["has_more"] = scan ? new JValue(plan.Offset+returned<count) : JValue.CreateNull(),["next_offset"] = scan && returned > 0 && plan.Offset+returned<count ? new JValue(plan.Offset+returned) : JValue.CreateNull(),["consistency"] = "fresh_observation" };
     private static int Integer(JObject obj,string name,int fallback,int min,int max) => obj[name] == null ? fallback : obj[name]!.Type == JTokenType.Integer && (long)obj[name]! >= min && (long)obj[name]! <= max ? (int)obj[name]! : throw PublicFields.Error(name + " must be " + min + ".." + max);
     private static void Keys(JObject obj,params string[] allowed) { var unknown = obj.Properties().FirstOrDefault(p => !allowed.Contains(p.Name)); if (unknown != null) throw PublicFields.Error("Unknown option " + unknown.Name + ". Allowed: " + string.Join(", ",allowed)); }

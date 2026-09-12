@@ -22,7 +22,8 @@ internal sealed class PublicFields
             var mapped = new Dictionary<string, FieldType>(StringComparer.Ordinal);
             foreach (var field in type.Fields)
             {
-                var key = Name(field.Name);
+                if (field.Metadata.ContainsKey("public_hidden")) continue;
+                var key = field.Metadata.TryGetValue("public_name",out var publicName) ? (string)publicName! : Name(field.Name);
                 if (mapped.ContainsKey(key)) throw new InvalidOperationException("Public name collision: " + type.Name + "." + key);
                 mapped.Add(key, field);
             }
@@ -51,7 +52,7 @@ internal sealed class PublicFields
         return SelectionConditions.Arguments(field, translated, path);
     }
     internal object? Read(string type, object value, FieldType field, IReadOnlyDictionary<string, object?> args, ReadContext context)
-        => conditions.ReadMember(type, value, field.Name, args, context);
+        => conditions.ReadField((IComplexGraphType)Type(type),field,value,args,context);
 
     internal JObject CompactDirectory(IEnumerable<string> roots)
     {
@@ -164,7 +165,7 @@ internal sealed class PublicFields
             var description = new JObject { ["type"] = name, ["description"] = type.Description };
             if (type is IComplexGraphType)
                 description["fields"] = new JArray(Fields(name).Select(p => new JObject {
-                    ["name"] = p.Key, ["native"] = name + "." + p.Value.Name,
+                    ["name"] = p.Key,
                     ["type"] = ValueType(p.Value).Name, ["collection"] = IsList(p.Value),
                     ["default_reference"] = p.Value.Metadata.ContainsKey("default_reference"),
                     ["description"] = p.Value.Description ?? "Selected game field. Null without issue means not applicable; failed reads are reported separately.",

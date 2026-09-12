@@ -55,6 +55,9 @@ internal sealed class ThingSchema
         Link(Thing, "InnerThing", reference, "RimWorld.MinifiedThing.InnerThing; null for other runtime types. Outer and inner identity are not interchangeable.");
         Link(Thing, "InnerPawn", reference, "Verse.Corpse.InnerPawn; reference only, null for other runtime types.");
         Link(Thing, "GetDirectlyHeldThings", owner, "IThingHolder.GetDirectlyHeldThings for supported holders. Unsupported holders produce an issue, not an empty container.");
+        Thing.GetField("GetDirectlyHeldThings")!.Metadata["public_hidden"] = true;
+        PawnSchema.Contents(Thing,"contents","contents",Thing,new[] { "GetDirectlyHeldThings","items" });
+        Thing.GetField("contents")!.Metadata["explicit_selection"] = true;
         Link(Equipment, "Primary", reference); Slice(Equipment, "AllEquipmentListForReading", Thing);
         Slice(Apparel, "WornApparel", Thing); Link(Inventory, "innerContainer", owner);
         Link(Carry, "innerContainer", owner); Link(Carry, "CarriedThing", Thing);
@@ -160,12 +163,14 @@ internal sealed class ThingSchema
             var parts = word.Split(':'); var name = parts[1];
             IGraphType scalar = parts[0] switch { "i" => new IntGraphType(), "f" => new FloatGraphType(), "b" => new BooleanGraphType(), _ => new StringGraphType() };
             var field = PawnSchema.Add(type, name, scalar, c => State(c).ReadNode((GameNode)c.Source!, name, Args(c)));
+            field.Metadata["node_member"] = true;
             field.Description = name is "id" or "ref" or "runtimeType" or "supportedType" or "supported" ? "Transport metadata; not a native gameplay member." : "Native " + type.Name + "." + name + "; selected getter only. Null without issue means not applicable; issue means failed/unavailable.";
         }
     }
     private static void Link(ObjectGraphType type, string name, ObjectGraphType child, string? description = null, bool referenceOnly = false)
     {
         var field = PawnSchema.Add(type, name, child, c => State(c).ReadNode((GameNode)c.Source!, name, Args(c)));
+        field.Metadata["node_member"] = true;
         field.Description = description ?? "Native " + type.Name + "." + name + " reference; only selected child members are read.";
         if (referenceOnly) field.Metadata["default_reference"] = true;
     }

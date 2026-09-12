@@ -48,7 +48,6 @@ internal static class PublicQueryTests
         Check(result.Status == "ok" && (string?)result.Data?["results"]?[0]?["rows"]?[0]?["key"]?["id"] == "b","Grouped aggregate ordering ignored",result);
         foreach (var json in new[] {
             "{'requests':[{'from':'things','select':{'definition':{'where':{'is_weapon':{'eq':true}}}}}]}",
-            "{'requests':[{'from':'things','group_by':['id'],'select':['stack_count'],'aggregate':{'rows':{'op':'count'}}}]}",
             "{'requests':[{'from':'things','select':{'all_comps':{'on':{'CompQuality':{'where':{'quality':{'eq':'Good'}}}}}}}]}",
             "{'requests':[{'from':'things','where':{'definition':{'where':{'is_weapon':{'eq':true}},'fields':{'IsWeapon':{'eq':false}}}}}]}",
             "{'requests':[{'from':'maps','group_by':['id','id'],'aggregate':{'rows':{'op':'count'}}}]}"
@@ -67,6 +66,9 @@ internal static class PublicQueryTests
             result = Query("{'requests':[{'from':'" + root + "','args':{'map_id':'missing'},'aggregate':{'rows':{'op':'count'}}}]}");
             Check(result.Status == "partial" && result.Data?["results"]?[0]?["aggregates"]?["rows"]?["value"]?.Type == JTokenType.Null,"Missing map reported as an empty population",result);
         }
+        data.FailEnumeration = true;
+        result = Query("{'requests':[{'from':'things','group_by':['definition.def_name'],'select':['stack_count'],'aggregate':{'rows':{'op':'count'}}}]}" );
+        Check(result.Status == "partial" && result.Data?["results"]?[0]?["rows"]?[0]?["values"]?.Type == JTokenType.Null && (bool?)result.Data?["results"]?[0]?["fields_complete"] == false,"Incomplete group incorrectly claimed a shared value",result);
         Console.WriteLine("Public query tests passed: canonical selection, pre-read rejection, complete aggregates, deduplication, grouping and unknown membership.");
     }
     private static void Check(bool pass,string message,QueryOutcome result) { if (!pass) throw new InvalidOperationException(message + ": " + result.Message + result.Data); }
@@ -75,12 +77,13 @@ internal static class PublicQueryTests
         public int Reads;
         public bool Fail;
         public bool FailQuantity;
+        public bool FailEnumeration;
         public string? LastMap;
         private static GameNode Thing(string id) => new("Thing",id,new GameEntity(id,"map1",id),id);
         public IEnumerable<GameNode> QueryThings(IReadOnlyDictionary<string,object?> args,ReadContext c,Func<GameNode,bool>? definitionFilter = null) {
             LastMap = args.TryGetValue("mapId",out var map) ? map as string : null;
             foreach (var n in new[] { Thing("a"),Thing("b"),Thing("a") })
-                if (definitionFilter == null || definitionFilter((GameNode)c.ReadNode(n,"def")!)) yield return n;
+                if (definitionFilter == null || definitionFilter((GameNode)c.ReadNode(n,"def")!)) { yield return n; if (FailEnumeration) throw ReadContext.Error("query_scan_limit","Incomplete fixture collection"); }
         }
         public IEnumerable<GameEntity> QueryPawns(IReadOnlyDictionary<string,object?> args,ReadContext c) => Colonists();
         public IEnumerable<GameEntity> Maps() => new[] { new GameEntity("map1",null,new object()), new GameEntity("map2",null,new object()) };

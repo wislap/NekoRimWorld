@@ -72,6 +72,7 @@ internal sealed class ReadContext
     public ReadContext(IGameData source, SessionDescriptor session, double budgetMilliseconds)
     { this.source = source; Session = session; this.budgetMilliseconds = budgetMilliseconds; }
     public SessionDescriptor Session { get; }
+    internal double ElapsedMilliseconds => clock?.Elapsed.TotalMilliseconds ?? 0;
     public SelectionConditions? Conditions { get; set; }
     public Dictionary<string, JObject> ResolvedFields { get; } = new();
     public void TraceField(IResolveFieldContext context)
@@ -178,6 +179,17 @@ internal sealed class ReadContext
         if (rows == null) return null;
         rows = Filter(rows, elementType, args.TryGetValue("where", out var where) ? where : null).Cast<GameNode>().ToList();
         return new NodeSlice { Items = rows.Skip(offset).Take(first).ToList(), Total = rows.Count, Offset = offset };
+    }
+    internal object? ProjectContents(GameNode node,string[] path,bool single)
+    {
+        object? value = node;
+        foreach (var field in path) {
+            Check();
+            if (value == null) return null; // An absent intermediate tracker/container is not an observed empty collection.
+            if (value is not GameNode current) throw Error("field_unavailable","Invalid container projection.");
+            value = ReadNode(current,field);
+        }
+        return single ? value == null ? Array.Empty<GameNode>() : new[] { (GameNode)value } : value;
     }
     private object? Cached(object key, Func<object?> read)
     {

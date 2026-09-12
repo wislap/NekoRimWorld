@@ -90,8 +90,14 @@ internal static class PawnSchema
         foreach (var pair in new[] { ("status", status), ("mood", mood), ("health", health), ("equipment", native.Equipment), ("apparel", native.Apparel), ("inventory", native.Inventory), ("carryTracker", native.Carry), ("profile", profile) })
         {
             var name = pair.Item1;
-            Add(pawn, name, pair.Item2, c => State(c).ReadNode(PawnNode((GameEntity)c.Source!), name));
+            Add(pawn, name, pair.Item2, c => State(c).ReadNode(PawnNode((GameEntity)c.Source!), name)).Metadata["node_member"] = true;
         }
+        // Preserve native tracker fields for the legacy protocol, but expose their contents consistently to the Agent.
+        foreach (var field in new[] { "inventory","equipment","apparel","carryTracker" }) pawn.GetField(field)!.Metadata["public_hidden"] = true;
+        Contents(pawn,"inventoryItems","inventory",native.Thing,new[] { "inventory","innerContainer","items" });
+        Contents(pawn,"equipmentItems","equipment",native.Thing,new[] { "equipment","AllEquipmentListForReading" });
+        Contents(pawn,"apparelItems","apparel",native.Thing,new[] { "apparel","WornApparel" });
+        Contents(pawn,"carriedItems","carried",native.Thing,new[] { "carryTracker","CarriedThing" },single:true);
         Collection(pawn, "statDefinitions", statDefinition, new QueryArguments(GameArguments.Create("search", new StringGraphType(),
             "Case-insensitive substring of definition name or label. Does not compute stat values.", new JObject { ["maxLength"] = 128 })));
         Collection(pawn, "stats", stat, new QueryArguments(GameArguments.Create("defNames",
@@ -100,6 +106,28 @@ internal static class PawnSchema
         return pawn;
     }
     private static GameNode PawnNode(GameEntity entity) => new("Pawn", "pawn", entity, entity.Handle);
+    internal static void Contents(ObjectGraphType type,string name,string publicName,IGraphType element,string[] path,bool single = false)
+    {
+        Collection(type,name,element);
+        var field = type.GetField(name)!;
+        field.Resolver = new FuncFieldResolver<object?>(c => {
+            var state = State(c); state.TraceField(c);
+            var raw = state.ProjectContents(Node(c),path,single);
+            if (raw == null) return null;
+            var args = Arguments(c);
+            var rows = state.Filter((System.Collections.IEnumerable)raw,element.Name,args.TryGetValue("where",out var where) ? where : null).Cast<GameNode>().ToList();
+            var first = c.GetArgument<int?>("first") ?? DefaultFirst; var offset = c.GetArgument<int?>("offset") ?? 0;
+            return new NodeSlice { Items = rows.Skip(offset).Take(first).ToList(), Total = rows.Count, Offset = offset };
+        });
+        field.Metadata["projection_path"] = path;
+        field.Metadata["projection_single"] = single;
+        field.Metadata["public_name"] = publicName;
+        field.Metadata["collection_element"] = element;
+        field.Metadata["list_default"] = DefaultFirst;
+        field.Metadata["list_max"] = MaxFirst;
+        field.Metadata["native_path"] = string.Join(".",path);
+        field.Description = "Contents in the " + publicName + " relation. Read directly as a Thing collection with the same selection, conditions and aggregation as other collections. Preserves this relation's population; an absent container is not an empty collection.";
+    }
     private static ReadContext State(IResolveFieldContext c) => (ReadContext)c.UserContext["read"]!;
     private static GameNode Node(IResolveFieldContext c) => c.Source is GameEntity pawn ? PawnNode(pawn) : (GameNode)c.Source!;
     private static Dictionary<string, object?> Arguments(IResolveFieldContext c) => c.Arguments == null ? new() :
@@ -110,11 +138,11 @@ internal static class PawnSchema
         {
             var parts = word.Split(':'); var name = parts[1];
             IGraphType graphType = parts[0] switch { "i" => new IntGraphType(), "f" => new FloatGraphType(), "b" => new BooleanGraphType(), _ => new StringGraphType() };
-            Add(type, name, graphType, c => State(c).ReadNode(Node(c), name, Arguments(c)));
+            Add(type, name, graphType, c => State(c).ReadNode(Node(c), name, Arguments(c))).Metadata["node_member"] = true;
         }
     }
     private static void Child(ObjectGraphType type, string name, ObjectGraphType child) =>
-        Add(type, name, child, c => State(c).ReadNode(Node(c), name, Arguments(c)));
+        Add(type, name, child, c => State(c).ReadNode(Node(c), name, Arguments(c))).Metadata["node_member"] = true;
     private static QueryArguments VisibleArguments() => new(GameArguments.Create("visibleOnly", new BooleanGraphType(),
         "Default true: UI-visible facts. Set false explicitly to inspect internal records.", defaultValue: true));
     internal static void Collection(ObjectGraphType type, string name, IGraphType item, QueryArguments? extra = null, int maximum = MaxFirst)

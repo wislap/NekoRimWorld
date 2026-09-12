@@ -62,6 +62,26 @@ internal static class PublicQueryTests
         Check(result.Status == "ok" && (int?)result.Data?["results"]?[0]?["matched_count"] == 2,"Uniform where wrapper failed",result);
         result = Query("{'requests':[{'from':'things','select':{'definition':['def_name','label']}}]}" );
         Check(result.Status == "ok" && (string?)result.Data?["results"]?[0]?["rows"]?[0]?["definition"]?["def_name"] == "Steel","Nested path-array projection failed",result);
+        var expectedSelection = result.Data!["results"]![0]!["rows"]!.DeepClone();
+        foreach (var selection in new[] {
+            "['definition.def_name','definition.label']",
+            "{'definition':{'select':['def_name','label']}}"
+        }) {
+            result = Query("{'from':'things','select':" + selection + "}");
+            Check(result.Status == "ok" && JToken.DeepEquals(expectedSelection,result.Data?["results"]?[0]?["rows"]),"Documented selection forms disagree",result);
+        }
+        foreach (var selection in new[] {
+            "{'definition':{'def_name':true,'label':true}}",
+            "['id',{'definition':['def_name']}]"
+        }) {
+            data.Reads = 0; result = Query("{'from':'things','select':" + selection + "}");
+            Check(result.Status == "failed" && data.Reads == 0,"Input guidance silently widened the query grammar",result);
+        }
+        var directory = engine.Execute("query_catalog",new JObject(),data,session);
+        foreach (var example in (JArray)directory.Data!["public_query"]!["examples"]!) {
+            result = engine.Execute("query",(JObject)example,data,session);
+            Check(result.Status == "ok","Advertised query example cannot execute",result);
+        }
         foreach (var root in new[] { "things","pawns","spawned_free_colonists" }) {
             result = Query("{'requests':[{'from':'" + root + "','args':{'map_id':'missing'},'aggregate':{'rows':{'op':'count'}}}]}");
             Check(result.Status == "partial" && result.Data?["results"]?[0]?["aggregates"]?["rows"]?["value"]?.Type == JTokenType.Null,"Missing map reported as an empty population",result);

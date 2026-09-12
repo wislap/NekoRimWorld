@@ -69,12 +69,14 @@ internal sealed class ThingSchema
         var compDef = Type("CompProperties", "Verse.CompProperties metadata. compClass names the component class; runtimeType names its properties class. Unknown fields are not reflected.");
         Scalars(compDef, "s:runtimeType s:compClass");
         Scalars(Def, "s:defName s:label s:thingClass s:category i:stackLimit b:alwaysHaulable b:designateHaulable b:EverHaulable b:IsMedicine b:IsWeapon b:IsIngestible b:CountAsResource");
+        Def.GetField("category")!.Description = "Native Verse.ThingCategory enum rendered as a string: the engine's broad thing kind, not a ThingCategoryDef content category. Do not invent enum values from user-facing category labels; inspect definition values and thing_categories for their respective meanings.";
         Def.GetField("IsWeapon")!.Description = "Native attack-capable Item with verbs/tools, excluding apparel. Includes improvised weapons; not an exclusive content category.";
         Def.GetField("CountAsResource")!.Description = "Native resourceReadoutPriority != Uncounted. Readout classification, not all possessions or all useful items.";
         Def.GetField("IsIngestible")!.Description = "Native ingestible properties exist; includes plants and non-human food. Not a human-food inventory category. Combine with native Item category when counting food items.";
         Def.GetField("IsMedicine")!.Description = "Native definition contains a MedicalPotency base stat; not current treatment eligibility.";
         Def.GetField("EverHaulable")!.Description = "Native alwaysHaulable || designateHaulable; not current pawn-specific reachability, reservation or permission.";
         Slice(Def, "thingCategories", category); Slice(Def, "comps", compDef); Link(Def, "ingestible", ingestible);
+        Def.GetField("thingCategories")!.Description = "Native ThingDef.thingCategories content-category memberships. Each ThingCategoryDef has its own defName, label and parent ancestry; these names are not values of ThingDef.category or capability flags.";
         var stat = Type("NativeStat", "Explicit game-computed StatDef value for a Thing; valueText is game formatted. This is not a raw instance field.");
         Scalars(stat, "s:defName s:label f:value s:valueText");
         stat.GetField("value")!.Description = "Derived read via Thing.GetStatValue(selected StatDef); not a native stored scalar.";

@@ -71,7 +71,7 @@ internal sealed class TemplateCatalog
             new Section { Name = "components", Description = "Bounded component data for the selected page; narrow first for expensive combinations.", Selection = "nodes { id " + Components + " } " + PageInfo },
         } },
         new() { Name = "thing_def", Root = "thing_def", Identity = "defName", Parameters = new() { ["def_name"] = "defName" }, Sections = DefinitionSections(false) },
-        new() { Name = "thing_defs", Root = "thing_defs", Parameters = new() { ["name"] = "name", ["category_def_name"] = "categoryDefName", ["is_medicine"] = "isMedicine", ["first"] = "first", ["after"] = "after" }, Sections = DefinitionSections(true) },
+        new() { Name = "thing_defs", Root = "thing_defs", Parameters = new() { ["name"] = "name", ["category_def_name"] = "categoryDefName", ["first"] = "first", ["after"] = "after" }, Sections = DefinitionSections(true) },
         new() { Name = "map", Root = "map", Identity = "id", Parameters = new() { ["id"] = "id" }, Sections = new[] {
             new Section { Name = "storage_groups", Description = "Native SlotGroup references, settings priority and currently stored things. HeldThings overlap map things, do not double-count. Settings are not actual contents.", Selection = "haulDestinationManager { AllGroupsListForReading(first:5) { items { ref GroupingLabel parent { ref runtimeType thingId } Settings { Priority } HeldThings(first:10) { items { " + ThingBasic + " } " + SliceInfo + " } } " + SliceInfo + " } }" },
             new Section { Name = "resource_counter", Description = "Game cached ResourceCounter entries. Stored-resource rules apply; not all-map totals, not held inventory. Does not force a game counter update.", Selection = "resourceCounter { AllCountedAmounts(first:30) { items { key { defName label } value } " + SliceInfo + " } }" },
@@ -83,7 +83,11 @@ internal sealed class TemplateCatalog
         new Section { Name="ingestible", Description="Native ingestible definition data; null if absent, not a pawn-specific food permission.", Selection="defName ingestible { foodType drugCategory HumanEdible IsMeal CachedNutrition maxNumToIngestAtOnce }" },
         new Section { Name="component_definitions", Description="Declared CompProperties and content-category references; no reflection of custom members.", Selection="defName comps(first:20) { items { runtimeType compClass } " + SliceInfo + " } thingCategories(first:20) { items { defName label parent { defName } } " + SliceInfo + " }" },
     }.Select(section => { if (page) section.Selection="nodes { " + section.Selection + " } " + PageInfo; return section; }).ToArray();
-    public TemplateCatalog(ISchema schema) { this.schema = schema; }
+    public TemplateCatalog(ISchema schema) {
+        this.schema = schema;
+        foreach (var target in targets)
+            if (schema.Query!.GetField(target.Root)!.Arguments?.Any(a => a.Name == "where") == true) target.Parameters["where"] = "where";
+    }
     public JArray Describe() => new(targets.Select(t => new JObject {
         ["target"] = t.Name, ["parameters"] = ParameterSchema(t),
         ["sections"] = new JArray(t.Sections.Select(s => new JObject { ["name"] = s.Name, ["description"] = s.Description, ["returns"] = s.Selection })),
@@ -125,6 +129,8 @@ internal sealed class TemplateCatalog
     private static JObject JsonType(IGraphType type) => type switch {
         NonNullGraphType n => JsonType(n.ResolvedType!),
         ListGraphType l => new JObject { ["type"] = "array", ["items"] = JsonType(l.ResolvedType!) },
+        ConditionGraphType => new JObject { ["type"] = "object" },
+        FloatGraphType => new JObject { ["type"] = "number" },
         IntGraphType => new JObject { ["type"] = "integer" },
         BooleanGraphType => new JObject { ["type"] = "boolean" },
         _ => new JObject { ["type"] = "string" },
@@ -150,12 +156,20 @@ internal sealed class TemplateCatalog
             try
             {
                 if (rows[i] is not JObject row) throw ReadContext.Error("invalid_arguments", "request must be an object.");
-                GameQueryEngine.ExactKeys(row, new[] { "target", "sections" });
-                if (row["target"] is not JObject selector || selector["type"]?.Type != JTokenType.String || row["sections"] is not JArray sections)
+                // The directory already owns each target's selectors. Use it
+                // to locate misplaced keys, without moving or interpreting values.
+                var hintedTarget = targets.FirstOrDefault(t => row["target"] is JObject hint && hint["type"]?.Type == JTokenType.String && (string?)hint["type"] == t.Name);
+                var path = "requests[" + i + "]";
+                CheckKeys(row, new[] { "target", "sections" }, path,
+                    key => hintedTarget?.Parameters.ContainsKey(key) == true ? path + ".target." + key : null);
+                if (row["target"] is not JObject selector || selector["type"]?.Type != JTokenType.String)
                     throw ReadContext.Error("invalid_arguments", "Each request requires a target object and sections array.");
                 var target = targets.FirstOrDefault(t => t.Name == (string?)selector["type"])
                     ?? throw ReadContext.Error("unknown_target", "Unknown target; consult the supplied template directory.");
-                GameQueryEngine.ExactKeys(selector, target.Parameters.Keys.Concat(new[] { "type" }).ToArray());
+                CheckKeys(selector, target.Parameters.Keys.Concat(new[] { "type" }), path + ".target",
+                    key => key == "sections" ? path + ".sections" : null);
+                if (row["sections"] is not JArray sections)
+                    throw ReadContext.Error("invalid_arguments", path + ".sections must be an array of section names.");
                 var spec = ParameterSchema(target);
                 foreach (var required in ((JArray)spec["required"]!).Values<string>())
                     if (!selector.ContainsKey(required!)) throw ReadContext.Error("invalid_arguments", "Target requires " + required + ".");
@@ -173,7 +187,10 @@ internal sealed class TemplateCatalog
                 foreach (var section in selected) Merge(plan.Fields, Parse(section.Selection));
                 output.Bindings.Add(new JObject { ["index"] = i, ["root"] = plan.Root, ["target"] = selector.DeepClone(), ["sections"] = sections.DeepClone() });
             }
-            catch (ExecutionError error) { throw ReadContext.Error(error.Code ?? "invalid_arguments", "requests[" + i + "]: " + error.Message); }
+            catch (ExecutionError error) {
+                var prefix = "requests[" + i + "]";
+                throw ReadContext.Error(error.Code ?? "invalid_arguments", error.Message.StartsWith(prefix, StringComparison.Ordinal) ? error.Message : prefix + ": " + error.Message);
+            }
         }
         var declarations = new List<string>(); var roots = new List<string>();
         foreach (var plan in plans.Values)
@@ -192,10 +209,23 @@ internal sealed class TemplateCatalog
         output.Document = "query" + (declarations.Count == 0 ? "" : "(" + string.Join(",", declarations) + ")") + " { " + string.Join(" ", roots) + " }";
         return output;
     }
+    private static void CheckKeys(JObject value, IEnumerable<string> allowed, string path, Func<string, string?> location)
+    {
+        var names = allowed.ToArray();
+        var errors = value.Properties().Where(p => !names.Contains(p.Name)).Select(p => {
+            var expected = location(p.Name);
+            return expected == null
+                ? path + "." + p.Name + " is not supported here; allowed: " + string.Join(", ", names) + "."
+                : path + "." + p.Name + " is misplaced; supply it only at " + expected + ". If both locations are present, choose the intended value there; no value was moved or used.";
+        }).ToArray();
+        if (errors.Length > 0) throw ReadContext.Error("invalid_arguments", string.Join(" ", errors));
+    }
     private static void ValidateValue(JToken value, JObject schema, string name)
     {
         var type = (string)schema["type"]!;
-        if (type == "array") {
+        if (type == "object") {
+            if (value is not JObject) throw ReadContext.Error("invalid_arguments", name + " must be an object.");
+        } else if (type == "array") {
             if (value is not JArray array || schema["maxItems"] != null && array.Count > (int)schema["maxItems"]!)
                 throw ReadContext.Error("invalid_arguments", name + " must be a bounded array.");
             foreach (var item in (JArray)value) ValidateValue(item, (JObject)schema["items"]!, name);

@@ -18,6 +18,7 @@ internal static class Program
         try
         {
             QueryEngineTests.Run();
+            SelectionTests.Run();
             ThingQueryTests.Run();
             ResourceReportTests.Run();
             ProtocolRoundTrip();

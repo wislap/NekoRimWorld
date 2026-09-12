@@ -20,6 +20,7 @@ internal static class QueryEngineTests
         NestedCollectionsAndRelations(engine);
         ThoughtReferenceIdentity();
         ValidationBeforeReads(engine);
+        MisplacedSelectorFeedback(engine);
         Pagination(engine);
         PartialAndNullResults(engine);
         InlinePageCoverage(engine);
@@ -73,6 +74,30 @@ internal static class QueryEngineTests
         Require(((JArray)merged.Execution!["bindings"]!).Count == 3, "merged requests lost bindings");
         Require(source.Reads.Count(x => x == "Colonists") == 1, "same execution repeated identity enumeration");
         AssertThread(source);
+    }
+
+    private static void MisplacedSelectorFeedback(GameQueryEngine engine)
+    {
+        var input = JObject.Parse(@"{'requests':[
+            {'target':{'type':'colony'},'sections':['overview']},
+            {'target':{'type':'thing_defs','first':1},'sections':['basic'],'where':{'fields':{'IsMedicine':{'eq':true}}},'first':50}
+        ]}");
+        var original = input.DeepClone(); var source = new FakeData();
+        var result = engine.Execute("template_query", input, source, Session);
+        Require(result.Status == "failed" && result.ErrorCode == "invalid_arguments" && source.Reads.Count == 0,
+            "misplaced selectors performed a partial batch read");
+        Require(result.Message!.Contains("requests[1].where") && result.Message.Contains("requests[1].target.where") &&
+            result.Message.Contains("requests[1].target.first") && result.Message.Contains("both locations"),
+            "feedback lost a wrong key, its destination, or conflict warning");
+        Require(JToken.DeepEquals(input, original), "feedback silently moved selectors or chose a conflicting value");
+
+        result = Templates(engine, new FakeData(), "{'requests':[{'target':{'type':'thing_defs','sections':['basic']}}]}");
+        Require(result.ErrorCode == "invalid_arguments" && result.Message!.Contains("requests[0].target.sections") &&
+            result.Message.Contains("only at requests[0].sections"), "nested sections did not identify their request-level location");
+        result = Templates(engine, new FakeData(), "{'requests':[{'target':{'type':'pawn','id':'pawn1'},'sections':['status'],'first':50}]}");
+        Require(result.ErrorCode == "invalid_arguments" && !result.Message!.Contains("target.first"), "unsupported target selector received a false relocation hint");
+        result = Templates(engine, new FakeData(), "{'requests':[{'target':{'type':{}},'sections':['basic'],'first':50}]}");
+        Require(result.ErrorCode == "invalid_arguments", "malformed target type crashed feedback");
     }
 
     private static void SelectionAndCache(GameQueryEngine engine)

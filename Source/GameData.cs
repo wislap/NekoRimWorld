@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
@@ -70,6 +71,41 @@ internal sealed class ReadContext
     public ReadContext(IGameData source, SessionDescriptor session, double budgetMilliseconds)
     { this.source = source; Session = session; this.budgetMilliseconds = budgetMilliseconds; }
     public SessionDescriptor Session { get; }
+    public SelectionConditions? Conditions { get; set; }
+    public Dictionary<string, JObject> ResolvedFields { get; } = new();
+    public void TraceField(IResolveFieldContext context)
+    {
+        if (context.ResponsePath == null) return; // Direct condition/capture reads have no response path.
+        var path = ""; foreach (var part in context.ResponsePath) path = ResultEvidence.Path(path, part.ToString()!);
+        if (path.Length == 0) return;
+        var info = new JObject { ["native"] = context.ParentType.Name + "." + context.FieldDefinition.Name };
+        if (context.Arguments?.Count > 0) info["arguments"] = JObject.FromObject(context.Arguments.ToDictionary(p => p.Key, p => p.Value.Value));
+        if (context.Source is NodeSlice slice) info["window"] = new JObject { ["total"] = slice.Total, ["offset"] = slice.Offset, ["returned"] = slice.Returned, ["has_more"] = slice.HasMore };
+        if (context.Source is ThingPage page) info["window"] = new JObject { ["returned"] = page.Nodes.Count, ["has_more"] = page.HasNextPage };
+        if (context.Source is ColonistPage colonistsPage) info["window"] = new JObject { ["returned"] = colonistsPage.Nodes.Count, ["has_more"] = colonistsPage.HasNextPage };
+        if (context.Source is GameEntity entity) info["subject"] = new JObject { ["id"] = entity.Id, ["map_id"] = entity.MapId };
+        if (context.Source is GameNode node) info["subject"] = new JObject { ["owner_id"] = node.Owner.Id, ["map_id"] = node.Owner.MapId, ["type"] = node.Kind, ["key"] = node.Key };
+        ResolvedFields[path] = info;
+    }
+    private readonly Dictionary<string, SelectionConditions.Predicate> predicates = new();
+    public Func<object?, bool> Matcher(string type, object? where)
+    {
+        if (where == null) return _ => true;
+        var key = type + ":" + JsonConvert.SerializeObject(where);
+        if (!predicates.TryGetValue(key, out var predicate))
+            predicates[key] = predicate = (Conditions ?? throw Error("filter_unavailable", "Condition schema unavailable.")).Compile(type, where);
+        return value => {
+            Check();
+            return predicate(value, this) ?? throw Error("filter_unavailable", "A selected field could not be read; membership is unknown, not false.");
+        };
+    }
+    public bool Matches(string type, object? value, object? where) => Matcher(type, where)(value);
+    public IEnumerable<object> Filter(IEnumerable values, string type, object? where)
+    {
+        var matches = Matcher(type, where);
+        var count = 0;
+        foreach (var value in values) { Check(); if (++count > 8192) throw Error("node_scan_limit", "Collection exceeds 8192 records."); if (matches(value)) yield return value; }
+    }
     public void Check()
     {
         if (Thread.CurrentThread.ManagedThreadId != threadId)
@@ -130,10 +166,12 @@ internal sealed class ReadContext
             return value;
         });
     }
-    public NodeSlice? Slice(GameNode node, string field, int first, int offset, IReadOnlyDictionary<string, object?> args)
+    public NodeSlice? Slice(GameNode node, string field, int first, int offset, IReadOnlyDictionary<string, object?> args, string elementType)
     {
-        var rows = ReadNode(node, field, args) as List<GameNode>;
+        var rawArgs = args.Where(p => p.Key != "where").ToDictionary(p => p.Key, p => p.Value);
+        var rows = ReadNode(node, field, rawArgs) as List<GameNode>;
         if (rows == null) return null;
+        rows = Filter(rows, elementType, args.TryGetValue("where", out var where) ? where : null).Cast<GameNode>().ToList();
         return new NodeSlice { Items = rows.Skip(offset).Take(first).ToList(), Total = rows.Count, Offset = offset };
     }
     private object? Cached(string key, Func<object?> read)

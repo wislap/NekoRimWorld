@@ -19,7 +19,7 @@ query_result payload: status, optional data object, issues array; non-data
 statuses additionally require error_code and message. Game field meanings are
 owned by query readers; protocol code does not validate a gameplay DTO union.
 
-Current operations: query_catalog, template_query and graphql. colony_snapshot
+Current operations: query_catalog, describe_schema, template_query, graphql and resource_report. colony_snapshot
 is removed. query_result may include a generic execution object containing the
 expanded query, variables, schema ID and template-root bindings. See DATA_PATH.md
 for supported fields, limits, pagination and error paths.
@@ -28,7 +28,7 @@ Version 0.5.0 template arguments are requests[{target:{type,id?},sections:[...]}
 Selectors: pawn + required id, colony, or colonists with discovery filters.
 Sections are applicable to the target and merge by exact target identity.
 Nested data remains generic JSON; maximum wire depth is 32. No type/args fallback.
-# Resource evidence extension (1.2 development)
+## Historical resource evidence extension (1.2 development)
 
 Wire version and authentication are unchanged. `query_catalog` now advertises
 `resource_parameters` and `resource_contract` (`resource_evidence.v2`). A
@@ -62,3 +62,39 @@ are not silently reused. Physical membership and counting rules are unchanged.
 `thing_defs` also accepts optional boolean `isMedicine`, mapped to template
 target `is_medicine`. It filters native `ThingDef.IsMedicine`, intersects other
 selectors and participates in cursor identity; false is a filter, not omission.
+
+
+## Current v1.3 development contracts
+
+Wire v2 and authentication remain unchanged. The catalog advertises
+resource_evidence.v3, selection_contract (schema_conditions.v1), and
+result_description_contract (observed_values.v1). Capability comes from the
+connected catalog, not a guessed package version.
+
+Resource v3 removes focus and dedicated medicine arguments. definition_where
+operates on ThingDef, instance_where on physical Thing; exact names intersect
+conditions. Cached has no Thing instance and therefore rejects instance_where
+in a mixed request. include_total optionally publishes request-wide physical
+scope totals and an ID union; cached never enters it. Pagination does not turn
+a request-wide quantity into a page subtotal.
+
+Collection producers expose where against their element type. The shared
+compiler validates all clauses/field arguments before game reads, filters
+before pagination, binds cursors to conditions, and treats unavailable field
+values as unknown rather than false. Scalar/object/collection/possible-type
+operations apply uniformly across public fields. Transport nodes/items are
+windows, not alternative filtering roots. Same-type reference traversal uses
+bounded cycle-aware reach; no private reflection or inferred reverse relation.
+
+execution.evidence describes existing returned values: nodes, interned contexts
+and subjects, with concrete-path overrides for heterogeneous data. Actual
+resolver response paths establish canonical fields, including aliases and
+inline fragments. Effective arguments/defaults and collection windows remain
+bound to scalar and empty-list references. Metadata-only queries cannot be
+presented as live state. Resource structural values retain map, selection,
+source status and row pagination context; measurement values retain units,
+state, subject and physical scope. Descriptions do not trigger extra game reads.
+
+These are development contracts. Earlier stored envelopes are not rewritten.
+No game action, additional network service or automatic investigation workflow
+is introduced. Activation uses a normally restarted Mod, never a hot DLL swap.

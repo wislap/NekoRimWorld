@@ -61,7 +61,6 @@ internal static class ThingData
                     context.Check();
                     if (category != null && !def.IsWithinCategory(category)) continue;
                     if (!Match(Text("name"), def.defName, def.label)) continue;
-                    if (args.TryGetValue("isMedicine", out var medicine) && medicine is bool requiredMedicine && def.IsMedicine != requiredMedicine) continue;
                     yield return Definition(def);
                 }
             }

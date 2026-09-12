@@ -119,7 +119,6 @@ internal sealed class ThingSchema
             GameArguments.Ids("defNames"), Text("name"), GameArguments.Create("visibleOnly", new BooleanGraphType(), "Default true: exclude fogged map things.", defaultValue: true), First(), Text("after")));
         Root(root, "thing_def", Def, new QueryArguments(Text("defName", true)));
         Root(root, "thing_defs", defPage, new QueryArguments(Text("name"), Text("categoryDefName"),
-            GameArguments.Create("isMedicine", new BooleanGraphType(), "Filter by native ThingDef.IsMedicine, independent of definition name or label. Omitted means no medicine filter; false selects non-medicine definitions. This classifies definitions, not stock quantities or current pawn usability."),
             First(), Text("after")));
         Root(root, "map", Map, new QueryArguments(Text("id", true)));
     }
@@ -129,7 +128,7 @@ internal sealed class ThingSchema
     private static void Root(ObjectGraphType root, string name, ObjectGraphType type, QueryArguments args)
     {
         var field = PawnSchema.Add(root, name, type, c => State(c).NativeRoot(name, Args(c)), args);
-        if (type.Name.EndsWith("Page", StringComparison.Ordinal)) { field.Metadata["cursor_page"] = true; field.Metadata["list_default"] = 20; field.Metadata["list_max"] = 50; }
+        if (type.Name.EndsWith("Page", StringComparison.Ordinal)) { field.Metadata["cursor_page"] = true; field.Metadata["collection_element"] = ((ListGraphType)type.GetField("nodes")!.ResolvedType!).ResolvedType!; field.Metadata["list_default"] = 20; field.Metadata["list_max"] = 50; }
     }
     private static ObjectGraphType Page(string name, ObjectGraphType node)
     {
@@ -137,7 +136,7 @@ internal sealed class ThingSchema
         PawnSchema.Add(info, "hasNextPage", new BooleanGraphType(), c => ((ThingPage)c.Source!).HasNextPage);
         PawnSchema.Add(info, "endCursor", new StringGraphType(), c => ((ThingPage)c.Source!).EndCursor);
         var page = Type(name, "Bounded collection wrapper. No global total is implied; field errors disable continuation.");
-        PawnSchema.Add(page, "nodes", new ListGraphType(node), c => ((ThingPage)c.Source!).Nodes);
+        PawnSchema.Add(page, "nodes", new ListGraphType(node), c => ((ThingPage)c.Source!).Nodes).Metadata["collection_view"] = true;
         PawnSchema.Add(page, "pageInfo", info, c => c.Source);
         return page;
     }
@@ -173,11 +172,14 @@ internal static class ThingPaging
         if (first < 1 || first > 50) throw ReadContext.Error("invalid_arguments", "first must be 1..50.");
         // Bounded top-k identity selection: no whole-map DTO materialization or per-thing detail reads.
         var selected = new SortedDictionary<string, GameNode>(StringComparer.Ordinal); var scans = 0;
+        var filters = new Dictionary<string, Func<object?, bool>>();
         foreach (var node in candidates)
         {
             context.Check();
             if (++scans > 100000) throw ReadContext.Error("entity_scan_limit", "Identity scan exceeded 100000 candidates; narrow definition or map.");
             if (last != null && StringComparer.Ordinal.Compare(node.Key, last) <= 0) continue;
+            if (!filters.TryGetValue(node.Kind, out var matches)) filters[node.Kind] = matches = context.Matcher(node.Kind, args.TryGetValue("where", out var where) ? where : null);
+            if (!matches(node)) continue;
             if (selected.Count > first && StringComparer.Ordinal.Compare(node.Key, selected.Last().Key) >= 0) continue;
             selected[node.Key] = node;
             if (selected.Count > first + 1) selected.Remove(selected.Last().Key);

@@ -120,7 +120,7 @@ internal static class PawnSchema
     internal static void Collection(ObjectGraphType type, string name, IGraphType item, QueryArguments? extra = null, int maximum = MaxFirst)
     {
         var slice = new ObjectGraphType { Name = type.Name + Upper(name) + "Slice", Description = "A bounded slice of this query's list. Offset continuation is a fresh observation, not a frozen snapshot. Null means unavailable/not applicable, empty items with total=0 means observed empty." };
-        Add(slice, "items", new ListGraphType(item), c => ((NodeSlice)c.Source!).Items);
+        Add(slice, "items", new ListGraphType(item), c => ((NodeSlice)c.Source!).Items).Metadata["collection_view"] = true;
         Add(slice, "total", new IntGraphType(), c => ((NodeSlice)c.Source!).Total);
         Add(slice, "offset", new IntGraphType(), c => ((NodeSlice)c.Source!).Offset);
         Add(slice, "returned", new IntGraphType(), c => ((NodeSlice)c.Source!).Returned);
@@ -133,17 +133,18 @@ internal static class PawnSchema
                 new JObject { ["minimum"] = 0, ["maximum"] = 8192 }, 0));
         if (extra != null) foreach (var argument in extra) args.Add(argument);
         var field = Add(type, name, slice, c => State(c).Slice(Node(c), name,
-            c.GetArgument<int?>("first") ?? Math.Min(DefaultFirst, maximum), c.GetArgument<int?>("offset") ?? 0, Arguments(c)), args);
+            c.GetArgument<int?>("first") ?? Math.Min(DefaultFirst, maximum), c.GetArgument<int?>("offset") ?? 0, Arguments(c), item.Name), args);
         field.Metadata["list_max"] = maximum;
         field.Metadata["list_default"] = Math.Min(DefaultFirst, maximum);
         field.Metadata["slice"] = true;
+        field.Metadata["collection_element"] = item;
     }
     private static string Upper(string text) => char.ToUpperInvariant(text[0]) + text.Substring(1);
     internal static FieldType Add(ObjectGraphType type, string name, IGraphType graphType,
         Func<IResolveFieldContext, object?> resolver, QueryArguments? args = null)
     {
         var field = new FieldType { Name = name, ResolvedType = graphType, Arguments = args,
-            Resolver = new FuncFieldResolver<object?>(resolver) };
+            Resolver = new FuncFieldResolver<object?>(c => { State(c).TraceField(c); return resolver(c); }) };
         type.AddField(field); return field;
     }
 }

@@ -19,7 +19,7 @@ internal static class ResourceReportTests
         Require((long)row["scopes"]!["ground"]!["units"]! == 200 && (long)row["scopes"]!["stored"]!["units"]! == 75 && (long)row["scopes"]!["cached"]!["units"]! == 0, "scope counts differ");
         Require((long)row["selected_physical_union"]!["units"]! == 200, "storage was double-counted");
         Require((long)row["overlaps"]![0]!["units"]! == 75, "overlap receipt lost");
-        Require((string?)result.Data!["contract"] == "resource_evidence.v2" && row["quantities"] == null && result.Data["view"] == null,
+        Require((string?)result.Data!["contract"] == "resource_evidence.v3" && row["quantities"] == null && result.Data["view"] == null,
             "new shape silently reused the old contract or duplicated legacy fields");
         Require((string?)row["scopes"]!["ground"]!["fog_filter"] == "unfogged_cells" &&
             (string?)row["scopes"]!["stored"]!["fog_filter"] == "none", "visibility was widened across scopes");
@@ -71,8 +71,8 @@ internal static class ResourceReportTests
         public object? ColonistField(GameEntity pawn, string field) => throw new NotSupportedException();
         public object? NodeField(GameNode node, string field, IReadOnlyDictionary<string, object?> args) => throw new NotSupportedException();
         public bool ResourceDefinitionExists(string name, ReadContext context) { context.Check(); return name == "Steel"; }
-        private static ResourceItem Item(string? id, int amount) => new() { Id = id, Definition = "Steel", Label = "Steel", Units = amount, Supply = true };
-        public IEnumerable<ResourceItem> ResourceItems(string mapId, string scope, bool visibleOnly, string[]? definitions, bool classify, ReadContext context)
+        private static ResourceItem Item(string? id, int amount) => new() { Id = id, Definition = "Steel", Label = "Steel", Units = amount };
+        public IEnumerable<ResourceItem> ResourceItems(string mapId, string scope, bool visibleOnly, string[]? definitions, ReadContext context)
         {
             ResourceReads++;
             if (scope == "ground") {

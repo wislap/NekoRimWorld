@@ -8,7 +8,7 @@ namespace Neko.RimWorld;
 internal sealed class VerseGameData : IGameData, IThingData, IResourceData
 {
     public bool ResourceDefinitionExists(string name, ReadContext context) => VerseResourceData.DefinitionExists(name, context);
-    public IEnumerable<ResourceItem> ResourceItems(string mapId, string scope, bool visibleOnly, string[]? definitions, bool classify, ReadContext context) => VerseResourceData.Items(mapId, scope, visibleOnly, definitions, classify, context);
+    public IEnumerable<ResourceItem> ResourceItems(string mapId, string scope, bool visibleOnly, string[]? definitions, ReadContext context) => VerseResourceData.Items(mapId, scope, visibleOnly, definitions, context);
     public object? NativeRoot(string root, IReadOnlyDictionary<string, object?> args, ReadContext context) => ThingData.Root(root, args, context);
     public object? NativeField(GameNode node, string field, IReadOnlyDictionary<string, object?> args, ReadContext context) => ThingData.Kinds.Contains(node.Kind) ? ThingData.Read(node, field, args, context) : NodeField(node, field, args);
     public IEnumerable<GameEntity> Maps()

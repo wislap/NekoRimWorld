@@ -23,13 +23,16 @@ internal sealed class GameQueryEngine
     private readonly SerialExecuter executer = new();
     private readonly GraphQLSerializer serializer = new();
     private readonly TemplateCatalog templates;
+    private readonly SelectionConditions conditions;
     private readonly JObject catalog;
     private readonly double readBudgetMs;
     public GameQueryEngine(double readBudgetMs = 12)
     {
         this.readBudgetMs = readBudgetMs;
         schema = BuildSchema();
+        SelectionConditions.Install(schema);
         schema.Initialize();
+        conditions = new SelectionConditions(schema);
         templates = new TemplateCatalog(schema);
         var sdl = schema.Print();
         var specification = new JObject {
@@ -44,6 +47,8 @@ internal sealed class GameQueryEngine
                     'variables':{'type':'object'}},'required':['document'],'additionalProperties':false}"),
             ["query_rules"] = "Read-only query; one operation. Aliases, variables and bounded inline type fragments supported; named fragments/directives/introspection/mutation unavailable. Native things/thing_defs/map targets expose selected original members, holders and storage groups. Thing group HaulableEver is not current hauling eligibility. Unknown component classes return metadata, not reflected fields. Exact native type/member descriptions are available using describe_game_schema. Target pawn by stable ID, then combine status/mood/health/equipment/profile. colonists locates spawned free colonists (not caravans/prisoners); first 1..50 default20. Nested slices use first 1..100 default20, offset 0..8192; offset continuation samples current data, not frozen history. Slice complete=false means selected fields failed; nextOffset is then null. Thought ref is observation-local. UI-visible thoughts/conditions are default; visibleOnly=false must be explicit. Discover StatDef names via pawn.statDefinitions(search), then request stats(defNames). Null without an issue can mean not applicable; observed empty lists have total=0. Limits: depth12, fields512, combined nested cost20000.",
         };
+        specification["result_description_contract"] = new JObject { ["version"] = ResultEvidence.Version, ["coverage"] = "All public game query result types; metadata queries are not game observations." };
+        specification["selection_contract"] = SelectionConditions.Contract();
         specification["resource_parameters"] = ResourceReports.Parameters();
         specification["resource_contract"] = ResourceReports.Contract();
         specification["schema_id"] = Hash(specification.ToString(Formatting.None));
@@ -60,11 +65,14 @@ internal sealed class GameQueryEngine
         }
     }
 
+    internal object? ReadPublicField(GameNode node, string field, IReadOnlyDictionary<string, object?> arguments, ReadContext context) =>
+        conditions.ReadMember(node.Kind, node.Kind == "Pawn" ? node.Owner : node, field, arguments, context);
+
     public QueryOutcome Execute(string operation, JObject arguments, IGameData source, SessionDescriptor session)
     {
         try
         {
-            if (operation == "resource_report") return ResourceReports.Execute(arguments, source, session, readBudgetMs, catalog["schema_id"]!.ToString());
+            if (operation == "resource_report") return ResourceReports.Execute(arguments, source, session, readBudgetMs, catalog["schema_id"]!.ToString(), conditions);
             if (operation == "query_catalog")
             {
                 ExactKeys(arguments, Array.Empty<string>());
@@ -83,7 +91,7 @@ internal sealed class GameQueryEngine
                     var type = schema.AllTypes[name!];
                     if (type == null || name!.StartsWith("__", StringComparison.Ordinal)) throw ReadContext.Error("unknown_type", "Unknown supported type: " + name);
                     var row = new JObject { ["name"] = type.Name, ["description"] = type.Description };
-                    if (type is IComplexGraphType complex) row["fields"] = new JArray(complex.Fields.Select(f => new JObject { ["name"] = f.Name, ["type"] = TypeName(f.ResolvedType!), ["description"] = f.Description, ["arguments"] = DescribeArguments(f.Arguments) }));
+                    if (type is IComplexGraphType complex) row["fields"] = new JArray(complex.Fields.Select(f => new JObject { ["name"] = f.Name, ["type"] = TypeName(f.ResolvedType!), ["description"] = f.Description, ["arguments"] = DescribeArguments(f.Arguments), ["selection"] = SelectionConditions.DescribeField(f) }));
                     if (type is IInterfaceGraphType iface) row["possible_types"] = new JArray(iface.PossibleTypes.Select(t => t.Name));
                     described.Add(row);
                 }
@@ -112,7 +120,7 @@ internal sealed class GameQueryEngine
             else return QueryOutcome.Failure("unsupported_operation", "Use query_catalog, describe_schema, template_query or graphql.", ProtocolStatuses.Unsupported);
 
             var parsed = CheckDocument(document, variables, session);
-            var context = new ReadContext(source, session, readBudgetMs);
+            var context = new ReadContext(source, session, readBudgetMs) { Conditions = conditions };
             var task = executer.ExecuteAsync(new ExecutionOptions {
                 Schema = schema, Document = parsed, Query = document,
                 Variables = serializer.Deserialize<Inputs>(variables.ToString(Formatting.None)),
@@ -140,11 +148,12 @@ internal sealed class GameQueryEngine
             // Metadata records exactly what the template expanded to; no extra gameplay facts are inserted.
             var metadata = new JObject { ["document"] = document, ["variables"] = variables.DeepClone(), ["schema_id"] = catalog["schema_id"] };
             if (bindings != null) metadata["bindings"] = bindings;
+            metadata["evidence"] = ResultEvidence.Query(data, ((GraphQLOperationDefinition)parsed.Definitions[0]).SelectionSet, schema.Query!, schema, variables, issues.ToArray(), context.ResolvedFields);
             var outcome = new QueryOutcome {
                 Status = issues.Count == 0 ? ProtocolStatuses.Ok : ProtocolStatuses.Partial,
                 Data = data, Issues = issues.Take(256).ToArray(), Execution = metadata,
             };
-            if (data.ToString(Formatting.None).Length > 96_000)
+            if (data.ToString(Formatting.None).Length + metadata.ToString(Formatting.None).Length > 96_000)
                 return QueryOutcome.Failure("query_result_too_large", "Request fewer rows or fields.");
             return outcome;
         }
@@ -176,6 +185,7 @@ internal sealed class GameQueryEngine
         Field(pageInfo, "endCursor", new StringGraphType(), c => ((ColonistPage)c.Source!).EndCursor);
         var page = new ObjectGraphType { Name = "ColonistPage" };
         Field(page, "nodes", new ListGraphType(pawn), c => ((ColonistPage)c.Source!).Nodes);
+        page.GetField("nodes")!.Metadata["collection_view"] = true;
         Field(page, "pageInfo", pageInfo, c => c.Source);
         var root = new ObjectGraphType { Name = "Query" };
         Field(root, "game", game, c => State(c));
@@ -186,6 +196,8 @@ internal sealed class GameQueryEngine
         Field(root, "pawn", pawn, c => State(c).Colonists().FirstOrDefault(x => x.Id == c.GetArgument<string>("id")),
             new QueryArguments(new QueryArgument(new NonNullGraphType(new IdGraphType())) { Name = "id", Description = "Exact pawn ID." }));
         Field(root, "colonists", page, c => ReadPage(c), ColonistArguments());
+        root.GetField("colonists")!.Metadata["cursor_page"] = true;
+        root.GetField("colonists")!.Metadata["collection_element"] = pawn;
         root.GetField("colonists")!.Metadata["list_default"] = GameArguments.DefaultPageSize;
         root.GetField("colonists")!.Metadata["list_max"] = GameArguments.MaxPageSize;
         root.GetField("maps")!.Metadata["list_default"] = 32;
@@ -212,7 +224,7 @@ internal sealed class GameQueryEngine
     private static void Field(ObjectGraphType type, string name, IGraphType graphType,
         Func<IResolveFieldContext, object?> resolve, QueryArguments? arguments = null, string? description = null) =>
         type.AddField(new FieldType { Name = name, Description = description, ResolvedType = graphType,
-            Arguments = arguments, Resolver = new FuncFieldResolver<object?>(resolve) });
+            Arguments = arguments, Resolver = new FuncFieldResolver<object?>(c => { State(c).TraceField(c); return resolve(c); }) });
     private static ReadContext State(IResolveFieldContext c) => (ReadContext)c.UserContext["read"]!;
 
     private static ColonistPage ReadPage(IResolveFieldContext c)
@@ -223,15 +235,18 @@ internal sealed class GameQueryEngine
         var name = c.GetArgument<string?>("name");
         var first = c.GetArgument<int?>("first") ?? GameArguments.DefaultPageSize;
         var after = c.GetArgument<string?>("after");
-        var filter = FilterHash(ids, mapId, name);
+        var where = c.Arguments != null && c.Arguments.TryGetValue("where", out var predicate) ? predicate.Value : null;
+        var filter = FilterHash(ids, mapId, name, where);
         var lastId = DecodeCursor(after, state.Session.LoadEpoch, filter);
         var found = new List<GameEntity>();
+        var matches = state.Matcher("Pawn", where);
         foreach (var entity in state.Colonists())
         {
             state.Check();
             if (lastId != null && StringComparer.Ordinal.Compare(entity.Id, lastId) <= 0) continue;
             if (ids != null && !ids.Contains(entity.Id) || mapId != null && entity.MapId != mapId) continue;
             if (name != null && ((string?)state.Read("Colonist", entity, "name"))?.IndexOf(name, StringComparison.OrdinalIgnoreCase) is not >= 0) continue;
+            if (!matches(entity)) continue;
             found.Add(entity);
             if (found.Count > first) break;
         }
@@ -240,9 +255,9 @@ internal sealed class GameQueryEngine
             state.Session.LoadEpoch + "\n" + filter + "\n" + page.Nodes.Last().Id));
         return page;
     }
-    private static string FilterHash(string[]? ids, string? map, string? name) => Hash(new JObject {
+    private static string FilterHash(string[]? ids, string? map, string? name, object? where = null) => Hash(new JObject {
         ["ids"] = ids == null ? JValue.CreateNull() : new JArray(ids.OrderBy(x => x, StringComparer.Ordinal)),
-        ["mapId"] = map, ["name"] = name?.ToUpperInvariant(),
+        ["mapId"] = map, ["name"] = name?.ToUpperInvariant(), ["where"] = where == null ? JValue.CreateNull() : JToken.FromObject(where),
     }.ToString(Formatting.None));
     private static string? DecodeCursor(string? cursor, string epoch, string filter)
     {
@@ -316,9 +331,10 @@ internal sealed class GameQueryEngine
                 if (type == schema.Query && field.Name.StringValue == "colonists")
                 {
                     var ids = args["ids"] == null || args["ids"]!.Type == JTokenType.Null ? null : args["ids"] is JArray array ? array.Values<string>().ToArray() : new[] { (string)args["ids"]! };
-                    DecodeCursor((string?)args["after"], session.LoadEpoch, FilterHash(ids!, (string?)args["mapId"], (string?)args["name"]));
+                    DecodeCursor((string?)args["after"], session.LoadEpoch, FilterHash(ids!, (string?)args["mapId"], (string?)args["name"], args["where"]));
                 }
                 if (type == schema.Query && field.Name.StringValue is "things" or "thing_defs") ThingPaging.ValidateCursor(args, session.LoadEpoch);
+                if (args["where"] != null && args["where"]!.Type != JTokenType.Null && SelectionConditions.Element(definition) is IGraphType element) conditions.Compile(element.Name, args["where"]);
                 var childMultiplier = multiplier;
                 if (definition.Metadata.TryGetValue("list_default", out var defaultSize))
                 {
@@ -401,10 +417,13 @@ internal sealed class GameQueryEngine
             else if (value is JObject) MarkIncompletePages(value, field.SelectionSet, childType, issues, childPath);
         }
     }
-    private static JToken Value(GraphQLValue value, JObject variables) => value switch {
+    internal static JToken Value(GraphQLValue value, JObject variables) => value switch {
         GraphQLVariable v => variables[v.Name.StringValue]?.DeepClone() ?? JValue.CreateNull(),
         GraphQLBooleanValue v => new JValue(v.BoolValue),
         GraphQLIntValue v => new JValue(long.Parse(v.Value.ToString(), CultureInfo.InvariantCulture)),
+        GraphQLFloatValue v => new JValue(double.Parse(v.Value.ToString(), CultureInfo.InvariantCulture)),
+        GraphQLEnumValue v => new JValue(v.Name.StringValue),
+        GraphQLObjectValue v => v.Fields == null ? new JObject() : new JObject(v.Fields.Select(f => new JProperty(f.Name.StringValue, Value(f.Value, variables)))),
         GraphQLStringValue v => new JValue(v.Value.ToString()),
         GraphQLNullValue => JValue.CreateNull(),
         GraphQLListValue v => v.Values is null

@@ -1,16 +1,21 @@
 # N.E.K.O RimWorld Bridge
 
+**Evaluation status:** the current v1.3 candidate did not meet the Agent quality objective. This experimental implementation is retained for review; it is not promoted to the stable branch or released.
+
 Read-only RimWorld 1.6 bridge kernel for the N.E.K.O integration.
 
 ## Current development state
 
-This checkout contains the 1.2 development candidate; version metadata remains
-at 1.0.0. Resource reports publish `resource_evidence.v2`, grouping each quantity
-with its scope and read status. Native medicine filtering is available through
-`thing_defs(isMedicine:true)` or the template target's `is_medicine` selector.
-See [PROTOCOL.md](PROTOCOL.md) for the contract changes. Use a plugin that accepts
-v2 to enable the new resource-report mode; older plugins retain exact/template
-queries. These changes are not a claim that all Agent answers are correct.
+This checkout contains the unreleased v1.3 development candidate; version
+metadata remains1.0.0 until validation and release. Resource reports publish
+resource_evidence.v3, with shared definition/instance conditions and optional
+whole-request physical totals. No focus preset or dedicated medicine selector
+exists in the new catalog. Native ThingDef.IsMedicine is an ordinary field.
+
+All public query result types use observed_values.v1 descriptions for faithful
+references. The same schema-driven condition engine serves native, template
+and frozen execution. See [PROTOCOL.md](PROTOCOL.md). Software tests and local
+presentation checks are not a claim of improved complete-Agent answers.
 
 ## Identity
 

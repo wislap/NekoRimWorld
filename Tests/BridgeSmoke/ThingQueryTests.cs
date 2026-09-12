@@ -54,6 +54,19 @@ internal static class ThingQueryTests
             source = new Data(); var bad = Exact(engine, source, invalid);
             Require(bad.Status == "failed" && source.Reads.Count == 0, "invalid native query performed reads: " + invalid);
         }
+        source = new Data { MixedComponents = true };
+        var aliases = Exact(engine, source, "{thing(id:\"thing1\"){AllComps{items{... on CompQuality{x:Quality} ... on CompRottable{x:Stage}}}}}");
+        Require(aliases.Status == "ok", "polymorphic alias query failed");
+        var descriptions = (JObject)aliases.Execution!["evidence"]!["nodes"]!;
+        Require((string?)descriptions["/thing/AllComps/items/0/x"]?["native"] == "CompQuality.Quality" &&
+            (string?)descriptions["/thing/AllComps/items/1/x"]?["native"] == "CompRottable.Stage", "array descriptors relabeled polymorphic aliases: " + string.Join(";", descriptions.Properties().Where(p => p.Name.EndsWith("/x")).Select(p => p.ToString())));
+        var emptyWindow = Exact(engine, source, "{thing(id:\"thing1\"){AllComps(offset:2){items{ref}}}}");
+        var windowRef = (string)emptyWindow.Execution!["evidence"]!["nodes"]!["/thing/AllComps/items"]!["context_ref"]!;
+        var window = emptyWindow.Execution!["evidence"]!["contexts"]![windowRef]!;
+        Require((int?)window["window"]!["offset"] == 2 && (int?)window["window"]!["total"] == 2 &&
+            (bool?)window["window"]!["selected_fields_complete"] == true, "empty citation lost window coverage");
+        Require((int?)window["Thing.AllComps"]!["first"] == 20, "result descriptor dropped defaulted arguments");
+
         var ctx = new ReadContext(new Data(), Session, 1000);
         var sharedHolder = new object();
         Require(ctx.NativeReference(sharedHolder) == ctx.NativeReference(sharedHolder), "one holder acquired different refs");
@@ -77,7 +90,7 @@ internal static class ThingQueryTests
     private sealed class Data : IGameData, IThingData
     {
         public readonly List<string> Reads = new();
-        public bool FailRot;
+        public bool FailRot, MixedComponents;
         public static GameNode Thing(string id) => new("Thing", id, new GameEntity(id, "map1", id), id);
         private static GameNode Child(GameNode parent, string kind, string key) => new(kind, key, parent.Owner, key);
         public IEnumerable<GameEntity> Maps() { Reads.Add("Maps"); yield return new GameEntity("map1", null, "map1"); }
@@ -100,8 +113,9 @@ internal static class ThingQueryTests
             if (n.Kind == "Thing") return f switch {
                 "id" => n.Key, "runtimeType" => "Verse.ThingWithComps", "stackCount" => 7,
                 "def" => Child(n,"ThingDef","def"), "HitPoints" or "MaxHitPoints" => 50,
-                "AllComps" => new[] { Child(n,"CompRottable",n.Key+"/comp0"), Child(n,"UnsupportedThingComp",n.Key+"/comp1"), Child(n,"CompRottable",n.Key+"/comp2") }, _ => null };
+                "AllComps" => MixedComponents ? new[] { Child(n,"CompQuality",n.Key+"/q"), Child(n,"CompRottable",n.Key+"/r") } : new[] { Child(n,"CompRottable",n.Key+"/comp0"), Child(n,"UnsupportedThingComp",n.Key+"/comp1"), Child(n,"CompRottable",n.Key+"/comp2") }, _ => null };
             if (n.Kind == "ThingDef") return f switch { "defName" => "Steel", "category" => "Item", "thingClass" => "Verse.ThingWithComps", _ => "Steel" };
+            if (n.Kind == "CompQuality") return f == "Quality" ? "Good" : n.Key;
             if (n.Kind is "CompRottable" or "UnsupportedThingComp")
             {
                 if (f == "Stage" && FailRot) throw new InvalidOperationException("mod getter failure");

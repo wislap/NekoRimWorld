@@ -10,6 +10,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../../Source/ResultEvidence.cs" Link="ResultEvidence.cs" />
+    <Compile Include="../../Source/SelectionConditions.cs" Link="SelectionConditions.cs" />
     <Compile Include="..\..\Source\ResourceReports.cs" Link="ResourceReports.cs" />
     <Compile Include="..\..\Source\ThingSchema.cs" Link="ThingSchema.cs" />
     <Compile Include="..\..\Source\PawnSchema.cs" Link="PawnSchema.cs" />

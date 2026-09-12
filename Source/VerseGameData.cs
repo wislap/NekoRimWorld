@@ -5,8 +5,14 @@ using Verse;
 
 namespace Neko.RimWorld;
 
-internal sealed class VerseGameData : IGameData, IThingData, IResourceData
+internal sealed class VerseGameData : IGameData, IThingData, IResourceData, IQueryData
 {
+    public IEnumerable<GameNode> QueryThings(IReadOnlyDictionary<string, object?> args, ReadContext context, Func<GameNode,bool>? definitionFilter = null) => ThingData.QueryThings(args, context,definitionFilter);
+    public IEnumerable<GameEntity> QueryPawns(IReadOnlyDictionary<string, object?> args, ReadContext context)
+    {
+        foreach (var node in ThingData.QueryThings(new Dictionary<string,object?>(args) { ["includeHeld"] = true, ["visibleOnly"] = false },context,requestGroup:ThingRequestGroup.Pawn))
+            if (node.Handle is Pawn pawn) yield return new GameEntity(pawn.GetUniqueLoadID(),pawn.MapHeld?.GetUniqueLoadID(),pawn);
+    }
     public bool ResourceDefinitionExists(string name, ReadContext context) => VerseResourceData.DefinitionExists(name, context);
     public IEnumerable<ResourceItem> ResourceItems(string mapId, string scope, bool visibleOnly, string[]? definitions, ReadContext context) => VerseResourceData.Items(mapId, scope, visibleOnly, definitions, context);
     public object? NativeRoot(string root, IReadOnlyDictionary<string, object?> args, ReadContext context) => ThingData.Root(root, args, context);
@@ -34,7 +40,10 @@ internal sealed class VerseGameData : IGameData, IThingData, IResourceData
     };
     public object? MapField(GameEntity entity, string field)
     {
-        var map = (Map)entity.Handle;
+        return ReadMap((Map)entity.Handle,field);
+    }
+    internal static object? ReadMap(Map map,string field)
+    {
         if (map.Disposed) throw new InvalidOperationException();
         return field switch
         {

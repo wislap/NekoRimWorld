@@ -1,3 +1,5 @@
+> **v1.4 query contract:** wire v2 envelopes are unchanged. `query_catalog.public_query` advertises `public_query.v1`; `query` takes `{requests:[{from,args?,where?,select?,aggregate?,group_by?,order_by?,limit?,offset?}]}`. `describe_query` takes `{types:[...]}` and returns metadata only. Query results include effective scope, scan/field completeness, fresh-observation paging and measures with explicit units. Legacy `observed_values.v1` applies only to legacy operations.
+
 # N.E.K.O RimWorld protocol v2
 
 The executable contract is Source/Protocol.cs and the Python plugin protocol.py.

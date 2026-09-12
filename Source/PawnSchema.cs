@@ -80,7 +80,7 @@ internal static class PawnSchema
         Child(condition, "part", part); Child(condition, "tending", tending); Child(condition, "immunity", immunity);
         Child(profile, "age", age); Collection(profile, "backstories", backstory);
         Collection(profile, "traits", trait); Collection(profile, "skills", skill);
-        var pawn = new ObjectGraphType { Name = "Pawn", Description = "Currently addressable spawned free colonist on a loaded map. Stable identity joins selected nested sections." };
+        var pawn = new ObjectGraphType { Name = "Pawn", Description = "Addressable pawn. The selected root determines population: spawned_free_colonists versus all loaded-map pawns. Stable identity joins selected facts." };
         foreach (var field in new[] { "id", "name", "mapId" })
         {
             var name = field;

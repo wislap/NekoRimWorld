@@ -24,6 +24,7 @@ internal sealed class GameQueryEngine
     private readonly GraphQLSerializer serializer = new();
     private readonly TemplateCatalog templates;
     private readonly SelectionConditions conditions;
+    private readonly PublicQuery publicQuery;
     private readonly JObject catalog;
     private readonly double readBudgetMs;
     public GameQueryEngine(double readBudgetMs = 12)
@@ -33,6 +34,7 @@ internal sealed class GameQueryEngine
         SelectionConditions.Install(schema);
         schema.Initialize();
         conditions = new SelectionConditions(schema);
+        publicQuery = new PublicQuery(schema, conditions);
         templates = new TemplateCatalog(schema);
         var sdl = schema.Print();
         var specification = new JObject {
@@ -47,10 +49,11 @@ internal sealed class GameQueryEngine
                     'variables':{'type':'object'}},'required':['document'],'additionalProperties':false}"),
             ["query_rules"] = "Read-only query; one operation. Aliases, variables and bounded inline type fragments supported; named fragments/directives/introspection/mutation unavailable. Native things/thing_defs/map targets expose selected original members, holders and storage groups. Thing group HaulableEver is not current hauling eligibility. Unknown component classes return metadata, not reflected fields. Exact native type/member descriptions are available using describe_game_schema. Target pawn by stable ID, then combine status/mood/health/equipment/profile. colonists locates spawned free colonists (not caravans/prisoners); first 1..50 default20. Nested slices use first 1..100 default20, offset 0..8192; offset continuation samples current data, not frozen history. Slice complete=false means selected fields failed; nextOffset is then null. Thought ref is observation-local. UI-visible thoughts/conditions are default; visibleOnly=false must be explicit. Discover StatDef names via pawn.statDefinitions(search), then request stats(defNames). Null without an issue can mean not applicable; observed empty lists have total=0. Limits: depth12, fields512, combined nested cost20000.",
         };
-        specification["result_description_contract"] = new JObject { ["version"] = ResultEvidence.Version, ["coverage"] = "All public game query result types; metadata queries are not game observations." };
+        specification["result_description_contract"] = new JObject { ["version"] = ResultEvidence.Version, ["coverage"] = "Legacy graphql/template/resource operations. The query operation uses public_query instead; metadata queries are not observations." };
         specification["selection_contract"] = SelectionConditions.Contract();
         specification["resource_parameters"] = ResourceReports.Parameters();
         specification["resource_contract"] = ResourceReports.Contract();
+        specification["public_query"] = publicQuery.Catalog();
         specification["schema_id"] = Hash(specification.ToString(Formatting.None));
         catalog = specification;
         // Validate every template against the actual executable schema before advertising it.
@@ -72,6 +75,13 @@ internal sealed class GameQueryEngine
     {
         try
         {
+            if (operation == "query") return publicQuery.Execute(arguments, source, session, readBudgetMs, catalog["schema_id"]!.ToString());
+            if (operation == "describe_query")
+            {
+                ExactKeys(arguments, new[] { "types" });
+                if (arguments["types"] is not JArray types || types.Count is < 1 or > 8 || types.Any(t => t.Type != JTokenType.String)) throw ReadContext.Error("invalid_arguments", "types needs 1..8 public type names.");
+                return new QueryOutcome { Data = new JObject { ["metadata_only"] = true, ["schema_id"] = catalog["schema_id"], ["types"] = publicQuery.Describe(types.Values<string>().Select(t => t!)) } };
+            }
             if (operation == "resource_report") return ResourceReports.Execute(arguments, source, session, readBudgetMs, catalog["schema_id"]!.ToString(), conditions);
             if (operation == "query_catalog")
             {
@@ -179,6 +189,14 @@ internal sealed class GameQueryEngine
         DataField(map, "colonistCount", new IntGraphType(), "Number of spawned free colonists; excludes caravans/prisoners.");
         DataField(map, "hasVisibleThreat", new BooleanGraphType(), "Game-provided active visible hostile threat signal, not an overall safety assessment.");
         var native = new ThingSchema();
+        // The list view and a map reference expose the same facts. Resolver storage handles may differ.
+        foreach (var name in new[] { "haulDestinationManager", "resourceCounter" }) {
+            var field = native.Map.GetField(name)!;
+            Field(map,name,field.ResolvedType!,c => {
+                var node = (GameNode)State(c).NativeRoot("map",new Dictionary<string,object?> { ["id"] = ((GameEntity)c.Source!).Id })!;
+                return State(c).ReadNode(node,name);
+            });
+        }
         var pawn = PawnSchema.Build(native);
         var pageInfo = new ObjectGraphType { Name = "PageInfo", Description = "A cursor applies to the same load and filters; partial pages return no advancing cursor." };
         Field(pageInfo, "hasNextPage", new NonNullGraphType(new BooleanGraphType()), c => ((ColonistPage)c.Source!).HasNextPage);

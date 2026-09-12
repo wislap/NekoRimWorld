@@ -1,3 +1,5 @@
+> **v1.4 development:** Adds `query` / `describe_query`, a canonical field registry over the existing schema, bounded related reads and whole-selection aggregates. Loaded-map holder populations and native counters retain distinct semantics. Existing GraphQL/templates/resource operations remain developer/legacy compatibility. Read budget remains12ms; version metadata remains1.0.0 until promotion.
+
 # N.E.K.O RimWorld Bridge
 
 **Evaluation status:** the current v1.3 candidate did not meet the Agent quality objective. This experimental implementation is retained for review; it is not promoted to the stable branch or released.

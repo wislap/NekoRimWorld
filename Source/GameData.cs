@@ -59,7 +59,8 @@ internal sealed class ReadContext
     private Stopwatch? clock;
     private List<GameEntity>? maps;
     private List<GameEntity>? colonists;
-    private readonly Dictionary<string, object?> values = new();
+    private readonly Dictionary<object, object?> values = new();
+    private readonly Dictionary<object,string> argumentKeys = new(new ReferenceComparer());
     private readonly Dictionary<object, int> nativeReferences = new(new ReferenceComparer());
     public string NativeReference(object value)
     {
@@ -132,7 +133,7 @@ internal sealed class ReadContext
     {
         if (entity != null && field == "id") return entity.Id;
         if (entity != null && field == "mapId") return entity.MapId;
-        return Cached(new JArray(kind, entity?.Id ?? "", field).ToString(Formatting.None), () => kind == "Game" ? source.GameField(field) :
+        return Cached((kind, entity?.Id ?? "", field), () => kind == "Game" ? source.GameField(field) :
             kind == "Map" ? source.MapField(entity!, field) : source.ColonistField(entity!, field));
     }
     public object? NativeRoot(string root, IReadOnlyDictionary<string, object?> args) => Cached("root:" + root + ":" + JObject.FromObject(args).ToString(Formatting.None), () => source is IThingData native ? native.NativeRoot(root, args, this) : throw Error("unsupported_target", "Native Thing data is unavailable."));
@@ -147,9 +148,13 @@ internal sealed class ReadContext
         }
         if (node.Kind == "Thought" && field == "referenceScope") return "observation";
         var args = arguments ?? new Dictionary<string, object?>();
-        var key = new JArray(node.Owner.Id, node.Kind, node.Key, field,
-            JObject.FromObject(args.OrderBy(x => x.Key, StringComparer.Ordinal).ToDictionary(x => x.Key, x => x.Value)))
-            .ToString(Formatting.None);
+        // Query arguments are immutable for a read. Avoid JSON allocation for every scalar on every object.
+        var signature = "";
+        if (args.Count > 0 && !argumentKeys.TryGetValue(args,out signature)) {
+            signature = JObject.FromObject(args.OrderBy(x => x.Key,StringComparer.Ordinal).ToDictionary(x => x.Key,x => x.Value)).ToString(Formatting.None);
+            argumentKeys[args] = signature;
+        }
+        var key = (node.Owner.Id,node.Kind,node.Key,field,signature);
         return Cached(key, () => {
             var value = source is IThingData native ? native.NativeField(node, field, args, this) : source.NodeField(node, field, args);
             if (value is IEnumerable<GameNode> sequence)
@@ -174,7 +179,7 @@ internal sealed class ReadContext
         rows = Filter(rows, elementType, args.TryGetValue("where", out var where) ? where : null).Cast<GameNode>().ToList();
         return new NodeSlice { Items = rows.Skip(offset).Take(first).ToList(), Total = rows.Count, Offset = offset };
     }
-    private object? Cached(string key, Func<object?> read)
+    private object? Cached(object key, Func<object?> read)
     {
         if (Thread.CurrentThread.ManagedThreadId != threadId) throw Error("wrong_thread", "Invalid game thread.");
         if (values.TryGetValue(key, out var cached)) return cached;

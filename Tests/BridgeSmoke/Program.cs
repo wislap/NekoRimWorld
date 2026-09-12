@@ -20,6 +20,7 @@ internal static class Program
             QueryEngineTests.Run();
             SelectionTests.Run();
             ThingQueryTests.Run();
+            PublicQueryTests.Run();
             ResourceReportTests.Run();
             ProtocolRoundTrip();
             AuthenticationMatchesCrossLanguageVector();

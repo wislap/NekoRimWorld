@@ -42,15 +42,16 @@ internal sealed class ThingSchema
         Scalars(reference, "s:id s:runtimeType"); Link(reference, "def", Def);
         var holder = Type("ThingHolder", "IThingHolder reference. ref is observation-scoped; runtimeType does not imply Pawn. Thing id is present only for Thing holders.");
         Scalars(holder, "s:ref s:runtimeType s:thingId");
+        Link(holder,"parent",holder,"Native IThingHolder.ParentHolder. Follow this relation to identify containing pawns or root holders; refs remain observation-local.",referenceOnly:true);
         var owner = Type("ThingOwner", "Verse.ThingOwner native holder and contents. items is a bounded enumeration wrapper.");
-        Link(owner, "Owner", holder); Scalars(owner, "i:Count i:TotalStackCount"); Slice(owner, "items", Thing);
+        Link(owner, "Owner", holder, referenceOnly: true); Scalars(owner, "i:Count i:TotalStackCount"); Slice(owner, "items", Thing);
         var position = Type("IntVec3", "Verse.IntVec3 integer coordinates; map identity is read separately.");
         Scalars(position, "i:x i:y i:z");
         Scalars(Thing, "s:id s:runtimeType s:Label i:stackCount i:HitPoints i:MaxHitPoints b:Spawned b:Destroyed b:IngestibleNow");
         Link(Thing, "def", Def); Link(Thing, "Stuff", Def);
-        Link(Thing, "Map", Map); Link(Thing, "MapHeld", Map);
+        Link(Thing, "Map", Map, referenceOnly: true); Link(Thing, "MapHeld", Map, referenceOnly: true);
         Link(Thing, "Position", position); Link(Thing, "PositionHeld", position);
-        Link(Thing, "holdingOwner", owner); Link(Thing, "ParentHolder", holder);
+        Link(Thing, "holdingOwner", owner, referenceOnly: true); Link(Thing, "ParentHolder", holder, referenceOnly: true);
         Link(Thing, "InnerThing", reference, "RimWorld.MinifiedThing.InnerThing; null for other runtime types. Outer and inner identity are not interchangeable.");
         Link(Thing, "InnerPawn", reference, "Verse.Corpse.InnerPawn; reference only, null for other runtime types.");
         Link(Thing, "GetDirectlyHeldThings", owner, "IThingHolder.GetDirectlyHeldThings for supported holders. Unsupported holders produce an issue, not an empty container.");
@@ -59,12 +60,17 @@ internal sealed class ThingSchema
         Link(Carry, "innerContainer", owner); Link(Carry, "CarriedThing", Thing);
 
         var category = Type("ThingCategoryDef", "Verse.ThingCategoryDef reference and parent; not the ThingCategory enum.");
-        Scalars(category, "s:defName s:label"); Link(category, "parent", category);
+        Scalars(category, "s:defName s:label"); Link(category, "parent", category, referenceOnly: true);
         var ingestible = Type("IngestibleProperties", "RimWorld.IngestibleProperties definition data; HumanEdible is not a pawn-specific permission.");
         Scalars(ingestible, "s:foodType s:drugCategory b:HumanEdible b:IsMeal f:CachedNutrition i:maxNumToIngestAtOnce");
         var compDef = Type("CompProperties", "Verse.CompProperties metadata. compClass names the component class; runtimeType names its properties class. Unknown fields are not reflected.");
         Scalars(compDef, "s:runtimeType s:compClass");
         Scalars(Def, "s:defName s:label s:thingClass s:category i:stackLimit b:alwaysHaulable b:designateHaulable b:EverHaulable b:IsMedicine b:IsWeapon b:IsIngestible b:CountAsResource");
+        Def.GetField("IsWeapon")!.Description = "Native attack-capable Item with verbs/tools, excluding apparel. Includes improvised weapons; not an exclusive content category.";
+        Def.GetField("CountAsResource")!.Description = "Native resourceReadoutPriority != Uncounted. Readout classification, not all possessions or all useful items.";
+        Def.GetField("IsIngestible")!.Description = "Native ingestible properties exist; includes plants and non-human food. Not a human-food inventory category. Combine with native Item category when counting food items.";
+        Def.GetField("IsMedicine")!.Description = "Native definition contains a MedicalPotency base stat; not current treatment eligibility.";
+        Def.GetField("EverHaulable")!.Description = "Native alwaysHaulable || designateHaulable; not current pawn-specific reachability, reservation or permission.";
         Slice(Def, "thingCategories", category); Slice(Def, "comps", compDef); Link(Def, "ingestible", ingestible);
         var stat = Type("NativeStat", "Explicit game-computed StatDef value for a Thing; valueText is game formatted. This is not a raw instance field.");
         Scalars(stat, "s:defName s:label f:value s:valueText");
@@ -99,7 +105,8 @@ internal sealed class ThingSchema
         var storageParent = Type("StorageParent", "Native ISlotGroupParent reference (zone or storage building); not necessarily an IThingHolder.");
         Scalars(storageParent, "s:ref s:runtimeType s:thingId");
         var slot = Type("SlotGroup", "Native SlotGroup: HeldThings reads storage cells; these things remain map things. ref is observation-scoped.");
-        Scalars(slot, "s:ref s:GroupingLabel i:HeldThingsCount"); Link(slot, "parent", storageParent);
+        Link(Thing,"StorageGroup",slot,"Membership in a storage cell for an EverStorable spawned Thing. Overlaps map membership; not acceptance by current storage settings. Null for held/non-storable objects.",referenceOnly:true);
+        Scalars(slot, "s:ref s:GroupingLabel i:HeldThingsCount"); Link(slot, "parent", storageParent, referenceOnly: true);
         Slice(slot, "CellsList", position); Slice(slot, "HeldThings", Thing); Link(slot, "Settings", settings);
         var destinations = Type("HaulDestinationManager", "Native map storage groups, not arbitrary ThingOwner containers.");
         Slice(destinations, "AllGroupsListForReading", slot);
@@ -107,7 +114,10 @@ internal sealed class ThingSchema
         Link(count, "key", Def); Scalars(count, "i:value");
         var counter = Type("ResourceCounter", "Game's cached stored-resource counts; not all map things or held inventory. Game filters and update cadence apply. Read never forces an update.");
         Slice(counter, "AllCountedAmounts", count); Scalars(counter, "f:TotalHumanEdibleNutrition");
-        Scalars(Map, "s:id"); Link(Map, "haulDestinationManager", destinations); Link(Map, "resourceCounter", counter);
+        Scalars(Map, "s:id s:name b:isCurrent b:isPlayerHome i:colonistCount b:hasVisibleThreat"); Link(Map, "haulDestinationManager", destinations); Link(Map, "resourceCounter", counter);
+        Map.GetField("id")!.ResolvedType = new NonNullGraphType(new IdGraphType());
+        foreach (var name in new[] { "name","isCurrent","isPlayerHome","colonistCount","hasVisibleThreat" })
+            Map.GetField(name)!.Description = "Game-derived map summary, using the same reader and meaning as Map." + name + ".";
         thingPage = Page("ThingPage", Thing); defPage = Page("ThingDefPage", Def);
     }
 
@@ -153,10 +163,11 @@ internal sealed class ThingSchema
             field.Description = name is "id" or "ref" or "runtimeType" or "supportedType" or "supported" ? "Transport metadata; not a native gameplay member." : "Native " + type.Name + "." + name + "; selected getter only. Null without issue means not applicable; issue means failed/unavailable.";
         }
     }
-    private static void Link(ObjectGraphType type, string name, ObjectGraphType child, string? description = null)
+    private static void Link(ObjectGraphType type, string name, ObjectGraphType child, string? description = null, bool referenceOnly = false)
     {
         var field = PawnSchema.Add(type, name, child, c => State(c).ReadNode((GameNode)c.Source!, name, Args(c)));
         field.Description = description ?? "Native " + type.Name + "." + name + " reference; only selected child members are read.";
+        if (referenceOnly) field.Metadata["default_reference"] = true;
     }
     private static void Slice(ObjectGraphType type, string name, IGraphType item, QueryArguments? extra = null, int maximum = 100) => PawnSchema.Collection(type, name, item, extra, maximum);
 }

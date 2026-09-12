@@ -21,6 +21,41 @@ internal static class ThingData
     private static string TypeOf(object value) => value.GetType().FullName ?? value.GetType().Name;
     private static string Ref(GameNode node, ReadContext context) => context.NativeReference(node.Handle!);
 
+    internal static IEnumerable<GameNode> QueryThings(IReadOnlyDictionary<string,object?> args, ReadContext context,Func<GameNode,bool>? definitionFilter = null, ThingRequestGroup requestGroup = ThingRequestGroup.Everything)
+    {
+        var mapId = args.TryGetValue("mapId",out var id) ? id as string : null;
+        var maps = Find.Maps.Where(m => !m.Disposed && (mapId == null || m.GetUniqueLoadID() == mapId)).ToArray();
+        if (mapId != null && maps.Length == 0) throw ReadContext.Error("object_unavailable","Selected map is not loaded.");
+        var includeHeld = !args.TryGetValue("includeHeld",out var held) || held is not false;
+        var visible = !args.TryGetValue("visibleOnly",out var vis) || vis is not false;
+        var unreal = args.TryGetValue("includeUnreal",out var un) && un is true;
+        var names = Strings(args,"defNames");
+        var defs = names?.Select(n => DefDatabase<ThingDef>.GetNamedSilentFail(n) ?? throw ReadContext.Error("unknown_definition","Unknown ThingDef: " + n)).ToArray();
+        var seen = new HashSet<Thing>(new IdentityComparer<Thing>());
+        var definitionMatches = new Dictionary<ThingDef,bool>();
+        bool Selected(Thing t) {
+            if (t.Destroyed || !requestGroup.Includes(t.def) || names != null && !names.Contains(t.def.defName) || visible && (!t.SpawnedOrAnyParentSpawned || t.PositionHeld.Fogged(t.MapHeld))) return false;
+            if (definitionFilter == null) return true;
+            if (!definitionMatches.TryGetValue(t.def,out var matches)) definitionMatches.Add(t.def,matches = definitionFilter(Definition(t.def)));
+            return matches;
+        }
+        foreach (var map in maps)
+        {
+            var spawned = defs == null ? map.listerThings.ThingsInGroup(requestGroup).AsEnumerable() : defs.SelectMany(d => map.listerThings.ThingsOfDef(d));
+            foreach (var thing in spawned) { context.Check(); if (Selected(thing) && seen.Add(thing)) yield return Node(thing); }
+            if (!includeHeld) continue;
+            // Holder traversal is independent of emitted objects: a spawned container can still contain unseen things.
+            var visited = new HashSet<IThingHolder>(new IdentityComparer<IThingHolder>()) { map };
+            var discovered = new HashSet<Thing>(new IdentityComparer<Thing>());
+            // Map.GetDirectlyHeldThings is the entire spawned collection, already enumerated above.
+            // Start at child holders so indexed reads do not rescan every plant/wall through the map owner.
+            var children = new List<IThingHolder>(); map.GetChildHolders(children);
+            foreach (var child in children)
+                foreach (var thing in Descendants(child,context,visited,discovered,0))
+                    if ((unreal || thing.ParentHolder == null || ThingOwnerUtility.AreImmediateContentsReal(thing.ParentHolder)) && Selected(thing) && seen.Add(thing)) yield return Node(thing);
+        }
+    }
+
     public static object? Root(string root, IReadOnlyDictionary<string, object?> args, ReadContext context)
     {
         string? Text(string key) => args.TryGetValue(key, out var value) ? value as string : null;
@@ -49,7 +84,7 @@ internal static class ThingData
             }
             throw ReadContext.Error("object_unavailable", "Thing ID was not found in loaded maps and their holder trees. IDs can disappear after stack changes.");
         }
-        if (root == "thing_defs")
+        if (root is "thing_defs" or "query_defs")
         {
             var categoryName = Text("categoryDefName");
             var category = categoryName == null ? null : DefDatabase<ThingCategoryDef>.GetNamedSilentFail(categoryName);
@@ -64,7 +99,7 @@ internal static class ThingData
                     yield return Definition(def);
                 }
             }
-            return ThingPaging.Page(Definitions(), args, context);
+            return root == "query_defs" ? Definitions() : ThingPaging.Page(Definitions(), args, context);
         }
         if (root != "things") throw ReadContext.Error("unknown_target", "Unsupported native target.");
         var groupName = Text("requestGroup") ?? "HaulableEver";
@@ -130,6 +165,7 @@ internal static class ThingData
                 "Stuff" => t.Stuff == null ? null : Definition(t.Stuff), "HitPoints" => t.def.useHitPoints ? (int?)t.HitPoints : null,
                 "MaxHitPoints" => t.def.useHitPoints ? (int?)t.MaxHitPoints : null, "Spawned" => t.Spawned, "Destroyed" => t.Destroyed,
                 "Map" => t.Map == null ? null : MapNode(t.Map), "MapHeld" => t.MapHeld == null ? null : MapNode(t.MapHeld),
+                "StorageGroup" => t.Spawned && t.def.EverStorable(false) && t.GetSlotGroup() is SlotGroup storage ? Wrap(node,"SlotGroup","storage",storage) : null,
                 "Position" => t.Spawned ? Wrap(node, "IntVec3", field, t.Position) : null,
                 "PositionHeld" => t.SpawnedOrAnyParentSpawned ? Wrap(node, "IntVec3", field, t.PositionHeld) : null,
                 "holdingOwner" => Wrap(node, "ThingOwner", field, t.holdingOwner), "ParentHolder" => Wrap(node, "ThingHolder", field, t.ParentHolder),
@@ -156,9 +192,10 @@ internal static class ThingData
         if (node.Kind == "NativeMap")
         {
             var map = (Map)h; if (map.Disposed) throw ReadContext.Error("object_unavailable", "Map was unloaded.");
-            return field switch { "id" => map.GetUniqueLoadID(), "haulDestinationManager" => Wrap(node, "HaulDestinationManager", field, map.haulDestinationManager), "resourceCounter" => Wrap(node, "ResourceCounter", field, map.resourceCounter), _ => Unknown(node, field) };
+            return field switch { "id" => map.GetUniqueLoadID(), "haulDestinationManager" => Wrap(node, "HaulDestinationManager", field, map.haulDestinationManager), "resourceCounter" => Wrap(node, "ResourceCounter", field, map.resourceCounter), "name" or "isCurrent" or "isPlayerHome" or "colonistCount" or "hasVisibleThreat" => VerseGameData.ReadMap(map,field), _ => Unknown(node, field) };
         }
         if (node.Kind == "IntVec3") { var pos = (IntVec3)h; return field switch { "x" => pos.x, "y" => pos.y, "z" => pos.z, _ => Unknown(node, field) }; }
+        if (node.Kind == "ThingHolder" && field == "parent") return Wrap(node,"ThingHolder","parent",((IThingHolder)h).ParentHolder);
         if (node.Kind is "ThingHolder" or "StorageParent") return field == "thingId" ? (h as Thing)?.GetUniqueLoadID() : Unknown(node, field);
         if (node.Kind == "ThingOwner") { var owner = (ThingOwner)h; return field switch { "Owner" => Wrap(node, "ThingHolder", field, owner.Owner), "Count" => owner.Count, "TotalStackCount" => owner.TotalStackCount, "items" => owner.Select(t => Node(t)), _ => Unknown(node, field) }; }
         if (node.Kind == "Pawn_EquipmentTracker") { var t = (Pawn_EquipmentTracker)h; return field switch { "Primary" => t.Primary == null ? null : Node(t.Primary, "ThingReference"), "AllEquipmentListForReading" => t.AllEquipmentListForReading.Select(x => Node(x)), _ => Unknown(node, field) }; }

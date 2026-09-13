@@ -38,6 +38,7 @@ internal sealed class PublicQuery
         public List<(string Name, FieldType Field, Dictionary<string, object?> Args, Selection? Child)> Fields = new();
         public Dictionary<string, Selection> On = new();
         public SelectionConditions.Predicate? Predicate;
+        public JToken Where = new JObject();
         public int Limit = 20;
         public int Offset;
         public List<(string Name, string Op, string? Path)> Measures = new();
@@ -255,6 +256,7 @@ internal sealed class PublicQuery
         if (options["where"] != null) {
             checkPath = SelectionInput.Pointer(inputPath, "where");
             plan.Predicate = conditions.Compile(type,registry.Predicate(type,options["where"]!));
+            plan.Where = options["where"]!.DeepClone();
         }
         if (projection == null) {
             var specified = options["select"];
@@ -541,6 +543,7 @@ internal sealed class PublicQuery
                     collection["scope"] = new JObject {
                         ["relation"] = relation,
                         ["args"] = JObject.FromObject(selected.Args.ToDictionary(a => PublicFields.Name(a.Key),a => a.Value)),
+                        ["where"] = selected.Child.Where.DeepClone(),
                     };
                     result[selected.Name] = collection;
                 }

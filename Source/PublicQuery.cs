@@ -50,6 +50,7 @@ internal sealed class PublicQuery
         public readonly List<QueryIssue> Issues = new();
         public int Objects;
         public readonly JArray Phases = new();
+        public readonly Dictionary<string,string> RelationSemantics = new();
         public readonly Dictionary<(object Value,string Type,string Path),JToken> PathValues = new();
         public Run(ReadContext context) { Context = context; }
         public void Check() { Context.Check(); if (++Objects > 20000) throw ReadContext.Error("query_limit","Query exceeds 20000 projected objects; narrow fields or rows."); }
@@ -59,7 +60,7 @@ internal sealed class PublicQuery
     {
         registry = new PublicFields(schema,conditions); this.conditions = conditions;
         roots = schema.Query!.Fields.ToDictionary(f => f.Name == "colonists" ? "spawned_free_colonists" : PublicFields.Name(f.Name),f => f,StringComparer.Ordinal);
-        roots["things"] = new FieldType { Name = "things", ResolvedType = registry.Type("Thing"), Description = "Things on loaded maps and their holder trees. Default all loaded maps, include_held=true, visible_only=true. Includes buildings/pawns/items: filter definition.category when needed. No caravans or off-map world objects.", Arguments = new QueryArguments(
+        roots["things"] = new FieldType { Name = "things", ResolvedType = registry.Type("Thing"), Description = "Things on the selected loaded maps, with holder contents only when include_held is true. Spawned storage-cell items remain map things when include_held is false. Includes buildings/pawns/items; no caravans or off-map world objects.", Arguments = new QueryArguments(
             GameArguments.Create("mapId",new StringGraphType(),"Loaded map ID; omitted means all loaded maps."),
             GameArguments.Create("includeHeld",new BooleanGraphType(),"Traverse nested holder contents in addition to spawned map Things. false retains spawned map Things, including storage-cell contents. This selects current containment, not player ownership or movement history.",defaultValue:true),
             GameArguments.Create("includeUnreal",new BooleanGraphType(),"Include native unreal contents (e.g. minified inner object/corpse pawn). Default false prevents counting those alongside their wrappers.",defaultValue:false),
@@ -92,10 +93,26 @@ internal sealed class PublicQuery
             foreach (var argument in root.Arguments?.ToArray() ?? Array.Empty<QueryArgument>())
                 if (argument.Name is not ("where" or "first" or "after" or "offset")) arguments[PublicFields.Name(argument.Name)] = PublicFields.ArgumentSchema(argument);
         properties["args"] = new JObject { ["type"] = "object",["properties"] = arguments,["additionalProperties"] = false,["description"] = "Root arguments go ONLY here. Each root accepts the subset in its directory; map_id/current (map root id/current) avoids a preliminary map lookup." };
+        var branches = new JArray(roots.Select(entry => {
+            var fields = new JObject(); var required = new JArray();
+            foreach (var argument in entry.Value.Arguments?.ToArray() ?? Array.Empty<QueryArgument>()) {
+                if (argument.Name is "where" or "first" or "after" or "offset") continue;
+                var key = PublicFields.Name(argument.Name); fields[key] = PublicFields.ArgumentSchema(argument);
+                if (argument.ResolvedType is NonNullGraphType) required.Add(key);
+            }
+            var argsSchema = new JObject { ["type"] = "object",["properties"] = fields,["additionalProperties"] = false };
+            if (required.Count > 0) argsSchema["required"] = required;
+            var branch = new JObject { ["properties"] = new JObject { ["from"] = new JObject { ["const"] = entry.Key },["args"] = argsSchema },["required"] = new JArray("from") };
+            if (required.Count > 0) ((JArray)branch["required"]!).Add("args");
+            return branch;
+        }));
+        catalog["parameters"]!["properties"]!["requests"]!["items"]!["allOf"] = new JArray(new JObject { ["oneOf"] = branches.DeepClone() });
         var envelope = (JObject)catalog["parameters"]!;
         foreach (var property in properties.Properties()) envelope["properties"]![property.Name] = property.Value.DeepClone();
         envelope.Remove("required");
         envelope["oneOf"] = JArray.Parse("[{'required':['from'],'not':{'required':['requests']}},{'required':['requests'],'not':{'required':['from']}}]");
+        envelope["allOf"] = new JArray(new JObject { ["anyOf"] = new JArray(
+            new JObject { ["required"] = new JArray("requests") }, new JObject { ["oneOf"] = branches.DeepClone() }) });
         envelope["description"] = "Send one query directly with from/args/where/select, or send requests:[...] for a shared-sample batch. The query shape is identical; do not mix envelope and query fields.";
         return catalog;
     }
@@ -124,18 +141,15 @@ internal sealed class PublicQuery
             if (!roots.TryGetValue(name,out var root)) throw PublicFields.Error("Unknown from. Available: " + string.Join(", ",roots.Keys));
             var inputPath = direct ? "" : "/requests/" + requests.IndexOf(token);
             var arguments = ArgumentsAt(root, obj["args"], obj["args"] == null ? inputPath : SelectionInput.Pointer(inputPath, "args"), RootType(name));
+            var selection = Compile(RootType(name),obj,0,true,inputPath);
             SelectionConditions.Predicate? definitionFilter = null;
             var fullyPushed = false;
             if (name == "things" && obj["where"] is JObject where)
             {
-                try {
-                var definitionWhere = new JObject(where.Properties().Where(p => p.Name.StartsWith("definition.",StringComparison.Ordinal)).Select(p => new JProperty(p.Name.Substring(11),p.Value.DeepClone())));
-                if (definitionWhere.Count > 0) definitionFilter = conditions.Compile("ThingDef",registry.Predicate("ThingDef",definitionWhere));
-                fullyPushed = definitionWhere.Count > 0 && definitionWhere.Count == where.Count;
-                }
-                catch (ExecutionError error) { throw SelectionInput.Locate(error,SelectionInput.Pointer(inputPath,"where"),"Thing"); }
+                var projected = DefinitionCondition(registry.Predicate("Thing",where),registry.Field("Thing","definition").Name);
+                fullyPushed = projected.Exact;
+                if (projected.Condition != null) definitionFilter = conditions.Compile("ThingDef",projected.Condition);
             }
-            var selection = Compile(RootType(name),obj,0,true,inputPath);
             if (fullyPushed) selection.Predicate = null; // The data source applies the entire validated predicate once per definition.
             plans.Add((name,arguments,selection,definitionFilter,fullyPushed));
         }
@@ -152,14 +166,56 @@ internal sealed class PublicQuery
             };
             var result = Collection(plan.Select, () => ReadRoot(plan.Root,plan.Args,source,state,filter), run,path);
             result["from"] = plan.Root;
-            result["scope"] = new JObject { ["args"] = JObject.FromObject(plan.Args.ToDictionary(p => PublicFields.Name(p.Key),p => p.Value)), ["description"] = roots[plan.Root].Description ?? RootDescription(plan.Root) };
+            result["scope"] = new JObject { ["args"] = JObject.FromObject(plan.Args.ToDictionary(p => PublicFields.Name(p.Key),p => p.Value)), ["description"] = (roots[plan.Root].Description ?? RootDescription(plan.Root)) + " The resolved args and requested where below define this reading; completeness is per aggregate/collection." };
+            result["scope"]!["argument_semantics"] = new JObject((roots[plan.Root].Arguments?.ToArray() ?? Array.Empty<QueryArgument>())
+                .Where(a => plan.Args.ContainsKey(a.Name) && !string.IsNullOrEmpty(a.Description))
+                .Select(a => new JProperty(PublicFields.Name(a.Name),a.Description)));
             result["scope"]!["where"] = requests[results.Count]!["where"]?.DeepClone() ?? new JObject();
             results.Add(result);
         }
-        var data = new JObject { ["results"] = results, ["sample"] = new JObject { ["load_epoch"] = session.LoadEpoch,["game_tick"] = session.GameTick,["sequence"] = session.SnapshotSequence } };
+        var data = new JObject { ["results"] = results, ["relation_semantics"] = JObject.FromObject(run.RelationSemantics), ["sample"] = new JObject { ["load_epoch"] = session.LoadEpoch,["game_tick"] = session.GameTick,["sequence"] = session.SnapshotSequence } };
         if (data.ToString(Formatting.None).Length > 80000) return QueryOutcome.Failure("query_result_too_large","Request fewer fields or displayed rows.");
         return new QueryOutcome { Status = run.Issues.Count == 0 ? "ok" : "partial", Data = data, Issues = run.Issues.Take(256).ToArray(), Execution = new JObject { ["schema_id"] = schemaId,["contract"] = Version,["requests"] = input["requests"]!.DeepClone(),["phases"] = run.Phases } };
     }
+    private static (JObject? Condition,bool Exact) DefinitionCondition(JObject source,string definitionField)
+    {
+        // A necessary definition-only predicate. Non-definition clauses are TOP,
+        // never false; NOT may move only when its whole child is exact.
+        var terms = new List<JObject>(); var exact = true;
+        foreach (var clause in source.Properties()) {
+            JObject? value = null; var complete = false;
+            if (clause.Name == "fields" && clause.Value is JObject fields) {
+                var selected = new List<JObject>(); complete = true;
+                foreach (var field in fields.Properties()) {
+                    if (field.Name == definitionField && field.Value is JObject condition &&
+                        !condition.ContainsKey("arguments") && !condition.ContainsKey("is_null"))
+                        selected.Add((JObject)condition.DeepClone());
+                    else complete = false;
+                }
+                value = JoinConditions(selected,"all");
+            } else if (clause.Name is "all" or "any" && clause.Value is JArray children) {
+                var projected = children.Cast<JObject>().Select(c => DefinitionCondition(c,definitionField)).ToArray();
+                complete = projected.All(c => c.Exact);
+                if (clause.Name == "all" || projected.All(c => c.Condition != null))
+                    value = JoinConditions(projected.Where(c => c.Condition != null).Select(c => c.Condition!),clause.Name);
+            } else if (clause.Name == "not" && clause.Value is JObject child) {
+                var projected = DefinitionCondition(child,definitionField);
+                if (projected.Exact && projected.Condition != null) {
+                    value = new JObject { ["not"] = projected.Condition }; complete = true;
+                }
+            }
+            if (value != null) terms.Add(value);
+            exact &= complete;
+        }
+        var result = JoinConditions(terms,"all");
+        return (result,exact && result != null);
+    }
+    private static JObject? JoinConditions(IEnumerable<JObject> conditions,string operation)
+    {
+        var list = conditions.ToArray();
+        return list.Length == 0 ? null : list.Length == 1 ? list[0] : new JObject { [operation] = new JArray(list) };
+    }
+
     private IEnumerable<object> ReadRoot(string root, Dictionary<string,object?> args, IGameData source, ReadContext state,Func<GameNode,bool>? definitionFilter)
     {
         var mapArgument = root == "map" ? "id" : "mapId";
@@ -377,7 +433,7 @@ internal sealed class PublicQuery
         try {
             var scanned = 0;
             foreach (var value in read()) {
-                run.Context.Check(); if (++scanned > 8192) throw ReadContext.Error("query_scan_limit","Collection exceeds 8192 candidates; narrow range or definitions.");
+                run.Context.Check(); if (++scanned > 8192) throw ReadContext.Error("query_scan_limit","Collection exceeds 8192 source candidates. Map/definition restrictions and safe definition predicates narrow this source; ordinary instance filters and output offset/limit do not reduce the source scan. Keep the total unknown if a complete disjoint scan cannot be obtained within the task budget.");
                 var id = value is GameEntity e ? "entity:" + e.Id : value is GameNode n && n.Kind is "Thing" or "ThingReference" ? n.Kind + ":" + n.Owner.Id + ":" + n.Key : null;
                 if (id != null && !identities.Add(id)) continue;
                 if (plan.Predicate != null) {
@@ -478,7 +534,16 @@ internal sealed class PublicQuery
                 var raw = registry.Read(plan.Type,value,selected.Field,selected.Args,run.Context);
                 if (raw == null) result[selected.Name] = JValue.CreateNull();
                 else if (selected.Child == null) result[selected.Name] = raw is IEnumerable && raw is not string ? JToken.FromObject(raw) : new JValue(raw);
-                else if (PublicFields.IsList(selected.Field)) result[selected.Name] = Collection(selected.Child,() => ((IEnumerable)raw).Cast<object>(),run,at);
+                else if (PublicFields.IsList(selected.Field)) {
+                    var collection = Collection(selected.Child,() => ((IEnumerable)raw).Cast<object>(),run,at);
+                    var relation = plan.Type + "." + selected.Name;
+                    if (!string.IsNullOrEmpty(selected.Field.Description)) run.RelationSemantics[relation] = selected.Field.Description;
+                    collection["scope"] = new JObject {
+                        ["relation"] = relation,
+                        ["args"] = JObject.FromObject(selected.Args.ToDictionary(a => PublicFields.Name(a.Key),a => a.Value)),
+                    };
+                    result[selected.Name] = collection;
+                }
                 else result[selected.Name] = Project(selected.Child,raw,run,at);
             } catch (ExecutionError error) { result[selected.Name] = JValue.CreateNull(); run.Fail(error,at); }
             catch (Exception error) when (ReadContext.Recoverable(error)) { result[selected.Name] = JValue.CreateNull(); run.Fail(ReadContext.Error("field_unavailable","Selected field failed."),at); }

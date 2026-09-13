@@ -65,7 +65,8 @@ internal static class PawnSchema
         thought.GetField("ageTicks")!.Description = "Memory age in game ticks; null for non-memory thoughts.";
         thought.GetField("durationTicks")!.Description = "Game memory duration in ticks; null for non-memory thoughts.";
         summary.GetField("bleedRate")!.Description = "Raw game BleedRateTotal, not a health percentage or a computed survival-time estimate.";
-        summary.GetField("pain")!.Description = "Game PainTotal value, distinct from injury severity and health percentage.";
+        summary.GetField("healthPercent")!.Description = "Game summaryHealth.SummaryHealthPercent: an overall game-computed health indicator. Report it separately from conditions and body-part HP; this read is not a blood-volume measurement. A value of 1 does not establish a cause or a general rule about which conditions affect it.";
+        summary.GetField("pain")!.Description = "Game PainTotal aggregate, distinct from injury severity and health percentage. This aggregate alone does not attribute pain to individual listed conditions.";
         condition.GetField("severity")!.Description = "Raw Hediff severity; meaning/range depends on its definition. Not a universal 0..1 health fraction.";
         skill.GetField("aptitude")!.Description = "Game skill Aptitude, distinct from learned level, XP and passion.";
         tending.GetField("ticksLeft")!.Description = "Remaining tending duration in game ticks; null when not tended.";

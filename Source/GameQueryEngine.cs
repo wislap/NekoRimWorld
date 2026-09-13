@@ -167,7 +167,13 @@ internal sealed class GameQueryEngine
                 return QueryOutcome.Failure("query_result_too_large", "Request fewer rows or fields.");
             return outcome;
         }
-        catch (ExecutionError error) { return QueryOutcome.Failure(error.Code ?? "invalid_query", error.Message); }
+        catch (ExecutionError error) {
+            var failure = QueryOutcome.Failure(error.Code ?? "invalid_query", error.Message);
+            if (error.Data["input_path"] is string path)
+                failure.Issues = new[] { new QueryIssue { Code=error.Code ?? "invalid_query", Message=error.Message,
+                    Path=new JArray(path.Split('/').Skip(1).Select(p=>p.Replace("~1","/").Replace("~0","~"))) } };
+            return failure;
+        }
         catch (GraphQLParser.Exceptions.GraphQLMaxDepthExceededException) { return QueryOutcome.Failure("query_limit", "The query exceeds parser depth limits."); }
         catch (Exception error) when (error is FormatException || error is OverflowException || error is InvalidCastException || error is ArgumentException) { return QueryOutcome.Failure("invalid_arguments", "Query arguments have invalid types or values; inspect the supplied schema."); }
         catch (GraphQLParser.Exceptions.GraphQLSyntaxErrorException) { return QueryOutcome.Failure("invalid_query", "Invalid GraphQL syntax."); }

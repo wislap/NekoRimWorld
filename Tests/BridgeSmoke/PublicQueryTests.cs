@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json.Linq;
 
 namespace Neko.RimWorld;
@@ -70,17 +71,64 @@ internal static class PublicQueryTests
             result = Query("{'from':'things','select':" + selection + "}");
             Check(result.Status == "ok" && JToken.DeepEquals(expectedSelection,result.Data?["results"]?[0]?["rows"]),"Documented selection forms disagree",result);
         }
-        foreach (var selection in new[] {
-            "{'definition':{'def_name':true,'label':true}}",
-            "['id',{'definition':['def_name']}]"
+        result = Query("{'from':'things','select':{'definition':{'def_name':true,'label':true}}}");
+        Check(result.Status == "ok" && JToken.DeepEquals(expectedSelection,result.Data?["results"]?[0]?["rows"]),"Bare fields changed the projection",result);
+        var mixed = JObject.Parse("{'from':'things','select':['id',{'definition':['def_name','label']}]}");
+        var unchanged = mixed.DeepClone();
+        result = engine.Execute("query",mixed,data,session);
+        var explicitRead = Query("{'from':'things','select':{'id':true,'definition':{'select':['def_name','label']}}}");
+        Check(result.Status == "ok" && JToken.DeepEquals(result.Data,explicitRead.Data) && JToken.DeepEquals(mixed,unchanged),"Mixed selection changed facts or mutated caller input",result);
+        foreach (var item in new[] {
+            ("{'from':'things','select':['id',{'id':true}]}", "id"),
+            ("{'from':'things','select':['definition.label',{'definition':['def_name']}]}", "definition"),
+            ("{'from':'things','select':[{'definition':['def_name']},'definition.label']}", "1"),
+            ("{'from':'spawned_free_colonists','select':{'health':{'summary':true,'args':{}}}}", "summary"),
+            ("{'from':'spawned_free_colonists','select':{'health':{'args':{'visible_only':true},'select':['summary']}}}", "visible_only"),
+            ("{'from':'things','select':{'bad/name':true}}", "bad/name"),
+            ("{'from':'things','select':{'definition':{'select_definition':['def_name']}}}", "select_definition")
         }) {
-            data.Reads = 0; result = Query("{'from':'things','select':" + selection + "}");
-            Check(result.Status == "failed" && data.Reads == 0,"Input guidance silently widened the query grammar",result);
+            data.Reads=0; result=Query(item.Item1);
+            Check(result.Status=="failed" && data.Reads==0 && result.Issues.Length==1 && (string?)result.Issues[0].Path.Last==item.Item2,"Ambiguous input was accepted or lost its original error position",result);
+        }
+        // Twelve related-object edges are legal; a thirteenth is rejected before reads.
+        foreach (var edges in new[] { 12, 13 }) {
+            JToken selection=new JObject { ["stack_count"]=true };
+            for (var edge=edges-1;edge>=0;edge--) selection=new JObject { [edge%2==0 ? "holding_owner" : "items"]=new JObject { ["select"]=selection } };
+            data.Reads=0; result=engine.Execute("query",new JObject { ["from"]="things",["select"]=selection },data,session);
+            Check(edges==12 ? result.Status=="ok" : result.Status=="failed" && data.Reads==0,"Selection depth boundary changed",result);
         }
         var directory = engine.Execute("query_catalog",new JObject(),data,session);
+        foreach (var typeNote in ((JObject)directory.Data!["public_query"]!["field_notes"]!).Properties()) {
+            var described=engine.Execute("describe_query",new JObject { ["types"]=new JArray(typeNote.Name) },data,session);
+            foreach (var note in ((JObject)typeNote.Value).Properties()) {
+                var field=((JArray)described.Data!["types"]![0]!["fields"]!).OfType<JObject>().Single(f=>(string?)f["name"]==note.Name);
+                if (!JToken.DeepEquals(note.Value,field["description"])) throw new InvalidOperationException("Injected field meaning differs from discovery metadata");
+            }
+        }
         foreach (var example in (JArray)directory.Data!["public_query"]!["examples"]!) {
             result = engine.Execute("query",(JObject)example,data,session);
             Check(result.Status == "ok","Advertised query example cannot execute",result);
+        }
+        var index=(JObject)directory.Data!["public_query"]!["field_index"]!;
+        (JObject Fields,int Cost) Broad(string type,int depth) {
+            var fields=new JObject(); var cost=1;
+            foreach (var p in ((JObject)index[type]!).Properties()) {
+                var descriptor=(string)p.Value!;
+                if (descriptor.Contains("!")) continue;
+                var child=descriptor.Split(' ')[0].Trim('[',']');
+                if (index[child]!=null) {
+                    if (depth==0) continue;
+                    var nested=Broad(child,depth-1);fields[p.Name]=new JObject { ["select"]=nested.Fields };cost+=1+nested.Cost;
+                } else { fields[p.Name]=true;cost++; }
+            }
+            return (fields,cost);
+        }
+        var broad=Broad("Thing",1);var fitting=512/broad.Cost;
+        if (fitting<1 || fitting>=8) throw new InvalidOperationException("Invalid field-boundary fixture size");
+        foreach (var count in new[] { fitting,fitting+1 }) {
+            var requests=new JArray(Enumerable.Range(0,count).Select(_=>new JObject { ["from"]="things",["select"]=broad.Fields.DeepClone() }));
+            data.Reads=0;result=engine.Execute("query",new JObject { ["requests"]=requests },data,session);
+            Check(count==fitting ? result.Status=="ok" : result.Status=="failed" && data.Reads==0,"Whole-batch 512-field budget changed",result);
         }
         foreach (var root in new[] { "things","pawns","spawned_free_colonists" }) {
             result = Query("{'requests':[{'from':'" + root + "','args':{'map_id':'missing'},'aggregate':{'rows':{'op':'count'}}}]}");

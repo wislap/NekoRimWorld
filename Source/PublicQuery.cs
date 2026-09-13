@@ -23,6 +23,14 @@ internal sealed class PublicQuery
     private readonly SelectionConditions conditions;
     private readonly Dictionary<string, FieldType> roots;
     private int compiledFields;
+    private SelectionInput inputSyntax = new();
+    private sealed class Projection
+    {
+        public JToken? Token;
+        public string Path = "";
+        public bool Generated;
+        public IReadOnlyList<SelectionInput.Field>? Fields;
+    }
     private readonly Dictionary<string,List<(string Type,FieldType Field,Dictionary<string,object?> Args)>> paths = new();
     private sealed class Selection
     {
@@ -60,19 +68,23 @@ internal sealed class PublicQuery
         roots["pawns"] = new FieldType { Name = "pawns", ResolvedType = registry.Type("Pawn"), Description = "All pawns reachable on selected loaded maps, including held pawns, prisoners and visitors. Does not include world caravans.", Arguments = new QueryArguments(GameArguments.Create("mapId",new StringGraphType(),"Loaded map ID; omitted means all loaded maps.")) };
     }
     internal JObject Catalog() {
+        var commonTypes = new[] { "Thing", "ThingDef", "Pawn", "Map", "Game" };
+        var fieldIndex = registry.CompactDirectory(roots.Keys.Select(RootType));
         var catalog = new JObject {
         ["version"] = Version,
         ["parameters"] = JObject.Parse(@"{'type':'object','properties':{'requests':{'type':'array','minItems':1,'maxItems':8,'items':{'type':'object','properties':{'from':{'type':'string'},'args':{'type':'object'},'where':{'type':'object'},'select':{'description':'Array of canonical field paths, or object mapping fields to true or nested selection options. Collections do not need items/nodes wrappers.','anyOf':[{'type':'array','items':{'type':'string'}},{'type':'object'}]},'aggregate':{'type':'object','description':'Named measures, e.g. {quantity:{op:sum,field:stack_count},records:{op:count}}. Operates on all matches before output limits; sum only for declared additive fields.'},'group_by':{'type':'array','items':{'type':'string'},'maxItems':12},'order_by':{'type':'array','items':{'type':'object','properties':{'field':{'type':'string'},'direction':{'type':'string','enum':['asc','desc']}},'required':['field'],'additionalProperties':false}},'limit':{'type':'integer','minimum':0,'maximum':100},'offset':{'type':'integer','minimum':0,'maximum':8192}},'required':['from'],'additionalProperties':false}}},'required':['requests'],'additionalProperties':false}"),
         ["roots"] = new JArray(roots.Select(p => new JObject { ["from"] = p.Key, ["type"] = RootType(p.Key), ["description"] = p.Value.Description ?? RootDescription(p.Key), ["args"] = new JArray((p.Value.Arguments?.ToArray() ?? Array.Empty<QueryArgument>()).Where(a => a.Name is not ("first" or "after" or "offset" or "where")).Select(a => new JObject { ["name"] = PublicFields.Name(a.Name), ["required"] = a.ResolvedType is NonNullGraphType, ["default"] = a.DefaultValue == null ? JValue.CreateNull() : JToken.FromObject(a.DefaultValue) })) })),
-        ["rules"] = "Selection: use the canonical fields of the current type. A field on a related type is not a field on its parent. select arrays contain only string paths, for example [\"definition.def_name\",\"stack_count\"]. An object maps each field to true, a child field array, or an options object. Equivalent child selections are {\"definition\":[\"def_name\",\"label\"]} and {\"definition\":{\"select\":[\"def_name\",\"label\"]}}. Put child field names inside select, not beside select/args. Single related objects accept select/args/on; collections also accept where/aggregate/group_by/order_by/limit/offset. Use on only for supported concrete component types. Collection selections do not need items/nodes transport wrappers.\nConditions: where is {field.path:{eq:value}}; clauses AND, with all/any/not for composition. Scalar ops: eq/ne/in/gt/gte/lt/lte/contains/starts_with/ends_with/is_null; case_sensitive:false for text. A condition path cannot cross a collection: use some/every/none with a nested where condition. Single-object conditions use where. reach:{field:parent,some:{...},include_self:true} traverses a declared same-type relation with cycle/depth limits. Do not infer condition paths from selection paths.\nDefaults: selected objects return readable scalars and parameter-free collections; objects without scalars expose related fields. Long descriptions, explicit contents and argument-dependent scans require selection. Collections default to limit20. Pawn inventory/equipment/apparel/carried are direct Thing collections; contents reads a Thing container. Their populations remain distinct, with the same collection operations; tracker traversal is internal. Map selectors accept map_id:current (map root id:current), resolved to the actual ID in scope without a preliminary map lookup. Native visible-record defaults remain in effect.\nMeasurements: group_by names scalar grouping fields. aggregate defines result aliases, not new source fields: quantity in {quantity:{op:sum,field:stack_count}} is not Thing.quantity. Count measures records; sum(stack_count) measures item units. Aggregates cover all matches before display limits. Grouped select returns only shared values in rows.values. A varying instance field is null with group_field_varies; selecting stack_count is not a substitute for summing it. Keep overlapping query totals separate; never add the ResourceCounter readout to physical counts.\nEvidence: assess each required fact using its effective scope and own completeness. Top-level partial does not invalidate a complete aggregate when only unrelated display fields failed. An incomplete aggregate is not an exact total. Complete aggregates do not prove every detail/group row was displayed: check that collection's page.has_more before claiming a complete list. scan_complete, fields_complete and page coverage answer different questions. Missing/failed is not zero. Empty results establish no matches for the actual predicate, not the absence of a broader user concept; verify uncertain predicate semantics, without routinely requerying every empty set. Continue only for an unmet requested fact, a relevant unknown or conflicting evidence; preserve known facts when a different field is unavailable. Every request/continuation is a fresh observation. Native capability flags, content categories and cached readout membership have different meanings; no task/category presets are applied.",
-        ["common_fields"] = registry.Describe(new[] { "Thing","ThingDef","Pawn","Map","Game" }),
-        ["field_index"] = registry.CompactDirectory(roots.Keys.Select(RootType)),
+        ["rules"] = "Selection: use the canonical fields of the current type. A field on a related type is not a field on its parent. select arrays may combine string field paths and field-selection objects; duplicate or overlapping selections are rejected. String paths include, for example [\"definition.def_name\",\"stack_count\"]. An object maps each field to true, a child field array, or an options object. Equivalent child selections are {\"definition\":[\"def_name\",\"label\"]} and {\"definition\":{\"select\":[\"def_name\",\"label\"]}}. Use explicit select when configuring relation options. A nonempty object containing only known child field names, with no option keywords, is also a child selection. Do not mix child fields and relation options at the same level; unknown names are rejected rather than guessed. Single related objects accept select/args/on; collections also accept where/aggregate/group_by/order_by/limit/offset. Use on only for supported concrete component types. Collection selections do not need items/nodes transport wrappers.\nConditions: where is {field.path:{eq:value}}; clauses AND, with all/any/not for composition. Scalar ops: eq/ne/in/gt/gte/lt/lte/contains/starts_with/ends_with/is_null; case_sensitive:false for text. A condition path cannot cross a collection: use some/every/none with a nested where condition. Single-object conditions use where. reach:{field:parent,some:{...},include_self:true} traverses a declared same-type relation with cycle/depth limits. Do not infer condition paths from selection paths.\nDefaults: selected objects return readable scalars and parameter-free collections; objects without scalars expose related fields. Long descriptions, explicit contents and argument-dependent scans require selection. Collections default to limit20. Pawn inventory/equipment/apparel/carried are direct Thing collections; contents reads a Thing container. Their populations remain distinct, with the same collection operations; tracker traversal is internal. Map selectors accept map_id:current (map root id:current), resolved to the actual ID in scope without a preliminary map lookup. Native visible-record defaults remain in effect.\nMeasurements: group_by names scalar grouping fields. aggregate defines result aliases, not new source fields: quantity in {quantity:{op:sum,field:stack_count}} is not Thing.quantity. Count measures records; sum(stack_count) measures item units. Aggregates cover all matches before display limits. Grouped select returns only shared values in rows.values. A varying instance field is null with group_field_varies; selecting stack_count is not a substitute for summing it. Keep overlapping query totals separate; never add the ResourceCounter readout to physical counts.\nEvidence: assess each required fact using its effective scope and own completeness. Top-level partial does not invalidate a complete aggregate when only unrelated display fields failed. An incomplete aggregate is not an exact total. Complete aggregates do not prove every detail/group row was displayed: check that collection's page.has_more before claiming a complete list. scan_complete, fields_complete and page coverage answer different questions. Missing/failed is not zero. Empty results establish no matches for the actual predicate, not the absence of a broader user concept; verify uncertain predicate semantics, without routinely requerying every empty set. Continue only for an unmet requested fact, a relevant unknown or conflicting evidence; preserve known facts when a different field is unavailable. Every request/continuation is a fresh observation. Native capability flags, content categories and cached readout membership have different meanings; no task/category presets are applied.",
+        ["common_fields"] = registry.Describe(commonTypes),
+        ["field_index"] = fieldIndex,
+        ["field_notes"] = registry.FieldNotes(fieldIndex.Properties().Select(p => p.Name).Except(commonTypes)),
         ["examples"] = JArray.Parse(@"[
             {'requests':[{'from':'things','args':{'map_id':'current','include_held':false},'where':{'definition.category':{'eq':'Item'}},'group_by':['definition.def_name'],'select':{'definition':['def_name','label','category','is_ingestible','is_weapon']},'aggregate':{'quantity':{'op':'sum','field':'stack_count'}}},{'from':'spawned_free_colonists','args':{'map_id':'current'},'select':['id','name','inventory','equipment','apparel','carried']}]}
         ]")
         };
         var properties = (JObject)catalog["parameters"]!["properties"]!["requests"]!["items"]!["properties"]!;
-        properties["select"]!["description"] = "Select string field paths, true for defaults, or an object mapping fields to true, child arrays or options. Examples: {\"definition\":[\"def_name\",\"label\"]} or {\"definition\":{\"select\":[\"def_name\",\"label\"]}}. Child fields go inside select, not directly inside an options object. Arrays cannot mix paths and objects. Collections do not need items/nodes wrappers.";
+        properties["select"]!["description"] = "Select string field paths, true for defaults, or an object mapping fields to true, child arrays or options. Examples: {\"definition\":[\"def_name\",\"label\"]} or {\"definition\":{\"select\":[\"def_name\",\"label\"]}}. Child fields go inside select, not directly inside an options object. Selection arrays can combine string paths and field maps when their fields do not overlap. A bare child-field map is accepted only when all keys are known fields and none is a relation option. Collections do not need items/nodes wrappers.";
+        properties["select"]!["anyOf"]![0]!["items"] = JObject.Parse("{'anyOf':[{'type':'string'},{'type':'object'}]}");
         ((JArray)properties["select"]!["anyOf"]!).Add(new JObject { ["const"] = true });
         properties["from"]!["enum"] = new JArray(roots.Keys);
         var arguments = new JObject();
@@ -97,10 +109,12 @@ internal sealed class PublicQuery
     private string RootType(string name) => name is "things" ? "Thing" : name is "pawns" or "spawned_free_colonists" ? "Pawn" : PublicFields.ValueType(roots[name]).Name;
     internal QueryOutcome Execute(JObject input, IGameData source, SessionDescriptor session, double budget, string schemaId)
     {
-        if (input["from"] != null && input["requests"] == null) input = new JObject { ["requests"] = new JArray(input.DeepClone()) };
+        var direct = input["from"] != null && input["requests"] == null;
+        if (direct) input = new JObject { ["requests"] = new JArray(input.DeepClone()) };
         Keys(input,"requests");
         if (input["requests"] is not JArray requests || requests.Count is < 1 or > 8) throw PublicFields.Error("requests must contain 1..8 queries.");
         compiledFields = 0;
+        inputSyntax = new SelectionInput();
         paths.Clear();
         var plans = new List<(string Root,Dictionary<string,object?> Args,Selection Select,SelectionConditions.Predicate? DefinitionFilter,bool FullyPushed)>();
         foreach (var token in requests)
@@ -108,16 +122,20 @@ internal sealed class PublicQuery
             if (token is not JObject obj || obj["from"]?.Type != JTokenType.String) throw PublicFields.Error("Each request needs from.");
             var name = (string)obj["from"]!;
             if (!roots.TryGetValue(name,out var root)) throw PublicFields.Error("Unknown from. Available: " + string.Join(", ",roots.Keys));
-            var arguments = registry.Arguments(root,obj["args"],name);
+            var inputPath = direct ? "" : "/requests/" + requests.IndexOf(token);
+            var arguments = ArgumentsAt(root, obj["args"], obj["args"] == null ? inputPath : SelectionInput.Pointer(inputPath, "args"), RootType(name));
             SelectionConditions.Predicate? definitionFilter = null;
             var fullyPushed = false;
             if (name == "things" && obj["where"] is JObject where)
             {
+                try {
                 var definitionWhere = new JObject(where.Properties().Where(p => p.Name.StartsWith("definition.",StringComparison.Ordinal)).Select(p => new JProperty(p.Name.Substring(11),p.Value.DeepClone())));
                 if (definitionWhere.Count > 0) definitionFilter = conditions.Compile("ThingDef",registry.Predicate("ThingDef",definitionWhere));
                 fullyPushed = definitionWhere.Count > 0 && definitionWhere.Count == where.Count;
+                }
+                catch (ExecutionError error) { throw SelectionInput.Locate(error,SelectionInput.Pointer(inputPath,"where"),"Thing"); }
             }
-            var selection = Compile(RootType(name),obj,0,true);
+            var selection = Compile(RootType(name),obj,0,true,inputPath);
             if (fullyPushed) selection.Predicate = null; // The data source applies the entire validated predicate once per definition.
             plans.Add((name,arguments,selection,definitionFilter,fullyPushed));
         }
@@ -171,56 +189,90 @@ internal sealed class PublicQuery
         var field = roots[root]; var value = registry.Read("Query",state,field,args,state);
         return value is IEnumerable sequence && value is not string ? sequence.Cast<object>() : value == null ? Array.Empty<object>() : new[] { value };
     }
-    private Selection Compile(string type,JObject options,int depth,bool root = false)
+    private Selection Compile(string type,JObject options,int depth,bool root = false,string inputPath = "",Projection? projection = null)
     {
+        var checkPath = inputPath;
+        try {
         if (depth > 12 || ++compiledFields > 512) throw PublicFields.Error("Selection exceeds depth12/512 fields.");
-        Keys(options,root ? new[] { "from","args","where","select","aggregate","group_by","order_by","limit","offset" } : new[] { "args","where","select","aggregate","group_by","order_by","limit","offset","on" });
+        KeysAt(options,inputPath,root ? new[] { "from","args","where","select","aggregate","group_by","order_by","limit","offset" } : new[] { "args","where","select","aggregate","group_by","order_by","limit","offset","on" });
         var plan = new Selection { Type = type, Limit = Integer(options,"limit",20,0,100), Offset = Integer(options,"offset",0,0,8192) };
-        if (options["where"] != null) plan.Predicate = conditions.Compile(type,registry.Predicate(type,options["where"]!));
-        var specified = options["select"];
-        if (specified?.Type == JTokenType.Boolean && (bool)specified) specified = null;
-        var selected = Normalize(specified ?? (options["group_by"] != null ? new JArray() : Defaults(type)));
-        foreach (var p in selected.Properties())
+        if (options["where"] != null) {
+            checkPath = SelectionInput.Pointer(inputPath, "where");
+            plan.Predicate = conditions.Compile(type,registry.Predicate(type,options["where"]!));
+        }
+        if (projection == null) {
+            var specified = options["select"];
+            var generated = specified == null || specified.Type == JTokenType.Boolean && (bool)specified;
+            projection = new Projection {
+                Token = generated ? (options["group_by"] != null ? new JArray() : Defaults(type)) : specified,
+                Path = specified == null ? inputPath : SelectionInput.Pointer(inputPath,"select"), Generated = generated
+            };
+        }
+        checkPath = projection.Path;
+        var selected = projection.Fields ?? inputSyntax.Read(projection.Token!,projection.Path,projection.Generated);
+        foreach (var entry in selected)
         {
+            checkPath = entry.Path;
             if (++compiledFields > 512) throw PublicFields.Error("Selection exceeds 512 fields.");
-            var field = registry.Field(type,p.Name); var target = PublicFields.ValueType(field);
-            var config = p.Value is JObject objectConfig ? (JObject)objectConfig.DeepClone() : p.Value is JArray names ? new JObject { ["select"] = names.DeepClone() } : p.Value.Type == JTokenType.Boolean && (bool)p.Value ? new JObject() : throw PublicFields.Error("select values must be true, field paths or selection options.");
-            var args = registry.Arguments(field,config["args"],type + "." + p.Name);
-            if (target is ScalarGraphType) { Keys(config,"args"); plan.Fields.Add((p.Name,field,args,null)); }
+            var field = registry.Field(type,entry.Name); var target = PublicFields.ValueType(field);
+            var config = new JObject(); Projection? childProjection = null;
+            if (entry.Children != null) childProjection = new Projection { Fields = entry.Children, Path = entry.Path };
+            else if (entry.Value is JArray array) childProjection = new Projection { Token = array, Path = entry.Path };
+            else if (entry.Value is JObject objectConfig) {
+                var bare = target is IComplexGraphType && objectConfig.Count > 0 &&
+                    objectConfig.Properties().All(p => registry.Fields(target.Name).ContainsKey(p.Name) && !SelectionInput.IsOption(p.Name));
+                if (bare) childProjection = new Projection { Token = objectConfig, Path = entry.Path };
+                else config = objectConfig;
+            }
+            else if (entry.Value?.Type != JTokenType.Boolean || !(bool)entry.Value) throw PublicFields.Error("Select fields with true, field paths or child-field/selection-option objects.");
+            var args = ArgumentsAt(field,config["args"],config["args"] == null ? entry.Path : SelectionInput.Pointer(entry.Path,"args"),type+"."+entry.Name);
+            if (target is ScalarGraphType) {
+                if (childProjection != null) throw SelectionInput.Locate(PublicFields.Error("Scalar fields cannot have child selections."),entry.Path,target.Name);
+                FieldKeys(config,entry.Path,target.Name,"args"); plan.Fields.Add((entry.Name,field,args,null));
+            }
             else {
-                if (!PublicFields.IsList(field)) Keys(config,"select","args","on");
-                if (field.Metadata.ContainsKey("default_reference") && (config["select"] == null || config["select"]!.Type == JTokenType.Boolean && (bool)config["select"]!))
-                    config["select"] = ReferenceDefaults(target.Name);
-                plan.Fields.Add((p.Name,field,args,Compile(target.Name,config,depth+1)));
+                if (!PublicFields.IsList(field)) FieldKeys(config,entry.Path,target.Name,"select","args","on");
+                if (childProjection == null && field.Metadata.ContainsKey("default_reference") && (config["select"] == null || config["select"]!.Type == JTokenType.Boolean && (bool)config["select"]!))
+                    childProjection = new Projection { Token = ReferenceDefaults(target.Name), Path = entry.Path, Generated = true };
+                plan.Fields.Add((entry.Name,field,args,Compile(target.Name,config,depth+1,false,entry.Path,childProjection)));
             }
         }
         if (options["on"] != null)
         {
+            checkPath = SelectionInput.Pointer(inputPath,"on");
             if (registry.Type(type) is not IAbstractGraphType abstractType || options["on"] is not JObject variants) throw PublicFields.Error("on requires an abstract type and concrete selection objects.");
             foreach (var variant in variants.Properties())
             {
+                checkPath = SelectionInput.Pointer(SelectionInput.Pointer(inputPath,"on"),variant.Name);
                 if (!abstractType.PossibleTypes.Any(t => t.Name == variant.Name) || variant.Value is not JObject body) throw PublicFields.Error("Unsupported concrete type " + variant.Name);
-                Keys(body,"select","on");
-                plan.On.Add(variant.Name,Compile(variant.Name,body,depth+1));
+                KeysAt(body,checkPath,"select","on");
+                plan.On.Add(variant.Name,Compile(variant.Name,body,depth+1,false,checkPath));
             }
         }
         if (options["group_by"] != null)
         {
+            checkPath = SelectionInput.Pointer(inputPath,"group_by");
             if (options["group_by"] is not JArray groups || groups.Count is < 1 or > 12 || groups.Any(x => x.Type != JTokenType.String)) throw PublicFields.Error("group_by requires 1..12 scalar paths.");
             plan.GroupBy = groups.Values<string>().Select(x => x!).ToArray();
             if (plan.GroupBy.Distinct(StringComparer.Ordinal).Count() != plan.GroupBy.Length) throw PublicFields.Error("group_by paths must be unique.");
-            foreach (var path in plan.GroupBy) ScalarPath(type,path);
+            for (var i=0;i<plan.GroupBy.Length;i++) {
+                checkPath = SelectionInput.Pointer(SelectionInput.Pointer(inputPath,"group_by"),i.ToString());
+                ScalarPath(type,plan.GroupBy[i]);
+            }
         }
         if (options["aggregate"] != null)
         {
+            checkPath = SelectionInput.Pointer(inputPath,"aggregate");
             if (options["aggregate"] is not JObject measures || measures.Count is < 1 or > 12) throw PublicFields.Error("aggregate requires 1..12 named measures.");
             foreach (var m in measures.Properties())
             {
-                if (m.Value is not JObject spec) throw PublicFields.Error("Measure must be an object."); Keys(spec,"op","field");
+                checkPath = SelectionInput.Pointer(SelectionInput.Pointer(inputPath,"aggregate"),m.Name);
+                if (m.Value is not JObject spec) throw PublicFields.Error("Measure must be an object."); KeysAt(spec,checkPath,"op","field");
                 var op = (string?)spec["op"]; var path = (string?)spec["field"];
                 if (op == "count") { if (path != null) throw PublicFields.Error("count counts records; omit field."); }
                 else {
                     if (op is not ("sum" or "min" or "max") || path == null) throw PublicFields.Error("Use count, sum, min or max with a scalar field.");
+                    checkPath = SelectionInput.Pointer(checkPath,"field");
                     var (owner,field) = ScalarPath(type,path);
                     if (PublicFields.ValueType(field) is not (IntGraphType or FloatGraphType) || op == "sum" && !PublicFields.CanSum(owner,field)) throw PublicFields.Error("Aggregation " + op + " is not declared for " + path + ".");
                 }
@@ -230,9 +282,11 @@ internal sealed class PublicQuery
         if (plan.GroupBy.Length > 0 && plan.Measures.Count == 0) throw PublicFields.Error("group_by requires aggregate.");
         if (options["order_by"] != null)
         {
+            checkPath = SelectionInput.Pointer(inputPath,"order_by");
             if (options["order_by"] is not JArray orders || orders.Count is < 1 or > 4) throw PublicFields.Error("order_by requires 1..4 field specifications.");
             foreach (var token in orders) {
-                if (token is not JObject spec) throw PublicFields.Error("Invalid order_by."); Keys(spec,"field","direction");
+                checkPath = SelectionInput.Pointer(SelectionInput.Pointer(inputPath,"order_by"),orders.IndexOf(token).ToString());
+                if (token is not JObject spec) throw PublicFields.Error("Invalid order_by."); KeysAt(spec,checkPath,"field","direction");
                 var path = (string?)spec["field"] ?? throw PublicFields.Error("order_by needs field.");
                 if (plan.GroupBy.Length == 0) ScalarPath(type,path);
                 else if (!plan.GroupBy.Contains(path) && !plan.Measures.Any(m => m.Name == path)) throw PublicFields.Error("Grouped order_by must name a group_by field or named aggregate.");
@@ -241,6 +295,29 @@ internal sealed class PublicQuery
             }
         }
         return plan;
+        }
+        catch (ExecutionError error) { throw SelectionInput.Locate(error,checkPath,type); }
+    }
+    private Dictionary<string,object?> ArgumentsAt(FieldType field,JToken? token,string path,string owner)
+    {
+        try { return registry.Arguments(field,token,owner); }
+        catch (ExecutionError error) {
+            if (token is JObject args) {
+                var unknown = args.Properties().FirstOrDefault(p => field.Arguments?.Any(a => PublicFields.Name(a.Name)==p.Name) != true);
+                if (unknown != null) path = SelectionInput.Pointer(path,unknown.Name);
+            }
+            throw SelectionInput.Locate(error,path,owner);
+        }
+    }
+    private static void KeysAt(JObject value,string path,params string[] allowed)
+    {
+        var unknown = value.Properties().FirstOrDefault(p => !allowed.Contains(p.Name));
+        if (unknown != null) throw SelectionInput.Error("Unknown option " + unknown.Name + ". Allowed: " + string.Join(", ",allowed) + ". Child fields and relation options cannot be mixed at this level.",SelectionInput.Pointer(path,unknown.Name));
+    }
+    private static void FieldKeys(JObject value,string path,string owner,params string[] allowed)
+    {
+        try { KeysAt(value,path,allowed); }
+        catch (ExecutionError error) { throw SelectionInput.Locate(error,path,owner); }
     }
     private JArray Defaults(string type)
     {
@@ -261,20 +338,6 @@ internal sealed class PublicQuery
         if (!names.Any(n => n is "id" or "ref" or "def_name" or "key"))
             names.AddRange(fields.Where(f => f.Value.Metadata.ContainsKey("default_reference") && PublicFields.ValueType(f.Value).Name != type).Select(f => f.Key));
         return new JArray(names);
-    }
-    private static JObject Normalize(JToken token)
-    {
-        if (token is JObject obj) return (JObject)obj.DeepClone();
-        if (token is not JArray array || array.Any(x => x.Type != JTokenType.String)) throw PublicFields.Error("select must be field paths or an object.");
-        var result = new JObject();
-        foreach (var path in array.Values<string>()) {
-            var parts = path!.Split('.'); var node = result;
-            for (var i=0;i<parts.Length;i++) {
-                if (i == parts.Length-1) { if (node[parts[i]] != null) throw PublicFields.Error("Duplicate/overlapping selected path " + path); node[parts[i]] = true; }
-                else { if (node[parts[i]] is JValue) throw PublicFields.Error("Overlapping selected path " + path); node[parts[i]] ??= new JObject { ["select"] = new JObject() }; node = (JObject)node[parts[i]]!["select"]!; }
-            }
-        }
-        return result;
     }
     private (string Owner,FieldType Field) ScalarPath(string type,string path)
     {

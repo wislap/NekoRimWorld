@@ -176,5 +176,16 @@ internal sealed class PublicFields
             return description;
         }));
     }
+    internal JObject FieldNotes(IEnumerable<string> names)
+    {
+        var result = new JObject();
+        foreach (var name in names) {
+            var notes = new JObject();
+            foreach (var field in Fields(name))
+                if (!string.IsNullOrWhiteSpace(field.Value.Description)) notes[field.Key] = field.Value.Description;
+            if (notes.Count > 0) result[name] = notes;
+        }
+        return result;
+    }
     internal static ExecutionError Error(string message) => ReadContext.Error("invalid_query",message);
 }

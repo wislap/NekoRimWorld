@@ -1,23 +1,27 @@
-> **v1.4 development:** Adds `query` / `describe_query`, a canonical field registry over the existing schema, bounded related reads and whole-selection aggregates. Loaded-map holder populations and native counters retain distinct semantics. Existing GraphQL/templates/resource operations remain developer/legacy compatibility. Read budget remains12ms; version metadata remains1.0.0 until promotion.
-
 # N.E.K.O RimWorld Bridge
 
-**Evaluation status:** the current v1.3 candidate did not meet the Agent quality objective. This experimental implementation is retained for review; it is not promoted to the stable branch or released.
+Read-only RimWorld 1.6 bridge for N.E.K.O. The current checkout contains the
+unreleased v1.4.2 integration candidate; package version remains 1.0.0.
 
-Read-only RimWorld 1.6 bridge kernel for the N.E.K.O integration.
+The Agent uses `query` / `describe_query` with `public_query.v2`, canonical
+schema-derived fields, related collections and whole-selection aggregates.
+Selection lists now accept both field paths and field maps. Bare child maps
+are accepted only when every key is a known child field and no option keyword
+is present. Ambiguous overlaps, mixed field/options and invalid arguments are
+rejected before reads, with input locations for selection/compiler errors.
+No business-specific selector or new Agent tool was added.
 
-## Current development state
+Field descriptions are exported from the executable registry, including notes
+for types outside the common-field directory. Native counters, holding roles,
+health summaries and conditions retain their distinct game semantics. Legacy
+GraphQL, templates and resource reports remain compatibility/developer paths;
+the public-query Agent uses text submission, not legacy value references.
 
-This checkout contains the unreleased v1.3 development candidate; version
-metadata remains1.0.0 until validation and release. Resource reports publish
-resource_evidence.v3, with shared definition/instance conditions and optional
-whole-request physical totals. No focus preset or dedicated medicine selector
-exists in the new catalog. Native ThingDef.IsMedicine is an ordinary field.
-
-All public query result types use observed_values.v1 descriptions for faithful
-references. The same schema-driven condition engine serves native, template
-and frozen execution. See [PROTOCOL.md](PROTOCOL.md). Software tests and local
-presentation checks are not a claim of improved complete-Agent answers.
+Deterministic tests and independent native capture have exercised this code.
+These checks do not establish complete-Agent answer quality or a release.
+The companion bench tracks model comparisons and limitations. Sources require
+rebuild and game restart to activate; this integration did not replace the
+user's installed assemblies.
 
 ## Identity
 
@@ -48,8 +52,8 @@ default port is `48919`.
 
 - No game actions, reflection RPC, autonomous colony management, screenshots,
   full-world mirroring, or high-frequency event patches.
-- No claim of in-game runtime validation yet. Build and standalone loopback
-  tests do not replace an actual Unity/Mono new-game/save/load/main-menu test.
+- Independent new-game captures cover native query parity and bounded reads;
+  they do not cover every Mod combination or a full host/save/load lifecycle.
 
 ## Runtime shape
 

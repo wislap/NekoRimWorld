@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="../../Source/PublicFields.cs;../../Source/PublicQuery.cs" Link="%(Filename)%(Extension)" />
+    <Compile Include="../../Source/SelectionInput.cs;../../Source/PublicFields.cs;../../Source/PublicQuery.cs" Link="%(Filename)%(Extension)" />
     <Compile Include="../../Source/ResultEvidence.cs" Link="ResultEvidence.cs" />
     <Compile Include="../../Source/SelectionConditions.cs" Link="SelectionConditions.cs" />
     <Compile Include="..\..\Source\ResourceReports.cs" Link="ResourceReports.cs" />

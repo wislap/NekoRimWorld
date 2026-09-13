@@ -1,7 +1,7 @@
 # N.E.K.O RimWorld Bridge
 
 Read-only RimWorld 1.6 bridge for N.E.K.O. The current checkout contains the
-unreleased v1.4.2 integration candidate; package version remains 1.0.0.
+v1.6 query/execution revision; package version remains 1.0.0.
 
 The Agent uses `query` / `describe_query` with `public_query.v2`, canonical
 schema-derived fields, related collections and whole-selection aggregates.
@@ -10,6 +10,13 @@ are accepted only when every key is a known child field and no option keyword
 is present. Ambiguous overlaps, mixed field/options and invalid arguments are
 rejected before reads, with input locations for selection/compiler errors.
 No business-specific selector or new Agent tool was added.
+
+Definition conditions inside all/any/not now retain safe early filtering and
+three-valued semantics. Per-root argument schemas and result scope descriptions
+come from the registered schema. Nested collection scopes include their actual
+arguments and predicate; relation descriptions are deduplicated. The 8192 source
+candidate bound remains; ordinary instance predicates or display offsets do not
+remove it. These fixes do not establish improved free-text answer quality.
 
 Field descriptions are exported from the executable registry, including notes
 for types outside the common-field directory. Native counters, holding roles,

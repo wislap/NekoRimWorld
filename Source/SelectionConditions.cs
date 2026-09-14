@@ -202,11 +202,26 @@ internal sealed class SelectionConditions
         var values = op == "in" ? arg as JArray ?? throw Error(path + " must be an array.") : new JArray(arg.DeepClone());
         if (values.Count > 128) throw Error(path + " exceeds 128 values.");
         foreach (var value in values) ValidateScalar(type, value, path, sensitive);
+        if (nativeEnum != null) {
+            // Compile literal names once, before any game reads. Parse each observed value once per predicate.
+            var expected = values.Select(x => nativeEnum.Value((string)x!, sensitive)).ToArray();
+            var members = new HashSet<ulong>(expected);
+            return (v, _) => {
+                if (v == null) return false;
+                var actual = nativeEnum.ObservedValue(v);
+                return op switch {
+                    "in" => members.Contains(actual),
+                    "eq" => actual == expected[0],
+                    "ne" => actual != expected[0],
+                    "has_all" => (actual & expected[0]) == expected[0],
+                    _ => (actual & expected[0]) != 0
+                };
+            };
+        }
         var comparison = sensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-        bool Equal(object value, JToken other) => nativeEnum != null ? nativeEnum.Equal(value, other, sensitive) : numeric ? Convert.ToDouble(value, CultureInfo.InvariantCulture) == (double)other : text ? string.Equals(Convert.ToString(value, CultureInfo.InvariantCulture), (string?)other, comparison) : JToken.DeepEquals(JToken.FromObject(type.Serialize(value)!), other);
+        bool Equal(object value, JToken other) => numeric ? Convert.ToDouble(value, CultureInfo.InvariantCulture) == (double)other : text ? string.Equals(Convert.ToString(value, CultureInfo.InvariantCulture), (string?)other, comparison) : JToken.DeepEquals(JToken.FromObject(type.Serialize(value)!), other);
         return (v, _) => {
             if (v == null) return false;
-            if (nativeEnum != null && op is "has_all" or "has_any") return nativeEnum.Has(v, arg, sensitive, op == "has_all");
             if (op == "in") return values.Any(x => Equal(v, x));
             if (op == "eq") return Equal(v, arg);
             if (op == "ne") return !Equal(v, arg);

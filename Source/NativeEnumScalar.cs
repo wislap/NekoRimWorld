@@ -43,13 +43,19 @@ internal sealed class NativeEnumScalar : StringGraphType
 
     internal ulong Value(string value, bool sensitive = true)
     {
+        if (value.Length > 4096) throw new ArgumentException("Enum literal exceeds 4096 characters.");
         ulong result = 0;
         var names = Flags ? value.Split(',') : new[] { value };
         foreach (var raw in names) {
             var name = Flags ? raw.Trim() : raw;
-            var found = values.Where(p => string.Equals(p.Key, name, sensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (found.Length != 1) throw new ArgumentException("Invalid " + NativeType + " name '" + name + "'. Declared names: " + string.Join(", ", values.Keys));
-            result |= found[0].Value;
+            var found = values.TryGetValue(name, out var bits);
+            if (!sensitive) {
+                var matches = 0;
+                foreach (var pair in values) if (string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase)) { matches++; bits = pair.Value; }
+                found = matches == 1;
+            }
+            if (!found) throw new ArgumentException("Invalid " + NativeType + " name '" + name + "'. Declared names: " + string.Join(", ", values.Keys));
+            result |= bits;
         }
         return result;
     }
@@ -59,18 +65,10 @@ internal sealed class NativeEnumScalar : StringGraphType
         try { Value((string)value!, sensitive); return true; }
         catch (ArgumentException) { return false; }
     }
-    internal bool Equal(object value, JToken expected, bool sensitive)
+    internal ulong ObservedValue(object value)
     {
-        try { return Value(Convert.ToString(value, CultureInfo.InvariantCulture)!) == Value((string)expected!, sensitive); }
+        try { return Value(Convert.ToString(value, CultureInfo.InvariantCulture)!); }
         catch (ArgumentException) { throw ReadContext.Error("enum_value_unavailable", "Observed " + NativeType + " value is outside the declared native domain; membership is unknown."); }
-    }
-    internal bool Has(object value, JToken expected, bool sensitive, bool all)
-    {
-        try {
-            var actual = Value(Convert.ToString(value, CultureInfo.InvariantCulture)!);
-            var wanted = Value((string)expected!, sensitive);
-            return all ? (actual & wanted) == wanted : (actual & wanted) != 0;
-        } catch (ArgumentException) { throw ReadContext.Error("enum_value_unavailable", "Observed flags are outside the declared native domain; membership is unknown."); }
     }
     internal JObject Describe() => new() {
         ["native_type"] = NativeType, ["kind"] = Flags ? "flags" : "enum",

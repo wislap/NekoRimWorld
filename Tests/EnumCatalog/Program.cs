@@ -20,10 +20,10 @@ foreach(var handle in reader.TypeDefinitions) {
   var field=reader.GetFieldDefinition(fieldHandle);var constantHandle=field.GetDefaultValue();if(constantHandle.IsNil)continue;
   var constant=reader.GetConstant(constantHandle);var blob=reader.GetBlobReader(constant.Value);
   string value=constant.TypeCode switch {
-   ConstantTypeCode.SByte=>blob.ReadSByte().ToString(),ConstantTypeCode.Byte=>blob.ReadByte().ToString(),
-   ConstantTypeCode.Int16=>blob.ReadInt16().ToString(),ConstantTypeCode.UInt16=>blob.ReadUInt16().ToString(),
-   ConstantTypeCode.Int32=>blob.ReadInt32().ToString(),ConstantTypeCode.UInt32=>blob.ReadUInt32().ToString(),
-   ConstantTypeCode.Int64=>blob.ReadInt64().ToString(),ConstantTypeCode.UInt64=>blob.ReadUInt64().ToString(),_=>throw new Exception("Unexpected enum constant")};
+   ConstantTypeCode.SByte=>blob.ReadSByte().ToString(System.Globalization.CultureInfo.InvariantCulture),ConstantTypeCode.Byte=>blob.ReadByte().ToString(System.Globalization.CultureInfo.InvariantCulture),
+   ConstantTypeCode.Int16=>blob.ReadInt16().ToString(System.Globalization.CultureInfo.InvariantCulture),ConstantTypeCode.UInt16=>blob.ReadUInt16().ToString(System.Globalization.CultureInfo.InvariantCulture),
+   ConstantTypeCode.Int32=>blob.ReadInt32().ToString(System.Globalization.CultureInfo.InvariantCulture),ConstantTypeCode.UInt32=>blob.ReadUInt32().ToString(System.Globalization.CultureInfo.InvariantCulture),
+   ConstantTypeCode.Int64=>blob.ReadInt64().ToString(System.Globalization.CultureInfo.InvariantCulture),ConstantTypeCode.UInt64=>blob.ReadUInt64().ToString(System.Globalization.CultureInfo.InvariantCulture),_=>throw new Exception("Unexpected enum constant")};
   values[reader.GetString(field.Name)]=value;
  }
  bool flags=type.GetCustomAttributes().Any(h=>{var attr=reader.GetCustomAttribute(h);return attr.Constructor.Kind==HandleKind.MemberReference && TypeName(reader.GetMemberReference((MemberReferenceHandle)attr.Constructor).Parent)=="System.FlagsAttribute";});

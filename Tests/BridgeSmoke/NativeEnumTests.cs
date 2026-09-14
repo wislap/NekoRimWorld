@@ -32,7 +32,11 @@ internal static class NativeEnumTests
                 Check(Compile("ne", name!)(name, state)==false, pair.Name+" ne "+name);
                 Check(Compile("in", new JArray(name!))(name,state)==true,pair.Name+" in "+name);
                 Check(Compile("eq", name!.ToLowerInvariant(),false)(name,state)==true,pair.Name+" case fold");
-                Check(Compile("eq", name)("UnregisteredFutureValue",state)==null,pair.Name+" unknown read became false");
+                foreach (var op in new[]{"eq","ne","in"})
+                    Check(Compile(op,op=="in" ? new JArray(name) : new JValue(name))("UnregisteredFutureValue",state)==null,pair.Name+" unknown " + op + " became known");
+                if (name != name.ToLowerInvariant()) {
+                    try { Compile("eq",name.ToLowerInvariant());throw new Exception("Default case sensitivity lost"); } catch(ExecutionError) { }
+                }
             }
             foreach(var op in new[]{"eq","ne","in","contains"}) {
                 try { Compile(op,op=="in" ? new JArray("Invented") : new JValue("Invented"));throw new Exception("Invalid literal/operator accepted for "+pair.Name); }
@@ -42,6 +46,11 @@ internal static class NativeEnumTests
             Check(nullField(new object?[]{null},state)==true,pair.Name+" null availability");
             try { Compile("eq",JValue.CreateNull());throw new Exception("eq:null accepted"); } catch(ExecutionError) { }
             if (domain.Flags) {
+                foreach (var op in new[]{"has_all","has_any"}) {
+                    Check(Compile(op,"Meat")("UnknownFlag",state)==null,"unknown flags became known");
+                    try { Compile(op,string.Join(",",Enumerable.Repeat("Meat",1000)));throw new Exception("Oversized flags accepted"); } catch(ExecutionError) { }
+                }
+                Check(Compile("eq",string.Join(",",Enumerable.Repeat("Meat",800)))("Meat",state)==true,"bounded repeated flags changed native union");
                 Check(Compile("eq","Corpse, Meat")("Meat, Corpse",state)==true,"flag ordering");
                 Check(Compile("has_all","Meat")("Meat, Corpse",state)==true,"has_all");
                 Check(Compile("has_any","VegetableOrFruit")("Meat, Corpse",state)==false,"has_any");
@@ -53,6 +62,36 @@ internal static class NativeEnumTests
         var unread = new CountingData();
         var rejected = engine.Execute("query",JObject.Parse("{requests:[{from:'game'},{from:'things',where:{'definition.category':{eq:'Corpse'}},aggregate:{n:{op:'count'}}}]}"),unread,session);
         Check(rejected.Status=="failed" && unread.Reads==0,"Invalid enum batch performed reads");
+        // Real public paths exercise attachment and translation, not just a hand-built scalar probe.
+        var routes = new[] {
+            ("things", "{'definition.category':{eq:'Invented'}}", "Verse.ThingCategory"),
+            ("thing_defs", "{'ingestible.food_type':{has_any:'Invented'}}", "RimWorld.FoodTypeFlags"),
+            ("thing_defs", "{'ingestible.drug_category':{eq:'Invented'}}", "RimWorld.DrugCategory"),
+            ("things", "{all_comps:{some:{on:{CompQuality:{quality:{eq:'Invented'}}}}}}", "RimWorld.QualityCategory"),
+            ("things", "{all_comps:{every:{on:{CompRottable:{stage:{eq:'Invented'}}}}}}", "RimWorld.RotStage"),
+            ("things", "{'storage_group.settings.priority':{eq:'Invented'}}", "RimWorld.StoragePriority"),
+            ("spawned_free_colonists", "{'profile.gender':{eq:'Invented'}}", "Verse.Gender"),
+            ("spawned_free_colonists", "{'profile.backstories':{some:{slot:{eq:'Invented'}}}}", "RimWorld.BackstorySlot"),
+            ("spawned_free_colonists", "{'profile.skills':{none:{passion:{eq:'Invented'}}}}", "RimWorld.Passion"),
+            ("spawned_free_colonists", "{'status.current_job.targets':{some:{slot:{eq:'Invented'}}}}", "Verse.AI.TargetIndex")
+        };
+        foreach (var route in routes) {
+            var condition = JObject.Parse(route.Item2);
+            foreach (var wrapped in new[]{condition, new JObject { ["where"]=condition.DeepClone() }, new JObject { ["any"]=new JArray(condition.DeepClone()) }}) {
+                unread.Reads=0;
+                var query=new JObject { ["requests"]=new JArray(new JObject { ["from"]="game" },new JObject { ["from"]=route.Item1,["where"]=wrapped }) };
+                var outcome=engine.Execute("query",query,unread,session);
+                Check(outcome.Status=="failed" && unread.Reads==0 && outcome.Message.Contains("Native_"+route.Item3.Replace('.','_')) && outcome.Message.Contains("Declared names"),"Real enum path missed validation: "+route+" / "+outcome.Message);
+            }
+            var description=engine.Execute("describe_query",new JObject { ["types"]=new JArray(route.Item3) },unread,session);
+            Check(description.Status=="ok" && description.Data!.ToString().Contains(route.Item3),"Domain discovery failed: "+route.Item3);
+        }
+        unread.Reads=0;
+        var nested=engine.Execute("query",JObject.Parse("{from:'spawned_free_colonists',select:{profile:{select:{skills:{where:{passion:{eq:'Invented'}},select:['def_name']}}}}}"),unread,session);
+        Check(nested.Status=="failed" && unread.Reads==0 && nested.Message.Contains("Declared names"),"Nested projection enum validation missed");
+        unread.Reads=0;
+        var longFlags=engine.Execute("query",new JObject { ["from"]="thing_defs",["where"]=new JObject { ["ingestible.food_type"]=new JObject { ["has_any"]=string.Join(",",Enumerable.Repeat("Meat",1000)) } } },unread,session);
+        Check(longFlags.Status=="failed" && unread.Reads==0,"Oversized flag literal performed reads");
         Console.WriteLine("Native enum tests passed: all declared values, operators, flags, case folding and unknown reads across10 domains.");
     }
     private sealed class CountingData : IGameData {

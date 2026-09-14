@@ -11,6 +11,20 @@ is present. Ambiguous overlaps, mixed field/options and invalid arguments are
 rejected before reads, with input locations for selection/compiler errors.
 No business-specific selector or new Agent tool was added.
 
+Native enum-backed string fields now publish their actual value domains. The ten
+exposed domains share validation and discovery: arbitrary names fail before game
+reads; valid empty selections remain zero. Native flags allow comma-separated
+names and `has_all` / `has_any`. Wire fields remain String, preserving existing
+GraphQL aliases; names, labels and Def references remain open strings.
+
+Production resolves enum names and values from the loaded `Assembly-CSharp`.
+BridgeSmoke and frozen-world explicitly compile with `NEKO_SCHEMA_FIXTURE` and
+copy `Tests/fixtures/native-enums.json`, generated from the pinned reference
+assembly by `Tests/EnumCatalog`. Regenerate the fixture when updating the game
+reference; it records the assembly SHA256. The production build does not read
+this fixture. Predicate literals retain the 4096-character bound and are compiled
+once; unrecognized observed native values produce unknown membership.
+
 Definition conditions inside all/any/not now retain safe early filtering and
 three-valued semantics. Per-root argument schemas and result scope descriptions
 come from the registered schema. Nested collection scopes include their actual

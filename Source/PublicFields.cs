@@ -63,7 +63,7 @@ internal sealed class PublicFields
             foreach (var field in Fields(name)) {
                 var target = ValueType(field.Value);
                 var arguments = (field.Value.Arguments?.ToArray() ?? Array.Empty<QueryArgument>()).Where(a => a.Name is not ("where" or "first" or "after" or "offset")).Select(a => Name(a.Name) + (a.ResolvedType is NonNullGraphType ? "!" : "")).ToArray();
-                entry[field.Key] = (IsList(field.Value) ? "[" + target.Name + "]" : target.Name) + (arguments.Length > 0 ? " args:" + string.Join(",",arguments) : "");
+                entry[field.Key] = (IsList(field.Value) ? "[" + target.Name + "]" : target.Name) + (arguments.Length > 0 ? " args:" + string.Join(",",arguments) : "") + (NativeEnumScalar.For(field.Value) is NativeEnumScalar d ? " domain:" + d.NativeType : "");
                 if (target is IComplexGraphType) queue.Enqueue(target.Name);
             }
             if (Type(name) is IAbstractGraphType abstractType) foreach (var concrete in abstractType.PossibleTypes) queue.Enqueue(concrete.Name);
@@ -151,7 +151,7 @@ internal sealed class PublicFields
                     if (op.Value is not JObject choices) throw Error("on requires concrete type conditions.");
                     predicate["types"] = new JObject(choices.Properties().Select(c => new JProperty(c.Name,Predicate(c.Name,c.Value))));
                 }
-                else if (op.Name == "is_null" || childType is ScalarGraphType && !IsList(field) && new[] { "eq","ne","in","gt","gte","lt","lte","contains","starts_with","ends_with","case_sensitive" }.Contains(op.Name)) predicate[op.Name] = op.Value.DeepClone();
+                else if (op.Name == "is_null" || childType is ScalarGraphType && !IsList(field) && new[] { "eq","ne","in","gt","gte","lt","lte","contains","starts_with","ends_with","case_sensitive","has_all","has_any" }.Contains(op.Name)) predicate[op.Name] = op.Value.DeepClone();
                 else throw Error("Unsupported public operator " + op.Name + " for " + type + "." + path[index]);
             }
             if (output[field.Name] != null) throw Error("Duplicate/overlapping predicate path; use all to combine conditions.");
@@ -161,6 +161,9 @@ internal sealed class PublicFields
     internal JArray Describe(IEnumerable<string> names)
     {
         return new JArray(names.Select(name => {
+            var domain = fields.Values.SelectMany(f => f.Values).Select(NativeEnumScalar.For)
+                .FirstOrDefault(d => d?.NativeType == name);
+            if (domain != null) return new JObject { ["type"] = name, ["wire_type"] = "String", ["value_domain"] = domain.Describe() };
             var type = Type(name);
             var description = new JObject { ["type"] = name, ["description"] = type.Description };
             if (type is IComplexGraphType)
@@ -168,6 +171,7 @@ internal sealed class PublicFields
                     ["name"] = p.Key,
                     ["type"] = ValueType(p.Value).Name, ["collection"] = IsList(p.Value),
                     ["default_reference"] = p.Value.Metadata.ContainsKey("default_reference"),
+                    ["value_domain"] = NativeEnumScalar.For(p.Value)?.Describe(),
                     ["description"] = p.Value.Description ?? "Selected game field. Null without issue means not applicable; failed reads are reported separately.",
                     ["aggregate"] = CanSum(name,p.Value) ? new JArray("sum","min","max") : IsScalar(p.Value) && ValueType(p.Value) is IntGraphType or FloatGraphType ? new JArray("min","max") : new JArray(),
                     ["args"] = new JArray((p.Value.Arguments?.ToArray() ?? Array.Empty<QueryArgument>()).Where(a => a.Name is not ("where" or "first" or "after" or "offset")).Select(a => new JObject { ["name"] = Name(a.Name), ["type"] = a.ResolvedType!.ToString(), ["default"] = a.DefaultValue == null ? JValue.CreateNull() : JToken.FromObject(a.DefaultValue), ["required"] = a.ResolvedType is NonNullGraphType }))
@@ -176,6 +180,9 @@ internal sealed class PublicFields
             return description;
         }));
     }
+    internal JObject ValueDomains() => new(fields.Values.SelectMany(f => f.Values).Select(NativeEnumScalar.For)
+        .Where(d => d != null).Select(d => d!).GroupBy(d => d.NativeType).OrderBy(g => g.Key, StringComparer.Ordinal)
+        .Select(g => new JProperty(g.Key,g.First().Describe())));
     internal JObject FieldNotes(IEnumerable<string> names)
     {
         var result = new JObject();

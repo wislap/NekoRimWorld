@@ -84,13 +84,14 @@ internal sealed class SelectionConditions
 
     public static JObject Contract() => new() {
         ["version"] = "schema_conditions.v1", ["max_depth"] = MaxDepth, ["max_nodes"] = MaxNodes,
-        ["rules"] = "All supplied clauses are AND. all/any accept nonempty condition arrays; not accepts one condition. Object: fields:{nativeField:condition}, is_null, match, types:{publicConcreteType:condition}. Field arguments go in arguments and use its existing schema/defaults. Boolean:eq/ne. Number:eq/ne/in/gt/gte/lt/lte. String/ID:eq/ne/in/contains/starts_with/ends_with, ordinal case-sensitive (case_sensitive:false opts into ordinal ignore-case). Enum:eq/ne/in over all declared values. Nullable:is_null; null differs from failed read. Collection:some/every/none over its complete source before display paging. Empty every/none are true; a null collection does not satisfy a quantifier. Unknown reads use three-valued logic; undecidable membership makes the collection unavailable, never an observed empty set. reach:{field, some/every/none, include_self?, arguments?} traverses any public same-type reference/collection with shared cycle/depth/node limits; use parent for ancestors or a declared child collection for descendants. Wrapper items/nodes are display windows: apply where at their source field, not to a returned page. Exact selectors and where intersect. No purpose/category defaults.",
+        ["rules"] = "All supplied clauses are AND. all/any accept nonempty condition arrays; not accepts one condition. Object: fields:{nativeField:condition}, is_null, match, types:{publicConcreteType:condition}. Field arguments go in arguments and use its existing schema/defaults. Boolean:eq/ne. Number:eq/ne/in/gt/gte/lt/lte. String/ID:eq/ne/in/contains/starts_with/ends_with, ordinal case-sensitive (case_sensitive:false opts into ordinal ignore-case). Enum:eq/ne/in over all declared values. Native flags also support has_all/has_any over comma-separated declared names. Nullable:is_null; null differs from failed read. Collection:some/every/none over its complete source before display paging. Empty every/none are true; a null collection does not satisfy a quantifier. Unknown reads use three-valued logic; undecidable membership makes the collection unavailable, never an observed empty set. reach:{field, some/every/none, include_self?, arguments?} traverses any public same-type reference/collection with shared cycle/depth/node limits; use parent for ancestors or a declared child collection for descendants. Wrapper items/nodes are display windows: apply where at their source field, not to a returned page. Exact selectors and where intersect. No purpose/category defaults.",
     };
 
     internal static JObject DescribeField(FieldType field) => new() {
         ["value_type"] = Bare(field.ResolvedType!).Name,
         ["element_type"] = Element(field)?.Name,
         ["display_window"] = field.Metadata.ContainsKey("collection_view"),
+        ["value_domain"] = NativeEnumScalar.For(field)?.Describe(),
     };
 
     public Predicate Compile(string typeName, object? raw)
@@ -143,7 +144,7 @@ internal sealed class SelectionConditions
                     var condition = (JObject)input.DeepClone(); var arguments = Arguments(field, condition["arguments"], at + "." + field.Name);
                     condition.Remove("arguments");
                     var element = Element(field);
-                    var childType = element == null ? field.ResolvedType! : new ListGraphType(element);
+                    var childType = element == null ? (IGraphType?)NativeEnumScalar.For(field) ?? field.ResolvedType! : new ListGraphType((IGraphType?)NativeEnumScalar.For(field) ?? element);
                     var child = Build(childType, condition, at + "." + field.Name, depth + 1, ref nodes);
                     parts.Add((v, c) => v == null ? false : Evaluate(child, ReadField(complex, field, v, arguments, c), c));
                 }
@@ -181,7 +182,7 @@ internal sealed class SelectionConditions
             else if (key == "case_sensitive" && type is StringGraphType or IdGraphType)
             {
                 if (arg.Type != JTokenType.Boolean) throw Error(at + " must be boolean.");
-                if (!obj.Properties().Any(p => p.Name is "eq" or "ne" or "in" or "contains" or "starts_with" or "ends_with")) throw Error(at + " requires a string operation.");
+                if (!obj.Properties().Any(p => p.Name is "eq" or "ne" or "in" or "contains" or "starts_with" or "ends_with" or "has_all" or "has_any")) throw Error(at + " requires a string operation.");
             }
             else if (type is ScalarGraphType scalar)
                 parts.Add(Scalar(scalar, key, arg, (bool?)obj["case_sensitive"] ?? true, at));
@@ -194,15 +195,18 @@ internal sealed class SelectionConditions
     {
         var numeric = type is IntGraphType or FloatGraphType;
         var text = type is StringGraphType or IdGraphType;
-        if (op is not ("eq" or "ne" or "in") && !(numeric && op is "gt" or "gte" or "lt" or "lte") && !(text && op is "contains" or "starts_with" or "ends_with")) throw Error("Unsupported scalar operation " + path);
+        var nativeEnum = type as NativeEnumScalar;
+        if (nativeEnum != null && op is not ("eq" or "ne" or "in") && !(nativeEnum.Flags && op is "has_all" or "has_any")) throw Error(path + " requires " + string.Join("/", nativeEnum.Describe()["operators"]!) + " for " + nativeEnum.NativeType + ". Declared names: " + string.Join(", ", nativeEnum.Describe()["values"]!));
+        if (op is not ("eq" or "ne" or "in") && !(nativeEnum?.Flags == true && op is "has_all" or "has_any") && !(numeric && op is "gt" or "gte" or "lt" or "lte") && !(text && op is "contains" or "starts_with" or "ends_with")) throw Error("Unsupported scalar operation " + path);
         if (type is BooleanGraphType && op == "in") throw Error("Boolean supports eq/ne: " + path);
         var values = op == "in" ? arg as JArray ?? throw Error(path + " must be an array.") : new JArray(arg.DeepClone());
         if (values.Count > 128) throw Error(path + " exceeds 128 values.");
-        foreach (var value in values) ValidateScalar(type, value, path);
+        foreach (var value in values) ValidateScalar(type, value, path, sensitive);
         var comparison = sensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-        bool Equal(object value, JToken other) => numeric ? Convert.ToDouble(value, CultureInfo.InvariantCulture) == (double)other : text ? string.Equals(Convert.ToString(value, CultureInfo.InvariantCulture), (string?)other, comparison) : JToken.DeepEquals(JToken.FromObject(type.Serialize(value)!), other);
+        bool Equal(object value, JToken other) => nativeEnum != null ? nativeEnum.Equal(value, other, sensitive) : numeric ? Convert.ToDouble(value, CultureInfo.InvariantCulture) == (double)other : text ? string.Equals(Convert.ToString(value, CultureInfo.InvariantCulture), (string?)other, comparison) : JToken.DeepEquals(JToken.FromObject(type.Serialize(value)!), other);
         return (v, _) => {
             if (v == null) return false;
+            if (nativeEnum != null && op is "has_all" or "has_any") return nativeEnum.Has(v, arg, sensitive, op == "has_all");
             if (op == "in") return values.Any(x => Equal(v, x));
             if (op == "eq") return Equal(v, arg);
             if (op == "ne") return !Equal(v, arg);
@@ -211,9 +215,10 @@ internal sealed class SelectionConditions
             return op switch { "contains" => str.IndexOf(term, comparison) >= 0, "starts_with" => str.StartsWith(term, comparison), _ => str.EndsWith(term, comparison) };
         };
     }
-    private static void ValidateScalar(ScalarGraphType type, JToken value, string path)
+    private static void ValidateScalar(ScalarGraphType type, JToken value, string path, bool sensitive = true)
     {
         var valid = type switch {
+            NativeEnumScalar nativeEnum => nativeEnum.Valid(value, sensitive),
             BooleanGraphType => value.Type == JTokenType.Boolean,
             IntGraphType => value.Type == JTokenType.Integer && (long)value >= int.MinValue && (long)value <= int.MaxValue,
             FloatGraphType => value.Type is JTokenType.Integer or JTokenType.Float && !double.IsNaN((double)value) && !double.IsInfinity((double)value),
@@ -221,7 +226,7 @@ internal sealed class SelectionConditions
             StringGraphType or IdGraphType => value.Type == JTokenType.String && value.ToString().Length <= 4096,
             _ => false,
         };
-        if (!valid) throw Error(path + " has an invalid " + type.Name + " value; use is_null for null.");
+        if (!valid) throw Error(path + " has an invalid " + type.Name + " value; use is_null for null." + (type is NativeEnumScalar domain ? " Declared names: " + string.Join(", ", domain.Describe()["values"]!) : ""));
     }
     internal static Dictionary<string, object?> Arguments(FieldType field, JToken? supplied, string path)
     {

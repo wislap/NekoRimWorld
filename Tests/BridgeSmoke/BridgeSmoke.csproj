@@ -3,6 +3,7 @@
     <OutputType>Exe</OutputType>
     <TargetFrameworks>net472;net8.0</TargetFrameworks>
     <LangVersion>latest</LangVersion>
+    <DefineConstants>$(DefineConstants);NEKO_SCHEMA_FIXTURE</DefineConstants>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <Deterministic>true</Deterministic>
@@ -10,7 +11,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="../../Source/SelectionInput.cs;../../Source/PublicFields.cs;../../Source/PublicQuery.cs" Link="%(Filename)%(Extension)" />
+    <None Include="../fixtures/native-enums.json" Link="native-enums.json" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="../../Source/NativeEnumScalar.cs;../../Source/SelectionInput.cs;../../Source/PublicFields.cs;../../Source/PublicQuery.cs" Link="%(Filename)%(Extension)" />
     <Compile Include="../../Source/ResultEvidence.cs" Link="ResultEvidence.cs" />
     <Compile Include="../../Source/SelectionConditions.cs" Link="SelectionConditions.cs" />
     <Compile Include="..\..\Source\ResourceReports.cs" Link="ResourceReports.cs" />

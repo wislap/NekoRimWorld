@@ -65,10 +65,10 @@ internal sealed class ThingSchema
         var category = Type("ThingCategoryDef", "Verse.ThingCategoryDef reference and parent; not the ThingCategory enum.");
         Scalars(category, "s:defName s:label"); Link(category, "parent", category, referenceOnly: true);
         var ingestible = Type("IngestibleProperties", "RimWorld.IngestibleProperties definition data; HumanEdible is not a pawn-specific permission.");
-        Scalars(ingestible, "s:foodType s:drugCategory b:HumanEdible b:IsMeal f:CachedNutrition i:maxNumToIngestAtOnce");
+        Scalars(ingestible, "e:foodType:RimWorld.FoodTypeFlags e:drugCategory:RimWorld.DrugCategory b:HumanEdible b:IsMeal f:CachedNutrition i:maxNumToIngestAtOnce");
         var compDef = Type("CompProperties", "Verse.CompProperties metadata. compClass names the component class; runtimeType names its properties class. Unknown fields are not reflected.");
         Scalars(compDef, "s:runtimeType s:compClass");
-        Scalars(Def, "s:defName s:label s:thingClass s:category i:stackLimit b:alwaysHaulable b:designateHaulable b:EverHaulable b:IsMedicine b:IsWeapon b:IsIngestible b:CountAsResource");
+        Scalars(Def, "s:defName s:label s:thingClass e:category:Verse.ThingCategory i:stackLimit b:alwaysHaulable b:designateHaulable b:EverHaulable b:IsMedicine b:IsWeapon b:IsIngestible b:CountAsResource");
         Def.GetField("category")!.Description = "Native Verse.ThingCategory enum rendered as a string: the engine's broad thing kind, not a ThingCategoryDef content category. Do not invent enum values from user-facing category labels; inspect definition values and thing_categories for their respective meanings.";
         Def.GetField("IsWeapon")!.Description = "Native attack-capable Item with verbs/tools, excluding apparel. Includes improvised weapons; not an exclusive content category.";
         Def.GetField("CountAsResource")!.Description = "Native resourceReadoutPriority != Uncounted. Readout classification, not all possessions or all useful items.";
@@ -98,15 +98,15 @@ internal sealed class ThingSchema
             comp.AddPossibleType(type);
         }
         comp.ResolveType = value => compTypes[((GameNode)value).Kind];
-        Scalars(compTypes["CompQuality"], "s:Quality");
-        Scalars(compTypes["CompRottable"], "f:RotProgress f:RotProgressPct s:Stage i:TicksUntilRotAtCurrentTemp");
+        Scalars(compTypes["CompQuality"], "e:Quality:RimWorld.QualityCategory");
+        Scalars(compTypes["CompRottable"], "f:RotProgress f:RotProgressPct e:Stage:RimWorld.RotStage i:TicksUntilRotAtCurrentTemp");
         Scalars(compTypes["CompForbiddable"], "b:Forbidden");
         Slice(compTypes["CompIngredients"], "ingredients", Def);
         Slice(Thing, "AllComps", comp);
 
         var settings = Type("StorageSettings", "Native settings: AllowedToAccept and filter are acceptance policy, not actual contents.");
         var filter = Type("ThingFilter", "Native ThingFilter; AllowedThingDefs enumerates definition acceptance only, not instance quality/HP acceptance.");
-        Slice(filter, "AllowedThingDefs", Def); Scalars(settings, "s:Priority"); Link(settings, "filter", filter);
+        Slice(filter, "AllowedThingDefs", Def); Scalars(settings, "e:Priority:RimWorld.StoragePriority"); Link(settings, "filter", filter);
         var storageParent = Type("StorageParent", "Native ISlotGroupParent reference (zone or storage building); not necessarily an IThingHolder.");
         Scalars(storageParent, "s:ref s:runtimeType s:thingId");
         var slot = Type("SlotGroup", "Native SlotGroup: HeldThings reads storage cells; these things remain map things. ref is observation-scoped.");
@@ -166,6 +166,7 @@ internal sealed class ThingSchema
             IGraphType scalar = parts[0] switch { "i" => new IntGraphType(), "f" => new FloatGraphType(), "b" => new BooleanGraphType(), _ => new StringGraphType() };
             var field = PawnSchema.Add(type, name, scalar, c => State(c).ReadNode((GameNode)c.Source!, name, Args(c)));
             field.Metadata["node_member"] = true;
+            if (parts[0] == "e") field.Metadata["native_enum"] = new NativeEnumScalar(parts[2]);
             field.Description = name is "id" or "ref" or "runtimeType" or "supportedType" or "supported" ? "Transport metadata; not a native gameplay member." : "Native " + type.Name + "." + name + "; selected getter only. Null without issue means not applicable; issue means failed/unavailable.";
         }
     }

@@ -19,6 +19,7 @@ internal static class Program
         {
             QueryEngineTests.Run();
             SelectionTests.Run();
+            NativeEnumTests.Run();
             ThingQueryTests.Run();
             PublicQueryTests.Run();
             ResourceReportTests.Run();

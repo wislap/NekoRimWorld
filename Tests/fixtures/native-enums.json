@@ -1,0 +1,123 @@
+{
+  "source_assembly_sha256": "b7eb69e7614c6484ad1b306597afdba4852d7a9c29770762a0083a83c804235d",
+  "domains": {
+    "RimWorld.BackstorySlot": {
+      "flags": false,
+      "values": {
+        "Childhood": "0",
+        "Adulthood": "1"
+      }
+    },
+    "RimWorld.DrugCategory": {
+      "flags": false,
+      "values": {
+        "None": "0",
+        "Medical": "1",
+        "Social": "2",
+        "Hard": "3",
+        "Any": "4"
+      }
+    },
+    "RimWorld.FoodTypeFlags": {
+      "flags": true,
+      "values": {
+        "None": "0",
+        "VegetableOrFruit": "1",
+        "Meat": "2",
+        "Fluid": "4",
+        "Corpse": "8",
+        "Seed": "16",
+        "AnimalProduct": "32",
+        "Plant": "64",
+        "Tree": "128",
+        "Meal": "256",
+        "Processed": "512",
+        "Liquor": "1024",
+        "Kibble": "2048",
+        "Fungus": "4097",
+        "VegetarianAnimal": "7953",
+        "VegetarianRoughAnimal": "8017",
+        "CarnivoreAnimal": "2826",
+        "CarnivoreAnimalStrict": "10",
+        "OmnivoreAnimal": "7963",
+        "OmnivoreRoughAnimal": "8027",
+        "DendrovoreAnimal": "6801",
+        "OvivoreAnimal": "2848",
+        "OmnivoreHuman": "7999"
+      }
+    },
+    "RimWorld.Passion": {
+      "flags": false,
+      "values": {
+        "None": "0",
+        "Minor": "1",
+        "Major": "2"
+      }
+    },
+    "RimWorld.QualityCategory": {
+      "flags": false,
+      "values": {
+        "Awful": "0",
+        "Poor": "1",
+        "Normal": "2",
+        "Good": "3",
+        "Excellent": "4",
+        "Masterwork": "5",
+        "Legendary": "6"
+      }
+    },
+    "RimWorld.RotStage": {
+      "flags": false,
+      "values": {
+        "Fresh": "0",
+        "Rotting": "1",
+        "Dessicated": "2"
+      }
+    },
+    "RimWorld.StoragePriority": {
+      "flags": false,
+      "values": {
+        "Unstored": "0",
+        "Low": "1",
+        "Normal": "2",
+        "Preferred": "3",
+        "Important": "4",
+        "Critical": "5"
+      }
+    },
+    "Verse.AI.TargetIndex": {
+      "flags": false,
+      "values": {
+        "None": "0",
+        "A": "1",
+        "B": "2",
+        "C": "3"
+      }
+    },
+    "Verse.Gender": {
+      "flags": false,
+      "values": {
+        "None": "0",
+        "Male": "1",
+        "Female": "2"
+      }
+    },
+    "Verse.ThingCategory": {
+      "flags": false,
+      "values": {
+        "None": "0",
+        "Pawn": "1",
+        "Item": "2",
+        "Building": "3",
+        "Plant": "4",
+        "Projectile": "5",
+        "Filth": "6",
+        "Gas": "7",
+        "Attachment": "8",
+        "Mote": "9",
+        "Ethereal": "10",
+        "PsychicEmitter": "11"
+      }
+    }
+  }
+}

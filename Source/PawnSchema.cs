@@ -41,7 +41,7 @@ internal static class PawnSchema
         var stat = Type("Stat", "Game-calculated StatDef value and formatted valueText. Requested explicitly by defNames, never all stats.");
         Scalars(status, "b:downed b:drafted b:dead b:inMentalState s:mentalState");
         Scalars(position, "i:x i:y i:z s:mapId"); Scalars(job, "s:id s:defName s:report");
-        Scalars(target, "s:slot s:kind s:thingId s:mapId i:x i:y i:z");
+        Scalars(target, "e:slot:Verse.AI.TargetIndex s:kind s:thingId s:mapId i:x i:y i:z");
         Scalars(need, "s:defName s:label f:level f:maxLevel f:percentage");
         Scalars(mood, "f:level f:instant"); Scalars(thresholds, "f:minor f:major f:extreme");
         Scalars(group, "s:defName s:label i:stageIndex f:moodOffset i:memberCount");
@@ -51,12 +51,12 @@ internal static class PawnSchema
         Scalars(condition, "s:id s:defName s:label s:description f:severity s:severityLabel b:visible");
         Scalars(part, "s:key s:defName s:label i:index s:parentKey f:health f:maxHealth");
         Scalars(tending, "b:isTended f:quality i:ticksLeft"); Scalars(immunity, "f:level b:fullyImmune");
-        Scalars(profile, "s:gender s:raceDefName s:kindDefName");
+        Scalars(profile, "e:gender:Verse.Gender s:raceDefName s:kindDefName");
         Scalars(statDefinition, "s:defName s:label s:description");
         Scalars(age, "f:biologicalYears f:chronologicalYears s:lifeStage");
-        Scalars(backstory, "s:slot s:defName s:title s:description");
+        Scalars(backstory, "e:slot:RimWorld.BackstorySlot s:defName s:title s:description");
         Scalars(trait, "s:defName s:label s:description i:degree b:suppressed s:sourceGeneDefName s:suppressedByGeneDefName");
-        Scalars(skill, "s:defName s:label i:level s:passion i:aptitude b:totallyDisabled b:permanentlyDisabled f:xpSinceLastLevel f:xpRequiredForLevelUp");
+        Scalars(skill, "s:defName s:label i:level e:passion:RimWorld.Passion i:aptitude b:totallyDisabled b:permanentlyDisabled f:xpSinceLastLevel f:xpRequiredForLevelUp");
         Scalars(stat, "s:defName s:label f:value s:valueText");
         mood.GetField("level")!.Description = "Current mood need fraction, not the instantaneous target.";
         mood.GetField("instant")!.Description = "Game CurInstantLevelPercentage: current instantaneous/target mood from thoughts, not a historical observation.";
@@ -139,7 +139,9 @@ internal static class PawnSchema
         {
             var parts = word.Split(':'); var name = parts[1];
             IGraphType graphType = parts[0] switch { "i" => new IntGraphType(), "f" => new FloatGraphType(), "b" => new BooleanGraphType(), _ => new StringGraphType() };
-            Add(type, name, graphType, c => State(c).ReadNode(Node(c), name, Arguments(c))).Metadata["node_member"] = true;
+            var field = Add(type, name, graphType, c => State(c).ReadNode(Node(c), name, Arguments(c)));
+            field.Metadata["node_member"] = true;
+            if (parts[0] == "e") field.Metadata["native_enum"] = new NativeEnumScalar(parts[2]);
         }
     }
     private static void Child(ObjectGraphType type, string name, ObjectGraphType child) =>

@@ -85,24 +85,29 @@ internal sealed class PublicFields
         return schema;
     }
 
-    internal JObject Predicate(string type, JToken token)
+    private static readonly HashSet<string> ConditionOptions = new(new[] {
+        "where","args","on","is_null","some","every","none","all","any","not","reach",
+        "eq","ne","in","gt","gte","lt","lte","contains","starts_with","ends_with","case_sensitive","has_all","has_any"
+    }, StringComparer.Ordinal);
+    internal JObject Predicate(string type, JToken token, int depth = 0)
     {
+        if (depth > 32) throw Error("Condition syntax exceeds depth32.");
         if (token is not JObject input || input.Count == 0) throw Error("where must be a nonempty object.");
         var output = new JObject(); var selected = new JObject(); var wrappers = new JArray();
         foreach (var p in input.Properties())
         {
-            if (p.Name == "where") { wrappers.Add(Predicate(type,p.Value)); continue; }
+            if (p.Name == "where") { wrappers.Add(Predicate(type,p.Value,depth+1)); continue; }
             if (p.Name is "all" or "any")
             {
                 if (p.Value is not JArray array || array.Count == 0) throw Error(p.Name + " requires a nonempty condition array.");
-                output[p.Name] = new JArray(array.Select(x => Predicate(type, x))); continue;
+                output[p.Name] = new JArray(array.Select(x => Predicate(type, x,depth+1))); continue;
             }
-            if (p.Name == "not") { output[p.Name] = Predicate(type,p.Value); continue; }
+            if (p.Name == "not") { output[p.Name] = Predicate(type,p.Value,depth+1); continue; }
             if (p.Name == "reach") {
                 if (p.Value is not JObject relation || relation["field"]?.Type != JTokenType.String) throw Error("reach requires field and some/every/none.");
                 var field = Field(type,(string)relation["field"]!); var converted = new JObject { ["field"] = field.Name };
                 foreach (var part in relation.Properties().Where(x => x.Name != "field")) {
-                    if (part.Name is "some" or "every" or "none") converted[part.Name] = Predicate(type,part.Value);
+                    if (part.Name is "some" or "every" or "none") converted[part.Name] = Predicate(type,part.Value,depth+1);
                     else if (part.Name == "args") converted["arguments"] = JObject.FromObject(Arguments(field,part.Value,"reach"));
                     else if (part.Name == "include_self") converted[part.Name] = part.Value.DeepClone();
                     else throw Error("Unsupported reach option " + part.Name);
@@ -112,26 +117,33 @@ internal sealed class PublicFields
             if (p.Name == "on") {
                 if (Type(type) is not IAbstractGraphType abstractType || p.Value is not JObject choices || choices.Count == 0) throw Error("on requires concrete types of an abstract object.");
                 if (choices.Properties().Any(c => !abstractType.PossibleTypes.Any(t => t.Name == c.Name))) throw Error("Unsupported concrete type in on.");
-                output["types"] = new JObject(choices.Properties().Select(c => new JProperty(c.Name,Predicate(c.Name,c.Value)))); continue;
+                output["types"] = new JObject(choices.Properties().Select(c => new JProperty(c.Name,Predicate(c.Name,c.Value,depth+1)))); continue;
             }
-            AddPath(type, selected, p.Name.Split('.'), 0, p.Value);
+            AddPath(type, selected, p.Name.Split('.'), 0, p.Value,depth);
         }
         if (selected.Count > 0) output["fields"] = selected;
         return wrappers.Count == 0 ? output : new JObject { ["all"] = new JArray(new[] { output }.Where(o => o.Count > 0).Cast<JToken>().Concat(wrappers)) };
     }
-    private void AddPath(string type, JObject output, string[] path, int index, JToken value)
+    private void AddPath(string type, JObject output, string[] path, int index, JToken value,int depth)
     {
+        if (index > 12) throw Error("Condition path exceeds depth12.");
         var field = Field(type,path[index]); var childType = ValueType(field); JObject predicate;
         if (index < path.Length - 1)
         {
             if (IsList(field) || childType is not IComplexGraphType) throw Error("Path " + string.Join(".",path) + " crosses a collection or scalar; use some/every/none for collections.");
             predicate = output[field.Name] as JObject ?? new JObject();
             var child = predicate["fields"] as JObject ?? new JObject();
-            AddPath(childType.Name,child,path,index+1,value); predicate["fields"] = child;
+            AddPath(childType.Name,child,path,index+1,value,depth); predicate["fields"] = child;
         }
         else
         {
             if (value is not JObject condition) throw Error("Condition for " + field.Name + " must be an operator object.");
+            if (!IsList(field) && childType is IComplexGraphType && condition.Count > 0 &&
+                condition.Properties().All(p => Fields(childType.Name).ContainsKey(p.Name) && !ConditionOptions.Contains(p.Name))) {
+                if (output[field.Name] != null) throw Error("Duplicate/overlapping predicate path; use all to combine conditions.");
+                output[field.Name] = Predicate(childType.Name,condition,depth+1);
+                return;
+            }
             predicate = new JObject();
             foreach (var op in condition.Properties())
             {
@@ -139,20 +151,21 @@ internal sealed class PublicFields
                 if (op.Name is "some" or "every" or "none")
                 {
                     if (!IsList(field)) throw Error(field.Name + " is not a collection.");
-                    predicate[op.Name] = childType is IComplexGraphType ? Predicate(childType.Name,op.Value) : op.Value.DeepClone();
+                    predicate[op.Name] = childType is IComplexGraphType ? Predicate(childType.Name,op.Value,depth+1) : op.Value.DeepClone();
                 }
                 else if (op.Name == "where" && childType is IComplexGraphType && !IsList(field))
                 {
-                    var nested = Predicate(childType.Name,op.Value);
+                    var nested = Predicate(childType.Name,op.Value,depth+1);
                     foreach (var part in nested.Properties()) predicate[part.Name] = part.Value.DeepClone();
                 }
                 else if (op.Name == "on" && childType is IAbstractGraphType)
                 {
                     if (op.Value is not JObject choices) throw Error("on requires concrete type conditions.");
-                    predicate["types"] = new JObject(choices.Properties().Select(c => new JProperty(c.Name,Predicate(c.Name,c.Value))));
+                    predicate["types"] = new JObject(choices.Properties().Select(c => new JProperty(c.Name,Predicate(c.Name,c.Value,depth+1))));
                 }
                 else if (op.Name == "is_null" || childType is ScalarGraphType && !IsList(field) && new[] { "eq","ne","in","gt","gte","lt","lte","contains","starts_with","ends_with","case_sensitive","has_all","has_any" }.Contains(op.Name)) predicate[op.Name] = op.Value.DeepClone();
-                else throw Error("Unsupported public operator " + op.Name + " for " + type + "." + path[index]);
+                else throw Error("Unsupported condition member " + op.Name + " for " + type + "." + path[index] +
+                    (IsList(field) ? "; collection conditions require some/every/none." : childType is IComplexGraphType ? "; use child fields alone or where:{...}; do not mix fields with condition options." : "; use a scalar operator supported by the field type."));
             }
             if (output[field.Name] != null) throw Error("Duplicate/overlapping predicate path; use all to combine conditions.");
         }

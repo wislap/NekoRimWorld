@@ -266,6 +266,9 @@ internal sealed class PublicQuery
         var field = roots[root]; var value = registry.Read("Query",state,field,args,state);
         return value is IEnumerable sequence && value is not string ? sequence.Cast<object>() : value == null ? Array.Empty<object>() : new[] { value };
     }
+    private bool IsBareSelection(string type,JObject body) => registry.Type(type) is IComplexGraphType && body.Count>0 &&
+        body.Properties().All(p=>registry.Fields(type).ContainsKey(p.Name) && !SelectionInput.IsOption(p.Name));
+
     private Selection Compile(string type,JObject options,int depth,bool root = false,string inputPath = "",Projection? projection = null)
     {
         var checkPath = inputPath;
@@ -277,12 +280,12 @@ internal sealed class PublicQuery
         if (options["on"] != null) {
             checkPath=SelectionInput.Pointer(inputPath,"on");
             if (registry.Type(type) is not IAbstractGraphType abstractType) throw PublicFields.Error("on is only available on abstract component types; " + type + " is not abstract.");
-            if (options["on"] is not JObject variants || variants.Count==0) throw PublicFields.Error("on must be an object mapping concrete type names to selections, for example on:{TypeName:{select:[field]}}. Allowed types: " + string.Join(", ",abstractType.PossibleTypes.Select(t=>t.Name)));
+            if (options["on"] is not JObject variants) throw PublicFields.Error("on must be an object mapping concrete type names to selections, for example on:{TypeName:{select:[field]}}. Allowed types: " + string.Join(", ",abstractType.PossibleTypes.Select(t=>t.Name)));
             foreach (var variant in variants.Properties()) {
                 checkPath=SelectionInput.Pointer(SelectionInput.Pointer(inputPath,"on"),variant.Name);
                 if (!abstractType.PossibleTypes.Any(t=>t.Name==variant.Name)) throw PublicFields.Error("Unknown concrete type " + variant.Name + ". Allowed types: " + string.Join(", ",abstractType.PossibleTypes.Select(t=>t.Name)));
                 var body=variant.Value as JObject;
-                var bare=body != null && body.Count>0 && body.Properties().All(p=>registry.Fields(variant.Name).ContainsKey(p.Name) && !SelectionInput.IsOption(p.Name));
+                var bare=body != null && IsBareSelection(variant.Name,body);
                 if (variant.Value is JArray || bare)
                     plan.On.Add(variant.Name,Compile(variant.Name,new JObject(),depth+1,false,checkPath,new Projection { Token=variant.Value,Path=checkPath }));
                 else {
@@ -316,8 +319,7 @@ internal sealed class PublicQuery
             if (entry.Children != null) childProjection = new Projection { Fields = entry.Children, Path = entry.Path };
             else if (entry.Value is JArray array) childProjection = new Projection { Token = array, Path = entry.Path };
             else if (entry.Value is JObject objectConfig) {
-                var bare = target is IComplexGraphType && objectConfig.Count > 0 &&
-                    objectConfig.Properties().All(p => registry.Fields(target.Name).ContainsKey(p.Name) && !SelectionInput.IsOption(p.Name));
+                var bare = IsBareSelection(target.Name,objectConfig);
                 if (bare) childProjection = new Projection { Token = objectConfig, Path = entry.Path };
                 else config = objectConfig;
             }

@@ -31,9 +31,11 @@ internal static class PublicQueryTests
         }) {
             data.Reads = 0; result = Query(json); Check(result.Status == "failed" && data.Reads == 0,"Invalid batch performed reads",result);
         }
+        result=Query("{from:'things',select:{all_comps:{on:{},select:['supported']}}}");
+        Check(result.Status=="ok","Empty on compatibility regressed",result);
         // v1.6.1: equivalent forms exercise the public compiler, not a second parser.
-        var canonical = Query("{from:'things',where:{'definition.category':{eq:'Item'}},select:['id'],aggregate:{n:{op:'count'}}}");
-        var nestedInput = JObject.Parse("{from:'things',where:{definition:{category:{eq:'Item'}}},select:['id'],aggregate:{n:{op:'count'}}}");
+        var canonical = Query("{from:'things',where:{'definition.def_name':{eq:'Steel'}},select:['id'],aggregate:{n:{op:'count'}}}");
+        var nestedInput = JObject.Parse("{from:'things',where:{definition:{def_name:{eq:'Steel'}}},select:['id'],aggregate:{n:{op:'count'}}}");
         var originalNested = nestedInput.DeepClone();
         var nestedResult = engine.Execute("query",nestedInput,data,session);
         Check(nestedResult.Status=="ok" && JToken.DeepEquals(nestedInput,originalNested) && JToken.DeepEquals(canonical.Data?["results"]?[0]?["rows"],nestedResult.Data?["results"]?[0]?["rows"]),"Bare nested condition changed selected objects or input",nestedResult);
@@ -47,6 +49,9 @@ internal static class PublicQueryTests
         data.Reads=0;
         result=Query("{requests:[{from:'things',select:['no_such_field']},{from:'maps',select:['id']},{from:'things',select:{all_comps:{on:{NoSuchComponent:['quality']}}}}]}");
         Check(result.Status=="failed" && data.Reads==0 && result.Data==null && result.Issues.Length==2 && (string?)result.Issues[0].Path[1]=="0" && (string?)result.Issues[1].Path[1]=="2" && (int?)result.Execution?["validation"]?["valid_request_indices"]?[0]==1,"Batch lost independent errors or performed reads",result);
+        var eight=new JArray(Enumerable.Range(0,8).Select(i=>new JObject { ["from"]="things",["select"]=new JArray("bad_"+i) }));
+        data.Reads=0;result=engine.Execute("query",new JObject { ["requests"]=eight },data,session);
+        Check(result.Status=="failed" && result.Issues.Length==8 && data.Reads==0,"Batch diagnostics lost bounded independent roots",result);
         data.Fail = true;
         result = Query("{'requests':[{'from':'things','where':{'definition.is_weapon':{'eq':true}},'aggregate':{'records':{'op':'count'}}}]}");
         Check(result.Status == "partial" && result.Data?["results"]?[0]?["aggregates"]?["records"]?["value"]?.Type == JTokenType.Null &&

@@ -35,12 +35,16 @@ internal sealed class SelectionInput
     {
         if (error.Data.Contains("input_located")) return error;
         path = error.Data["input_path"] as string ?? path;
-        // Keep diagnostics bounded; a parent pointer is still an actual input location.
-        while (path.Length > 1024) path = path.Substring(0, path.LastIndexOf('/'));
-        var message = error.Message.Length > 512 ? error.Message.Substring(0, 509) + "..." : error.Message;
-        var located = new ExecutionError("At " + (path.Length == 0 ? "/" : path) + " (" + owner + "): " + message) {
-            Code = error.Code ?? "invalid_query"
-        };
+        // Keep a real ancestor pointer when a field name cannot fit the wire path limit.
+        while (path.Length > 1024 || path.Split('/').Skip(1).Any(p => {
+            var name=p.Replace("~1","/").Replace("~0","~");
+            return string.IsNullOrWhiteSpace(name) || name.Length>256;
+        })) {
+            var slash=path.LastIndexOf('/'); path=slash<0 ? "" : path.Substring(0,slash);
+        }
+        var message="At " + (path.Length == 0 ? "/" : path) + " (" + owner + "): " + error.Message;
+        if (message.Length>512) message=message.Substring(0,509)+"...";
+        var located = new ExecutionError(message) { Code = error.Code ?? "invalid_query" };
         located.Data["input_path"] = path;
         located.Data["input_located"] = true;
         return located;

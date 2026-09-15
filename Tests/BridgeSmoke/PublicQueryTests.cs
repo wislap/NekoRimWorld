@@ -52,6 +52,17 @@ internal static class PublicQueryTests
         var eight=new JArray(Enumerable.Range(0,8).Select(i=>new JObject { ["from"]="things",["select"]=new JArray("bad_"+i) }));
         data.Reads=0;result=engine.Execute("query",new JObject { ["requests"]=eight },data,session);
         Check(result.Status=="failed" && result.Issues.Length==8 && data.Reads==0,"Batch diagnostics lost bounded independent roots",result);
+        void CheckWire(QueryOutcome outcome) => ProtocolCodec.Serialize(ProtocolEnvelope.CreateQueryResult(
+            new ProtocolEnvelope { RequestId=new string('4',32) },new string('1',32),1,session,
+            outcome.Status,outcome.Data,outcome.Issues,outcome.ErrorCode,outcome.Message,outcome.Execution));
+        CheckWire(result);
+        foreach (var name in new[]{new string('x',300),""}) {
+            data.Reads=0;
+            result=engine.Execute("query",new JObject { ["from"]="things",["select"]=new JObject { [name]=true } },data,session);
+            Check(result.Status=="failed" && data.Reads==0,"Bad path caused reads",result);
+            CheckWire(result);
+        }
+
         data.Fail = true;
         result = Query("{'requests':[{'from':'things','where':{'definition.is_weapon':{'eq':true}},'aggregate':{'records':{'op':'count'}}}]}");
         Check(result.Status == "partial" && result.Data?["results"]?[0]?["aggregates"]?["records"]?["value"]?.Type == JTokenType.Null &&
@@ -158,23 +169,120 @@ internal static class PublicQueryTests
         data.FailEnumeration = true;
         result = Query("{'requests':[{'from':'things','group_by':['definition.def_name'],'select':['stack_count'],'aggregate':{'rows':{'op':'count'}}}]}" );
         Check(result.Status == "partial" && result.Data?["results"]?[0]?["rows"]?[0]?["values"]?.Type == JTokenType.Null && (bool?)result.Data?["results"]?[0]?["fields_complete"] == false,"Incomplete group incorrectly claimed a shared value",result);
+        var semantics=engine.Execute("describe_query",JObject.Parse("{types:['Thing','Pawn','Status','HealthSummary']}"),data,session);
+        var semanticText=semantics.Data!.ToString();
+        Check(semantics.Status=="ok" && semanticText.Contains("including humans, animals, mechanoids") && semanticText.Contains("map_held") && semanticText.Contains("not current hauling") && !semanticText.Contains("Null without issue means not applicable"),"Semantic descriptions missing or conflicting",semantics);
+        var catalogText=directory.Data!.ToString();
+        Check(catalogText.Contains("object enumeration, not pathfinding access") && catalogText.Contains("rows=[] alone") && !catalogText.Contains("All pawns reachable"),"Catalog retains ambiguous population/completeness claims",directory);
+        AggregateReturnContract(engine,session);
+        ScanDiagnostics(engine,session);
         Console.WriteLine("Public query tests passed: canonical selection, pre-read rejection, complete aggregates, deduplication, grouping and unknown membership.");
+    }
+    private static void AggregateReturnContract(GameQueryEngine engine,SessionDescriptor session)
+    {
+        var data = new Data();
+        QueryOutcome Read(string json) => engine.Execute("query",JObject.Parse(json),data,session);
+        void NoPage(QueryOutcome r,JToken? collection) => Check(collection is JObject obj && obj.Property("rows")==null && obj.Property("page")==null,"Unrequested aggregate detail advertised a page",r);
+        foreach(var root in new[]{"things","maps","pawns"}) {
+            var r=Read("{from:'"+root+"',limit:0,aggregate:{n:{op:'count'}}}");
+            var c=r.Data?["results"]?[0];NoPage(r,c);
+            Check(r.Status=="ok" && (bool?)c?["aggregates"]?["n"]?["complete"]==true && (int?)c?["aggregates"]?["n"]?["value"]==(root=="pawns"?0:2),"Aggregate-only count/scope changed",r);
+        }
+        foreach(var options in new[]{"","group_by:['definition.def_name'],","offset:1,order_by:[{field:'id'}],"}) {
+            var r=Read("{from:'things',"+options+"limit:0,aggregate:{n:{op:'count'},units:{op:'sum',field:'stack_count'}}}");
+            NoPage(r,r.Data?["results"]?[0]);
+            Check(r.Status=="ok" && (int?)r.Data?["results"]?[0]?["aggregates"]?["units"]?["value"]==200,"Aggregate-only output changed measurement",r);
+        }
+        var nested=Read("{from:'things',limit:1,select:{all_comps:{limit:0,aggregate:{n:{op:'count'}}}}}");
+        NoPage(nested,nested.Data?["results"]?[0]?["rows"]?[0]?["all_comps"]);
+        Check((int?)nested.Data?["results"]?[0]?["rows"]?[0]?["all_comps"]?["aggregates"]?["n"]?["value"]==1,"Nested aggregate lost its measure",nested);
+        var shared=Read("{from:'things',group_by:['definition.def_name'],aggregate:{n:{op:'count'}},select:{all_comps:{limit:0,aggregate:{n:{op:'count'}}}}}");
+        Check(shared.Status=="ok" && (int?)shared.Data?["results"]?[0]?["rows"]?[0]?["values"]?["all_comps"]?["aggregates"]?["n"]?["value"]==1,"Complete nested aggregate mistaken for an undisplayed partial list",shared);
+        data.VaryComps=true;
+        var varies=Read("{from:'things',group_by:['definition.def_name'],aggregate:{n:{op:'count'}},select:{all_comps:{limit:0,aggregate:{n:{op:'count'}}}}}");
+        Check(varies.Status=="partial" && varies.Data?["results"]?[0]?["rows"]?[0]?["values"]?["all_comps"]?.Type==JTokenType.Null,"Different nested aggregates falsely shared",varies);
+        data.VaryComps=false;
+        data.LargeContents=true;
+        var unknown=Read("{from:'things',group_by:['definition.def_name'],aggregate:{n:{op:'count'}},select:{contents:{limit:0,select:[],aggregate:{n:{op:'count'}}}}}");
+        Check(unknown.Status=="partial" && unknown.Data?["results"]?[0]?["rows"]?[0]?["values"]?["contents"]?.Type==JTokenType.Null,"Incomplete nested aggregate became a shared known value",unknown);
+        data.LargeContents=false;
+        foreach(var suffix in new[]{"",",group_by:['id']"}) {
+            var first=Read("{from:'things',limit:1,aggregate:{n:{op:'count'}}"+suffix+"}");
+            Check((bool?)first.Data?["results"]?[0]?["page"]?["has_more"]==true && (int?)first.Data?["results"]?[0]?["page"]?["next_offset"]==1,"Requested detail pagination lost continuation",first);
+            var last=Read("{from:'things',limit:1,offset:1,aggregate:{n:{op:'count'}}"+suffix+"}");
+            Check((bool?)last.Data?["results"]?[0]?["page"]?["has_more"]==false && (int?)last.Data?["results"]?[0]?["aggregates"]?["n"]?["value"]==2,"Page offset changed full aggregate",last);
+        }
+        var bare=Read("{from:'things',limit:0}");
+        Check(bare.Data?["results"]?[0]?["rows"] is JArray && bare.Data?["results"]?[0]?["page"] is JObject,"Nonaggregate contract changed",bare);
+        data.LargeThings=8193;
+        var partial=Read("{from:'things',limit:0,aggregate:{n:{op:'count'}}}");NoPage(partial,partial.Data?["results"]?[0]);
+        Check(partial.Status=="partial" && (bool?)partial.Data?["results"]?[0]?["scan_complete"]==false && partial.Data?["results"]?[0]?["aggregates"]?["n"]?["value"]?.Type==JTokenType.Null && (int?)partial.Data?["results"]?[0]?["aggregates"]?["n"]?["known_value"]==8192,"Partial scan became exact without page",partial);
+        data.LargeThings=0;data.FailQuantity=true;
+        var failed=Read("{from:'things',limit:0,aggregate:{units:{op:'sum',field:'stack_count'}}}");NoPage(failed,failed.Data?["results"]?[0]);
+        Check(failed.Status=="partial" && (bool?)failed.Data?["results"]?[0]?["fields_complete"]==false && (bool?)failed.Data?["results"]?[0]?["aggregates"]?["units"]?["complete"]==false,"Unreadable aggregate became complete without page",failed);
+    }
+    private static void ScanDiagnostics(GameQueryEngine engine,SessionDescriptor session)
+    {
+        var data = new Data { LargeThings=8193 };
+        QueryOutcome Read(string json) => engine.Execute("query",JObject.Parse(json),data,session);
+        string Message(QueryOutcome r) {
+            var message=r.Issues.Single(i=>i.Code=="query_scan_limit").Message!;
+            Check(message.Length<=512,"Scan diagnostic exceeds wire limit",r);
+            return message;
+        }
+        var singleton="{from:'things',args:{map_id:'current',def_names:['Steel']},select:[],limit:0,aggregate:{n:{op:'count'}}}";
+        var result=Read(singleton);
+        Check(Message(result).Contains("one resolved loaded map and one exact definition"),"Root singleton scan lacks contextual recovery diagnostic",result);
+        Check((bool?)result.Data?["results"]?[0]?["scan_complete"]==false && result.Data?["results"]?[0]?["aggregates"]?["n"]?["value"]?.Type==JTokenType.Null && (int?)result.Data?["results"]?[0]?["known_matches"]==8192 && (int?)result.Data?["results"]?[0]?["aggregates"]?["n"]?["known_value"]==8192,"Scan diagnostic changed counts/completeness",result);
+        ProtocolCodec.Serialize(ProtocolEnvelope.CreateQueryResult(new ProtocolEnvelope {RequestId=new string('4',32)},new string('1',32),1,session,result.Status,result.Data,result.Issues,result.ErrorCode,result.Message,result.Execution));
+        result=Read(singleton.Replace("['Steel']","['Steel','Steel']"));
+        Check(Message(result).Contains("one exact definition"),"Repeated names were mistaken for splittable definitions",result);
+        foreach(var json in new[]{singleton.Replace("map_id:'current',",""),singleton.Replace("['Steel']","['Steel','WoodLog']"),singleton.Replace("args:{map_id:'current',def_names:['Steel']}","args:{map_id:'current'},where:{'definition.def_name':{eq:'Steel'}}")}) {
+            result=Read(json);
+            Check(!Message(result).Contains("already restricted") && Message(result).Contains("intended population"),"Broad/implicit source falsely diagnosed as an explicit singleton",result);
+        }
+        result=Read(singleton.Replace("limit:0","limit:1,offset:8192,order_by:[{field:'id',direction:'asc'}],group_by:['id'],where:{id:{eq:'absent'}}"));
+        Check((int?)result.Data?["results"]?[0]?["known_matches"]==0 && (int?)result.Data?["results"]?[0]?["aggregates"]?["n"]?["known_value"]==0 && result.Data?["results"]?[0]?["aggregates"]?["n"]?["value"]?.Type==JTokenType.Null && Message(result).Contains("ordinary instance filters"),"Candidate cap became a matching-count lower bound or output options bypassed scan",result);
+        data.LargeThings=8192;
+        result=Read(singleton);
+        Check(result.Status=="ok" && (int?)result.Data?["results"]?[0]?["aggregates"]?["n"]?["value"]==8192,"Exact boundary is not complete",result);
+        data.LargeThings=8193;
+        result=Read("{requests:["+singleton+",{from:'maps',select:[],limit:0,aggregate:{n:{op:'count'}}}]}");
+        Check(result.Issues.Length==1 && result.Issues[0].Path.ToString(Newtonsoft.Json.Formatting.None)=="[\"results\",\"0\"]" && (int?)result.Data?["results"]?[1]?["aggregates"]?["n"]?["value"]==2,"Scan failure leaked into complete sibling",result);
+        data.LargeThings=0;data.LargeContents=true;
+        result=Read("{from:'things',args:{map_id:'current',def_names:['Steel']},limit:1,select:{contents:{select:[],limit:0,aggregate:{n:{op:'count'}}}}}");
+        Check(result.Status=="partial" && !Message(result).Contains("one exact definition") && !Message(result).Contains("Map/definition") && result.Issues[0].Path.Count>2,"Nested Thing collection inherited root recovery assumptions",result);
+        data.NativeContents=true;
+        result=Read("{from:'things',args:{map_id:'current',def_names:['Steel']},limit:1,select:{contents:{select:[],limit:0}}}");
+        Check(result.Issues.Any(i=>i.Code=="node_scan_limit" && i.Message=="Nested collection exceeds 8192 records."),"Native nested guard was rewritten",result);
+        data.LargeContents=false;data.LargePawns=true;
+        result=Read("{from:'pawns',args:{map_id:'current'},select:[],limit:0,aggregate:{n:{op:'count'}}}");
+        Check(!Message(result).Contains("Map/definition") && !Message(result).Contains("one exact definition"),"Non-things source advertised unsupported map/definition splitting",result);
+        data.LargePawns=false;data.FailEnumeration=true;
+        foreach(var code in new[]{"holder_scan_limit","deadline_exceeded","query_scan_limit"}) {
+            data.EnumerationError=code;result=Read(singleton);
+            Check(result.Issues.Any(i=>i.Code==code && i.Message=="Incomplete fixture collection"),"Backend-specific error was rewritten",result);
+        }
     }
     private static void Check(bool pass,string message,QueryOutcome result) { if (!pass) throw new InvalidOperationException(message + ": " + result.Message + result.Data); }
     private sealed class Data : IGameData, IQueryData
     {
         public int Reads;
+        public int LargeThings;
+        public bool LargeContents,LargePawns,NativeContents;
+        public string EnumerationError="query_scan_limit";
         public bool Fail;
         public bool FailQuantity;
+        public bool VaryComps;
         public bool FailEnumeration;
         public string? LastMap;
         private static GameNode Thing(string id) => new("Thing",id,new GameEntity(id,"map1",id),id);
         public IEnumerable<GameNode> QueryThings(IReadOnlyDictionary<string,object?> args,ReadContext c,Func<GameNode,bool>? definitionFilter = null) {
             LastMap = args.TryGetValue("mapId",out var map) ? map as string : null;
-            foreach (var n in new[] { Thing("a"),Thing("b"),Thing("a") })
-                if (definitionFilter == null || definitionFilter((GameNode)c.ReadNode(n,"def")!)) { yield return n; if (FailEnumeration) throw ReadContext.Error("query_scan_limit","Incomplete fixture collection"); }
+            foreach (var n in LargeThings>0 ? Enumerable.Range(0,LargeThings).Select(i=>Thing("large"+i)) : new[] { Thing("a"),Thing("b"),Thing("a") })
+                if (definitionFilter == null || definitionFilter((GameNode)c.ReadNode(n,"def")!)) { yield return n; if (FailEnumeration) throw ReadContext.Error(EnumerationError,"Incomplete fixture collection"); }
         }
-        public IEnumerable<GameEntity> QueryPawns(IReadOnlyDictionary<string,object?> args,ReadContext c) => Colonists();
+        public IEnumerable<GameEntity> QueryPawns(IReadOnlyDictionary<string,object?> args,ReadContext c) => LargePawns ? Enumerable.Range(0,8193).Select(i=>new GameEntity("pawn"+i,"map1",i)) : Colonists();
         public IEnumerable<GameEntity> Maps() => new[] { new GameEntity("map1",null,new object()), new GameEntity("map2",null,new object()) };
         public IEnumerable<GameEntity> Colonists() => Array.Empty<GameEntity>();
         public object? GameField(string field) => field == "currentMapId" ? "map1" : null;
@@ -184,7 +292,9 @@ internal static class PublicQueryTests
         {
             Reads++;
             if (field == "stackCount" && FailQuantity) throw ReadContext.Error("field_unavailable","Unavailable quantity");
-            if (n.Kind == "Thing") return field switch { "id" => n.Key,"Spawned" => false,"stackCount" => n.Key == "a" ? 75 : 125,"def" => new GameNode("ThingDef","Steel",new GameEntity("def:Steel",null,"Steel"),"Steel"),"AllComps" => new[] { new GameNode("CompQuality","quality",n.Owner,"quality") },_ => null };
+            if (n.Kind == "ThingOwner" && field=="items") { var rows=Enumerable.Range(0,8193).Select(i=>Thing("inside"+i)); return NativeContents ? (object)rows : rows.Select(n=>(object)n); }
+            if (n.Kind == "Thing" && field=="GetDirectlyHeldThings" && LargeContents) return new GameNode("ThingOwner","contents",n.Owner,"contents");
+            if (n.Kind == "Thing") return field switch { "id" => n.Key,"Spawned" => false,"stackCount" => n.Key == "a" ? 75 : 125,"def" => new GameNode("ThingDef","Steel",new GameEntity("def:Steel",null,"Steel"),"Steel"),"AllComps" => VaryComps && n.Key=="b" ? new[] { new GameNode("CompQuality","quality",n.Owner,"quality"),new GameNode("CompQuality","other",n.Owner,"other") } : new[] { new GameNode("CompQuality","quality",n.Owner,"quality") },_ => null };
             if (n.Kind == "CompQuality") return field == "Quality" ? "Good" : field == "supported" ? true : n.Key;
             if (field == "IsWeapon" && Fail) throw ReadContext.Error("field_unavailable","Unavailable definition member");
             return field switch { "defName" => "Steel","label" => "steel","IsWeapon" => false,_ => null };

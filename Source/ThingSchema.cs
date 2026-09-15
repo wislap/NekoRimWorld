@@ -25,7 +25,7 @@ internal sealed class ThingPage
 /// <summary>Explicit native member projections. Only references and collection windows are transport wrappers.</summary>
 internal sealed class ThingSchema
 {
-    public ObjectGraphType Thing { get; } = Type("Thing", "Verse.Thing native members. id/runtimeType are transport metadata; subtype members are nullable when inapplicable. References preserve identity; not a claim of ownership or usability.");
+    public ObjectGraphType Thing { get; } = Type("Thing", "Verse.Thing instance: may be an item, building, plant, Pawn or other native object, not necessarily an inventory item. id identifies the instance; relations describe containment, not ownership or usability.");
     public ObjectGraphType Def { get; } = Type("ThingDef", "Verse.ThingDef definition, not an instance. Native category, content category tree and query groups are distinct.");
     public ObjectGraphType Equipment { get; } = Type("Pawn_EquipmentTracker", "Verse.Pawn_EquipmentTracker; equipped things, not inventory or hauling.");
     public ObjectGraphType Apparel { get; } = Type("Pawn_ApparelTracker", "RimWorld.Pawn_ApparelTracker; worn apparel.");
@@ -45,13 +45,24 @@ internal sealed class ThingSchema
         Link(holder,"parent",holder,"Native IThingHolder.ParentHolder. Follow this relation to identify containing pawns or root holders; refs remain observation-local.",referenceOnly:true);
         var owner = Type("ThingOwner", "Verse.ThingOwner native holder and contents. items is a bounded enumeration wrapper.");
         Link(owner, "Owner", holder, referenceOnly: true); Scalars(owner, "i:Count i:TotalStackCount"); Slice(owner, "items", Thing);
-        var position = Type("IntVec3", "Verse.IntVec3 integer coordinates; map identity is read separately.");
+        var position = Type("IntVec3", "Verse.IntVec3 coordinates: x and z are the map plane; y is vertical. Read map identity separately.");
         Scalars(position, "i:x i:y i:z");
         Scalars(Thing, "s:id s:runtimeType s:Label i:stackCount i:HitPoints i:MaxHitPoints b:Spawned b:Destroyed b:IngestibleNow");
         Link(Thing, "def", Def); Link(Thing, "Stuff", Def);
         Link(Thing, "Map", Map, referenceOnly: true); Link(Thing, "MapHeld", Map, referenceOnly: true);
         Link(Thing, "Position", position); Link(Thing, "PositionHeld", position);
         Link(Thing, "holdingOwner", owner, referenceOnly: true); Link(Thing, "ParentHolder", holder, referenceOnly: true);
+        Thing.GetField("runtimeType")!.Description = "Actual CLR class name from GetType().FullName; an exact type, not its base-class hierarchy, faction or construction history.";
+        reference.GetField("runtimeType")!.Description = Thing.GetField("runtimeType")!.Description;
+        Thing.GetField("Spawned")!.Description = "Native Thing.Spawned: this instance itself is spawned on a map. false does not establish that it is outside loaded maps; a containing holder can be on a map.";
+        Thing.GetField("Map")!.Description = "Native Thing.Map: map on which this instance itself is spawned; null when not spawned. For a held instance, map_held may still identify its containing map.";
+        Thing.GetField("MapHeld")!.Description = "Native Thing.MapHeld: map of this instance or its containing holder chain. A non-null value does not imply this instance is spawned; null supplies no map reference, not a caravan identity.";
+        Thing.GetField("Position")!.Description = "Native Thing.Position, exposed only when this instance is spawned; otherwise null. x/z are map coordinates, y is vertical.";
+        Thing.GetField("PositionHeld")!.Description = "Native Thing.PositionHeld, exposed when this instance or an ancestor is spawned; otherwise null. Describes the instance/holder location, not walking access.";
+        Thing.GetField("holdingOwner")!.Description = "Immediate ThingOwner containing this instance, if any. Container membership is not faction, property ownership or hauling status.";
+        Thing.GetField("ParentHolder")!.Description = "Native Thing.ParentHolder containment link. Follow actual holder relations to identify a container; the reference alone does not classify a Pawn's faction or identity.";
+        Thing.GetField("stackCount")!.Description = "Native Thing.stackCount: units in this instance. count measures records; sum(stack_count) measures units. Non-item Things can also have stack_count.";
+
         Link(Thing, "InnerThing", reference, "RimWorld.MinifiedThing.InnerThing; null for other runtime types. Outer and inner identity are not interchangeable.");
         Link(Thing, "InnerPawn", reference, "Verse.Corpse.InnerPawn; reference only, null for other runtime types.");
         Link(Thing, "GetDirectlyHeldThings", owner, "IThingHolder.GetDirectlyHeldThings for supported holders. Unsupported holders produce an issue, not an empty container.");
@@ -69,7 +80,7 @@ internal sealed class ThingSchema
         var compDef = Type("CompProperties", "Verse.CompProperties metadata. compClass names the component class; runtimeType names its properties class. Unknown fields are not reflected.");
         Scalars(compDef, "s:runtimeType s:compClass");
         Scalars(Def, "s:defName s:label s:thingClass e:category:Verse.ThingCategory i:stackLimit b:alwaysHaulable b:designateHaulable b:EverHaulable b:IsMedicine b:IsWeapon b:IsIngestible b:CountAsResource");
-        Def.GetField("category")!.Description = "Native Verse.ThingCategory enum rendered as a string: the engine's broad thing kind, not a ThingCategoryDef content category. Do not invent enum values from user-facing category labels; inspect definition values and thing_categories for their respective meanings.";
+        Def.GetField("category")!.Description = "Native Verse.ThingCategory enum: broad definition kind. Building includes natural objects; it is distinct from IsBuildingArtificial, faction ownership and construction history. Content-category memberships are in thing_categories.";
         Def.GetField("IsWeapon")!.Description = "Native attack-capable Item with verbs/tools, excluding apparel. Includes improvised weapons; not an exclusive content category.";
         Def.GetField("CountAsResource")!.Description = "Native resourceReadoutPriority != Uncounted. Readout classification, not all possessions or all useful items.";
         Def.GetField("IsIngestible")!.Description = "Native ingestible properties exist; includes plants and non-human food. Not a human-food inventory category. Combine with native Item category when counting food items.";
@@ -167,7 +178,7 @@ internal sealed class ThingSchema
             var field = PawnSchema.Add(type, name, scalar, c => State(c).ReadNode((GameNode)c.Source!, name, Args(c)));
             field.Metadata["node_member"] = true;
             if (parts[0] == "e") field.Metadata["native_enum"] = new NativeEnumScalar(parts[2]);
-            field.Description = name is "id" or "ref" or "runtimeType" or "supportedType" or "supported" ? "Transport metadata; not a native gameplay member." : "Native " + type.Name + "." + name + "; selected getter only. Null without issue means not applicable; issue means failed/unavailable.";
+            field.Description = name is "id" or "ref" or "runtimeType" or "supportedType" or "supported" ? "Transport metadata; not a native gameplay member." : "Native " + type.Name + "." + name + "; selected getter only. Interpret null using this member's meaning; an issue at its path means failed/unavailable.";
         }
     }
     private static void Link(ObjectGraphType type, string name, ObjectGraphType child, string? description = null, bool referenceOnly = false)

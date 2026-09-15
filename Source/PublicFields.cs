@@ -185,7 +185,7 @@ internal sealed class PublicFields
                     ["type"] = ValueType(p.Value).Name, ["collection"] = IsList(p.Value),
                     ["default_reference"] = p.Value.Metadata.ContainsKey("default_reference"),
                     ["value_domain"] = NativeEnumScalar.For(p.Value)?.Describe(),
-                    ["description"] = p.Value.Description ?? "Selected game field. Null without issue means not applicable; failed reads are reported separately.",
+                    ["description"] = p.Value.Description,
                     ["aggregate"] = CanSum(name,p.Value) ? new JArray("sum","min","max") : IsScalar(p.Value) && ValueType(p.Value) is IntGraphType or FloatGraphType ? new JArray("min","max") : new JArray(),
                     ["args"] = new JArray((p.Value.Arguments?.ToArray() ?? Array.Empty<QueryArgument>()).Where(a => a.Name is not ("where" or "first" or "after" or "offset")).Select(a => new JObject { ["name"] = Name(a.Name), ["type"] = a.ResolvedType!.ToString(), ["default"] = a.DefaultValue == null ? JValue.CreateNull() : JToken.FromObject(a.DefaultValue), ["required"] = a.ResolvedType is NonNullGraphType }))
                 }));

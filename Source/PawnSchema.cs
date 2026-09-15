@@ -81,7 +81,7 @@ internal static class PawnSchema
         Child(condition, "part", part); Child(condition, "tending", tending); Child(condition, "immunity", immunity);
         Child(profile, "age", age); Collection(profile, "backstories", backstory);
         Collection(profile, "traits", trait); Collection(profile, "skills", skill);
-        var pawn = new ObjectGraphType { Name = "Pawn", Description = "Addressable pawn. The selected root determines population: spawned_free_colonists versus all loaded-map pawns. Stable identity joins selected facts." };
+        var pawn = new ObjectGraphType { Name = "Pawn", Description = "Native Verse.Pawn instance, including humans, animals, mechanoids and other Pawn kinds; Pawn does not mean human or colonist. The selected root determines the population; id joins the same instance." };
         foreach (var field in new[] { "id", "name", "mapId" })
         {
             var name = field;
@@ -93,12 +93,19 @@ internal static class PawnSchema
             var name = pair.Item1;
             Add(pawn, name, pair.Item2, c => State(c).ReadNode(PawnNode((GameEntity)c.Source!), name)).Metadata["node_member"] = true;
         }
+        pawn.GetField("mapId")!.Description = "Map ID attached to this Pawn by the selected root. Loaded-map pawn queries use the containing map (native MapHeld), including held Pawns; not evidence that the Pawn itself is spawned. status.position uses the Pawn's own spawned position.";
+        status.GetField("position")!.Description = "This Pawn's own spawned map position; null when not spawned. A null position does not establish absence from a loaded map or caravan membership.";
+        status.GetField("currentJob")!.Description = "Current native job; null when there is no current job. It does not establish health, faction or the reason for inactivity.";
         // Preserve native tracker fields for the legacy protocol, but expose their contents consistently to the Agent.
         foreach (var field in new[] { "inventory","equipment","apparel","carryTracker" }) pawn.GetField(field)!.Metadata["public_hidden"] = true;
         Contents(pawn,"inventoryItems","inventory",native.Thing,new[] { "inventory","innerContainer","items" });
         Contents(pawn,"equipmentItems","equipment",native.Thing,new[] { "equipment","AllEquipmentListForReading" });
         Contents(pawn,"apparelItems","apparel",native.Thing,new[] { "apparel","WornApparel" });
         Contents(pawn,"carriedItems","carried",native.Thing,new[] { "carryTracker","CarriedThing" },single:true);
+        pawn.GetField("inventoryItems")!.Description = "Items in this Pawn's inventory, distinct from worn apparel, equipped items and the currently carried Thing. Inventory is a containment relation, not current hauling or faction ownership.";
+        pawn.GetField("equipmentItems")!.Description = "Items equipped through this Pawn's equipment tracker, distinct from inventory and worn apparel. Read their definitions to identify weapons.";
+        pawn.GetField("apparelItems")!.Description = "Apparel currently worn by this Pawn, distinct from equipment, inventory and the currently carried Thing.";
+        pawn.GetField("carriedItems")!.Description = "The current Pawn_CarryTracker.CarriedThing as a zero/one collection. An empty complete result means no currently carried Thing, not an empty inventory or proof about past/future hauling.";
         Collection(pawn, "statDefinitions", statDefinition, new QueryArguments(GameArguments.Create("search", new StringGraphType(),
             "Case-insensitive substring of definition name or label. Does not compute stat values.", new JObject { ["maxLength"] = 128 })));
         Collection(pawn, "stats", stat, new QueryArguments(GameArguments.Create("defNames",
@@ -147,10 +154,10 @@ internal static class PawnSchema
     private static void Child(ObjectGraphType type, string name, ObjectGraphType child) =>
         Add(type, name, child, c => State(c).ReadNode(Node(c), name, Arguments(c))).Metadata["node_member"] = true;
     private static QueryArguments VisibleArguments() => new(GameArguments.Create("visibleOnly", new BooleanGraphType(),
-        "Default true: UI-visible facts. Set false explicitly to inspect internal records.", defaultValue: true));
+        "Default true: facts the game marks visible in this health/needs UI, not map fog or pathfinding. false includes hidden records in this relation.", defaultValue: true));
     internal static void Collection(ObjectGraphType type, string name, IGraphType item, QueryArguments? extra = null, int maximum = MaxFirst)
     {
-        var slice = new ObjectGraphType { Name = type.Name + Upper(name) + "Slice", Description = "A bounded slice of this query's list. Offset continuation is a fresh observation, not a frozen snapshot. Null means unavailable/not applicable, empty items with total=0 means observed empty." };
+        var slice = new ObjectGraphType { Name = type.Name + Upper(name) + "Slice", Description = "A bounded slice of this query's list. Offset continuation is a fresh observation, not a frozen snapshot. Null depends on the field and any issue at its path; a complete zero-match collection is observed empty under its own predicate, while an undisplayed page is not." };
         Add(slice, "items", new ListGraphType(item), c => ((NodeSlice)c.Source!).Items).Metadata["collection_view"] = true;
         Add(slice, "total", new IntGraphType(), c => ((NodeSlice)c.Source!).Total);
         Add(slice, "offset", new IntGraphType(), c => ((NodeSlice)c.Source!).Offset);

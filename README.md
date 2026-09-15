@@ -1,7 +1,7 @@
 # N.E.K.O RimWorld Bridge
 
 Read-only RimWorld 1.6 bridge for N.E.K.O. The current checkout contains the
-v1.6 query/execution revision; package version remains 1.0.0.
+v1.6.1 query/execution revision; package version remains 1.0.0.
 
 The Agent uses `query` / `describe_query` with `public_query.v2`, canonical
 schema-derived fields, related collections and whole-selection aggregates.
@@ -10,6 +10,14 @@ are accepted only when every key is a known child field and no option keyword
 is present. Ambiguous overlaps, mixed field/options and invalid arguments are
 rejected before reads, with input locations for selection/compiler errors.
 No business-specific selector or new Agent tool was added.
+
+Single-object conditions also accept unambiguous child-field maps. Concrete
+`on` projections share array, bare-field-map and explicit selection forms with
+related objects; empty `on:{}` remains valid. Invalid discriminator structure is
+reported before dependent field errors. Failed batches still perform no reads,
+but report one primary error per invalid root request (at most eight), plus the
+indices that passed compilation. Validation success is not an observation;
+source/field work budgets remain shared across the entire batch.
 
 Native enum-backed string fields now publish their actual value domains. The ten
 exposed domains share validation and discovery: arbitrary names fail before game
@@ -30,7 +38,32 @@ three-valued semantics. Per-root argument schemas and result scope descriptions
 come from the registered schema. Nested collection scopes include their actual
 arguments and predicate; relation descriptions are deduplicated. The 8192 source
 candidate bound remains; ordinary instance predicates or display offsets do not
-remove it. These fixes do not establish improved free-text answer quality.
+remove it. Scan-limit diagnostics now use the resolved arguments of the failing
+root: an explicit single-map/single-definition `things` reading explains why
+repartitioning those same dimensions or changing instance filters/display options
+cannot extend its scan. Broader `things` reads preserve conditional narrowing
+advice; other roots and nested collections do not inherit it. Observed
+`known_matches`/`known_value` remain distinct from the candidate cap, and complete
+sibling results remain usable. Other error codes and source-specific diagnostics
+are unchanged. No Agent tool, research-round cap or forced-stop policy is added.
+These fixes do not establish improved free-text answer quality.
+
+Public query terminology now distinguishes Pawn instances (humans, animals,
+mechanoids) from free colonists, and map/holder enumeration from pathfinding.
+Own spawned map/position and containing map/position have separate descriptions;
+Pawn.map_id is documented independently of status.position. Inventory, equipment,
+apparel and currently carried contents retain their distinct populations. Generic
+null descriptions no longer assert every issue-free null is "not applicable";
+field semantics, issue paths, complete zero matches and undisplayed pages remain
+separate. These are registry-description corrections, not field renames or new
+query behavior. Full-Agent results and remaining limitations are recorded in the
+bench's `planning/SEMANTIC-CONSISTENCY.md`.
+
+Public aggregate queries with `limit:0` now omit `rows` and `page`, including
+nested collections. Aggregates, effective scope, scan completeness and issues
+remain available; requested detail keeps its normal pagination. The
+`include_unreal` description distinguishes filtering an emitted Thing from
+traversing descendant holders; it does not change the native traversal.
 
 Field descriptions are exported from the executable registry, including notes
 for types outside the common-field directory. Native counters, holding roles,

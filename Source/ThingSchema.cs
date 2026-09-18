@@ -32,6 +32,7 @@ internal sealed class ThingSchema
     public ObjectGraphType Inventory { get; } = Type("Pawn_InventoryTracker", "Verse.Pawn_InventoryTracker; carried inventory, not the active hauling container.");
     public ObjectGraphType Carry { get; } = Type("Pawn_CarryTracker", "Verse.Pawn_CarryTracker; active carried thing and its container.");
     public ObjectGraphType Map { get; } = Type("NativeMap", "Native map reference with explicitly selected storage and resource-counter members.");
+    public ObjectGraphType Faction { get; } = Type("Faction", "Native RimWorld.Faction: the faction this Thing or Pawn belongs to. Faction membership is a native fact, not an inference from names, kinds or containers. A null faction means this instance has no faction (for example a wild animal or a loose item), not that the fact is unknown.");
     public List<ObjectGraphType> ComponentTypes { get; } = new();
     private readonly ObjectGraphType defPage;
     private readonly ObjectGraphType thingPage;
@@ -48,6 +49,16 @@ internal sealed class ThingSchema
         var position = Type("IntVec3", "Verse.IntVec3 coordinates: x and z are the map plane; y is vertical. Read map identity separately.");
         Scalars(position, "i:x i:y i:z");
         Scalars(Thing, "s:id s:runtimeType s:Label i:stackCount i:HitPoints i:MaxHitPoints b:Spawned b:Destroyed b:IngestibleNow");
+        Scalars(Faction, "s:defName s:name b:isPlayer e:playerRelation:RimWorld.FactionRelationKind");
+        Link(Thing, "Faction", Faction, "Native Thing.Faction: the faction that owns this instance, null when it has none. This is the native membership fact. Container membership, position and definition do not establish faction.");
+        Link(Thing, "HeldBy", reference, "Nearest containing Pawn along the real holder chain, null when this instance is not inside a Pawn. This is held-by containment, not ownership and not pathfinding access.");
+        Link(Thing, "HeldByFaction", Faction, "Faction of the nearest containing Pawn (see HeldBy), null when no Pawn holds this instance or that Pawn has no faction. Use HeldByFaction.isPlayer instead of inferring ownership from containment.");
+        Thing.GetField("HeldBy")!.Description = "Nearest containing Pawn along Thing.ParentHolder, so \"whose pocket is this in\" is a read fact rather than an inference. Not ownership; a loose ground item has no such holder.";
+        Thing.GetField("HeldByFaction")!.Description = "Faction of the pawn returned by HeldBy. When both are null the instance is simply not carried, which is different from a faction that could not be read.";
+        Faction.GetField("defName")!.Description = "Native Faction.def.defName, for example PlayerColony. A definition name identifies the faction type, not a specific faction instance.";
+        Faction.GetField("name")!.Description = "Native Faction.Name: the faction's own display name.";
+        Faction.GetField("isPlayer")!.Description = "Native Faction.IsPlayer: true only for the player's own faction. This is the native membership test for \"is this ours\"; it is not an ownership guess from inventory, containment or pawn kind.";
+        Faction.GetField("playerRelation")!.Description = "Native Faction.PlayerRelationKind (Hostile/Neutral/Ally) toward the player faction. Only a relation, not an action or a threat assessment.";
         Link(Thing, "def", Def); Link(Thing, "Stuff", Def);
         Link(Thing, "Map", Map, referenceOnly: true); Link(Thing, "MapHeld", Map, referenceOnly: true);
         Link(Thing, "Position", position); Link(Thing, "PositionHeld", position);

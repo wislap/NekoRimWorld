@@ -13,7 +13,7 @@ namespace Neko.RimWorld;
 /// <summary>Explicit native API reads, no reflection serialization or cross-query live handles.</summary>
 internal static class ThingData
 {
-    public static readonly HashSet<string> Kinds = new(StringComparer.Ordinal) { "Thing", "ThingReference", "ThingDef", "NativeMap", "IntVec3", "ThingHolder", "ThingOwner", "Pawn_EquipmentTracker", "Pawn_ApparelTracker", "Pawn_InventoryTracker", "Pawn_CarryTracker", "ThingCategoryDef", "IngestibleProperties", "CompProperties", "CompQuality", "CompRottable", "CompForbiddable", "CompIngredients", "UnsupportedThingComp", "NativeStat", "StorageSettings", "StorageParent", "ThingFilter", "SlotGroup", "HaulDestinationManager", "ResourceCounter", "ResourceCountEntry" };
+    public static readonly HashSet<string> Kinds = new(StringComparer.Ordinal) { "Thing", "ThingReference", "ThingDef", "NativeMap", "IntVec3", "ThingHolder", "ThingOwner", "Faction", "Pawn_EquipmentTracker", "Pawn_ApparelTracker", "Pawn_InventoryTracker", "Pawn_CarryTracker", "ThingCategoryDef", "IngestibleProperties", "CompProperties", "CompQuality", "CompRottable", "CompForbiddable", "CompIngredients", "UnsupportedThingComp", "NativeStat", "StorageSettings", "StorageParent", "ThingFilter", "SlotGroup", "HaulDestinationManager", "ResourceCounter", "ResourceCountEntry" };
     public static GameNode Node(Thing t, string kind = "Thing") => new(kind, t.GetUniqueLoadID(), new GameEntity(t.GetUniqueLoadID(), null, t), t);
     public static GameNode Definition(ThingDef def) => new("ThingDef", def.defName, new GameEntity("def:" + def.defName, null, def), def);
     public static GameNode MapNode(Map map) => new("NativeMap", map.GetUniqueLoadID(), new GameEntity(map.GetUniqueLoadID(), map.GetUniqueLoadID(), map), map);
@@ -156,6 +156,19 @@ internal static class ThingData
             if (child != null) foreach (var thing in Descendants(child, context, visited, seen, depth + 1)) yield return thing;
     }
     private static bool Match(string? search, params string?[] values) => search == null || values.Any(value => value?.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0);
+
+    /// <summary>最近的持有者 Pawn，沿容器链向上查找；仅沿真实持有关系，不做所有权推断。</summary>
+    internal static Pawn? HeldByPawn(Thing thing)
+    {
+        var holder = thing.ParentHolder;
+        for (var depth = 0; holder != null && depth < 32; depth++)
+        {
+            if (holder is Pawn pawn) return pawn;
+            holder = holder.ParentHolder;
+        }
+        return null;
+    }
+
     internal static string[]? Strings(IReadOnlyDictionary<string, object?> args, string name)
     {
         if (!args.TryGetValue(name, out var value) || value == null) return null;
@@ -185,9 +198,28 @@ internal static class ThingData
                 "IngestibleNow" => t.IngestibleNow,
                 "InnerThing" => t is MinifiedThing min && min.InnerThing != null ? Node(min.InnerThing, "ThingReference") : null,
                 "InnerPawn" => t is Corpse corpse && corpse.InnerPawn != null ? Node(corpse.InnerPawn, "ThingReference") : null,
+                "Faction" => Wrap(node, "Faction", field, t.Faction),
+                // 沿容器链向上找到最近的持有者 Pawn，并直接给出其派系。
+                // 这是**事实合成**，不是推断："这件东西在谁手里、那个人属于哪个派系"
+                // 每一环都是原生事实；实测里“库存里的黄金是我的物资”就是因为缺少这一环
+                // 而只能靠模型猜（Thing.Faction 对散落物与建筑恒为 null）。
+                "HeldBy" => HeldByPawn(t) is Pawn holder ? Node(holder, "ThingReference") : null,
+                "HeldByFaction" => HeldByPawn(t) is Pawn owner ? Wrap(node, "Faction", field, owner.Faction) : null,
                 "GetDirectlyHeldThings" => t is IThingHolder holder ? Wrap(node, "ThingOwner", field, holder.GetDirectlyHeldThings()) : null,
                 "AllComps" => t is ThingWithComps wc ? Components(node, wc) : null,
                 "stats" => Stats(node, t, args), _ => Unknown(node, field),
+            };
+        }
+        if (node.Kind == "Faction")
+        {
+            var faction = (Faction)h;
+            return field switch
+            {
+                "defName" => faction.def?.defName,
+                "name" => faction.Name,
+                "isPlayer" => faction.IsPlayer,
+                "playerRelation" => faction.PlayerRelationKind.ToString(),
+                _ => Unknown(node, field),
             };
         }
         if (node.Kind == "ThingDef")

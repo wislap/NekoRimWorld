@@ -18,6 +18,14 @@
         "Any": "4"
       }
     },
+    "RimWorld.FactionRelationKind": {
+      "flags": false,
+      "values": {
+        "Hostile": "0",
+        "Neutral": "1",
+        "Ally": "2"
+      }
+    },
     "RimWorld.FoodTypeFlags": {
       "flags": true,
       "values": {
@@ -44,6 +52,14 @@
         "DendrovoreAnimal": "6801",
         "OvivoreAnimal": "2848",
         "OmnivoreHuman": "7999"
+      }
+    },
+    "RimWorld.GuestStatus": {
+      "flags": false,
+      "values": {
+        "Guest": "0",
+        "Prisoner": "1",
+        "Slave": "2"
       }
     },
     "RimWorld.Passion": {

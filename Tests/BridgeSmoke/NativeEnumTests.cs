@@ -15,7 +15,7 @@ internal static class NativeEnumTests
         var engine = new GameQueryEngine();
         var catalog = engine.Execute("query_catalog", new JObject(), null!, session).Data!;
         var domains = (JObject)catalog["public_query"]!["value_domains"]!;
-        Check(domains.Count == 10, "native enum field coverage");
+        Check(domains.Count == 12, "native enum field coverage");
         foreach (var pair in domains.Properties()) {
             var domain = new NativeEnumScalar(pair.Name);
             var root = new ObjectGraphType { Name = "Probe" };
@@ -73,7 +73,9 @@ internal static class NativeEnumTests
             ("spawned_free_colonists", "{'profile.gender':{eq:'Invented'}}", "Verse.Gender"),
             ("spawned_free_colonists", "{'profile.backstories':{some:{slot:{eq:'Invented'}}}}", "RimWorld.BackstorySlot"),
             ("spawned_free_colonists", "{'profile.skills':{none:{passion:{eq:'Invented'}}}}", "RimWorld.Passion"),
-            ("spawned_free_colonists", "{'status.current_job.targets':{some:{slot:{eq:'Invented'}}}}", "Verse.AI.TargetIndex")
+            ("spawned_free_colonists", "{'status.current_job.targets':{some:{slot:{eq:'Invented'}}}}", "Verse.AI.TargetIndex"),
+            ("spawned_free_colonists", "{'faction.player_relation':{eq:'Invented'}}", "RimWorld.FactionRelationKind"),
+            ("spawned_free_colonists", "{'guest_status':{eq:'Invented'}}", "RimWorld.GuestStatus")
         };
         foreach (var route in routes) {
             var condition = JObject.Parse(route.Item2);
@@ -92,7 +94,7 @@ internal static class NativeEnumTests
         unread.Reads=0;
         var longFlags=engine.Execute("query",new JObject { ["from"]="thing_defs",["where"]=new JObject { ["ingestible.food_type"]=new JObject { ["has_any"]=string.Join(",",Enumerable.Repeat("Meat",1000)) } } },unread,session);
         Check(longFlags.Status=="failed" && unread.Reads==0,"Oversized flag literal performed reads");
-        Console.WriteLine("Native enum tests passed: all declared values, operators, flags, case folding and unknown reads across10 domains.");
+        Console.WriteLine("Native enum tests passed: all declared values, operators, flags, case folding and unknown reads across12 domains.");
     }
     private sealed class CountingData : IGameData {
         internal int Reads;

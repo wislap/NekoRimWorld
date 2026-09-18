@@ -5,7 +5,7 @@ using System.Security.Cryptography;
 using var stream = File.OpenRead(args[0]);
 using var pe = new PEReader(stream);
 var reader = pe.GetMetadataReader();
-var wanted = new HashSet<string>(new[]{"ThingCategory","FoodTypeFlags","DrugCategory","QualityCategory","RotStage","StoragePriority","Gender","BackstorySlot","Passion","TargetIndex"});
+var wanted = new HashSet<string>(new[]{"ThingCategory","FoodTypeFlags","DrugCategory","QualityCategory","RotStage","StoragePriority","Gender","BackstorySlot","Passion","TargetIndex","FactionRelationKind","GuestStatus"});
 var domains = new SortedDictionary<string,object>();
 string TypeName(EntityHandle handle) {
  if(handle.Kind==HandleKind.TypeReference) {var t=reader.GetTypeReference((TypeReferenceHandle)handle);return reader.GetString(t.Namespace)+"."+reader.GetString(t.Name);}

@@ -82,13 +82,19 @@ internal static class PawnSchema
         Child(profile, "age", age); Collection(profile, "backstories", backstory);
         Collection(profile, "traits", trait); Collection(profile, "skills", skill);
         var pawn = new ObjectGraphType { Name = "Pawn", Description = "Native Verse.Pawn instance, including humans, animals, mechanoids and other Pawn kinds; Pawn does not mean human or colonist. The selected root determines the population; id joins the same instance." };
+        Scalars(pawn, "b:isFreeColonist b:isColonist b:isPrisonerOfColony b:isSlaveOfColony e:guestStatus:RimWorld.GuestStatus");
+        pawn.GetField("isFreeColonist")!.Description = "Native Pawn.IsFreeColonist: this pawn is a free member of the player faction. This is the native membership test, not an inference from kind, name or carried items.";
+        pawn.GetField("isColonist")!.Description = "Native Pawn.IsColonist: player-faction colonist. Distinct from IsFreeColonist (a colonist can be a slave or prisoner).";
+        pawn.GetField("isPrisonerOfColony")!.Description = "Native Pawn.IsPrisonerOfColony.";
+        pawn.GetField("isSlaveOfColony")!.Description = "Native Pawn.IsSlaveOfColony.";
+        pawn.GetField("guestStatus")!.Description = "Native Pawn.GuestStatus (Guest/Prisoner/Slave); null when the pawn has no such status.";
         foreach (var field in new[] { "id", "name", "mapId" })
         {
             var name = field;
             Add(pawn, name, name == "id" ? new NonNullGraphType(new IdGraphType()) : new StringGraphType(),
                 c => State(c).Read("Pawn", (GameEntity)c.Source!, name));
         }
-        foreach (var pair in new[] { ("status", status), ("mood", mood), ("health", health), ("equipment", native.Equipment), ("apparel", native.Apparel), ("inventory", native.Inventory), ("carryTracker", native.Carry), ("profile", profile) })
+        foreach (var pair in new[] { ("status", status), ("mood", mood), ("health", health), ("equipment", native.Equipment), ("apparel", native.Apparel), ("inventory", native.Inventory), ("carryTracker", native.Carry), ("profile", profile), ("faction", native.Faction) })
         {
             var name = pair.Item1;
             Add(pawn, name, pair.Item2, c => State(c).ReadNode(PawnNode((GameEntity)c.Source!), name)).Metadata["node_member"] = true;

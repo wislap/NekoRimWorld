@@ -22,6 +22,7 @@ internal static class Program
             NativeEnumTests.Run();
             ThingQueryTests.Run();
             PublicQueryTests.Run();
+            PublicQueryTests.RunEvidence();
             ResourceReportTests.Run();
             ProtocolRoundTrip();
             AuthenticationMatchesCrossLanguageVector();

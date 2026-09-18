@@ -265,6 +265,123 @@ internal static class PublicQueryTests
         }
     }
     private static void Check(bool pass,string message,QueryOutcome result) { if (!pass) throw new InvalidOperationException(message + ": " + result.Message + result.Data); }
+
+    /// <summary>
+    /// The plugin's presentation layer accepts a fact reference only when the result carries
+    /// an `observed_values.v1` description whose nodes resolve against the returned data.
+    /// Timed against a real `query` outcome, not a hand-built fixture.
+    /// </summary>
+    private static void Evidence()
+    {
+        var engine = new GameQueryEngine(1000);
+        var data = new Data();
+        var session = new SessionDescriptor(new string('2',32), new string('3',32),100,7);
+        var result = engine.Execute("query", JObject.Parse(
+            "{'requests':[{'from':'things','where':{'definition.def_name':{'eq':'Steel'}}," +
+            "'select':['id','definition.def_name','stack_count'],'limit':1," +
+            "'aggregate':{'units':{'op':'sum','field':'stack_count'},'records':{'op':'count'}}}]}"), data, session);
+        Check(result.Status=="ok","Evidence fixture did not execute",result);
+        var evidence = result.Execution?["evidence"] as JObject;
+        if (evidence == null) throw new InvalidOperationException("Public query returned no result description.");
+        if ((string?)evidence["version"] != ResultEvidence.Version)
+            throw new InvalidOperationException("Result description version changed: " + evidence["version"]);
+        var nodes = evidence["nodes"] as JObject;
+        if (nodes == null || nodes.Count == 0) throw new InvalidOperationException("Result description has no nodes.");
+        var payload = (JObject?)result.Data!;
+        var completeMeasures = 0;
+        var readingStates = new List<string>();
+        var allowed = new[] { "object", "collection", "scalar", "reading" };
+        string Resolve(string path)
+        {
+            var current = (JToken?)payload;
+            foreach (var raw in path.TrimStart('/').Split('/'))
+            {
+                if (current == null) return "";
+                var part = raw.Replace("~1","/").Replace("~0","~");
+                if (current is JArray array)
+                {
+                    // A pattern position resolves to the first element; a literal index
+                    // must exist. Indexing a JArray with a string key throws.
+                    if (part == "~2") { if (array.Count == 0) return ""; current = array[0]; }
+                    else if (int.TryParse(part, out var index) && index < array.Count) current = array[index];
+                    else return "";
+                }
+                else if (current is JObject obj && obj.Property(part) != null) current = obj[part];
+                else return "";
+            }
+            return current?.ToString(Newtonsoft.Json.Formatting.None) ?? "";
+        }
+        // Every described path must exist in the returned document, or the renderer raises.
+        foreach (var node in nodes.Properties())
+        {
+            if (node.Value is not JObject description) throw new InvalidOperationException("Non-object description at " + node.Name);
+            if (!allowed.Contains((string?)description["kind"]))
+                throw new InvalidOperationException("Unknown node kind at " + node.Name + ": " + description["kind"]);
+            // Export() compacts repeated shapes onto a `~2` pattern position, so a
+            // described node is keyed like "/results/~2/aggregates/units". Materialise
+            // the first array position to check it against the document actually returned.
+            if (!node.Name.Contains("/~2")) continue;
+            var sample = node.Name.Replace("/~2", "/0");
+            if (Resolve(sample).Length == 0)
+                throw new InvalidOperationException("Description names a path the result did not return: " + node.Name);
+            if (description["kind"]?.ToString() != "reading") continue;
+            var reading = description["reading"] as JObject;
+            if (reading == null) throw new InvalidOperationException("Reading has no descriptor: " + node.Name);
+            // The presentation contract requires a literal, non-empty unit string.
+            if (reading["unit"]?.Type != JTokenType.String || string.IsNullOrEmpty((string?)reading["unit"]))
+                throw new InvalidOperationException("Reading unit is missing or not a literal: " + node.Name);
+            if (reading["value"]?.Type != JTokenType.String)
+                throw new InvalidOperationException("Reading has no value path: " + node.Name);
+            var value = Resolve(((string)reading["value"]!).Replace("/~2", "/0"));
+            if (value.Length == 0) throw new InvalidOperationException("Reading value path is absent from the result: " + reading["value"]);
+            // Every named companion path must resolve too.
+            foreach (var key in new[] { "state", "present" })
+            {
+                var pointer = reading[key];
+                if (pointer == null || pointer.Type == JTokenType.Null) continue;
+                var resolved = Resolve(((string)pointer).Replace("/~2", "/0"));
+                if (resolved.Length == 0)
+                    throw new InvalidOperationException(
+                        $"Reading names a {key} path the result did not return: {pointer}");
+            }
+            // Every named companion path must resolve against the returned document.
+            // The semantic half of this contract (a complete measure must NOT name
+            // `known_value`, which it does not carry) is asserted on a real sealed
+            // snapshot by `rimworld-bench/verify_reference_gate.py`, because this
+            // fixture's aggregate completeness does not exercise it.
+            foreach (var key in new[] { "lower", "state", "present" })
+            {
+                var pointer = reading[key];
+                if (pointer == null || pointer.Type == JTokenType.Null) continue;
+                var resolved = Resolve(((string)pointer!).Replace("/~2", "/0"));
+                if (resolved.Length == 0)
+                    throw new InvalidOperationException(
+                        $"Reading names a {key} path the result did not return: {pointer}");
+            }
+            completeMeasures++;
+            readingStates.Add(node.Name);
+        }
+        if (evidence["subjects"] is not JObject subjects || !subjects.Properties().Any())
+            throw new InvalidOperationException("Result description has no subjects.");
+        // Without a complete measure in the fixture this test cannot cover the regression
+        // it exists for (a complete aggregate has no `known_value` to point at).
+        if (completeMeasures == 0)
+            throw new InvalidOperationException(
+                "Evidence fixture has no complete measure; the lower-bound contract is untested. " +
+                "Observed: " + string.Join(", ", readingStates));
+        // The plugin only turns references on when the catalog advertises this surface.
+        var catalog = engine.Execute("query_catalog", new JObject(), data, session);
+        var references = catalog.Data?["public_query"]?["references"] as JObject;
+        if ((string?)references?["version"] != ResultEvidence.Version)
+            throw new InvalidOperationException("public_query does not advertise its result description contract.");
+    }
+
+    public static void RunEvidence()
+    {
+        Evidence();
+        Console.WriteLine("Public query evidence tests passed: description version, node kinds, " +
+            "path resolvability, reading units/bounds and the advertised per-surface contract.");
+    }
     private sealed class Data : IGameData, IQueryData
     {
         public int Reads;

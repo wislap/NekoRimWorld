@@ -9,9 +9,10 @@ internal static class SpatialContract
     internal static JObject Catalog() => new JObject {
         ["version"] = "spatial_query.v1", ["operation"] = "spatial_query",
         ["description"] = "Bounded, frame-sliced identity resolution followed by native Pawn reachability at the final tick. Lookup time interval is reported. No action or ETA inference.",
+        ["route_summary"] = "native_path_summary.v1",
         ["parameters"] = new JObject {
             ["type"] = "object", ["additionalProperties"] = false, ["required"] = new JArray("from", "to"),
-            ["properties"] = new JObject { ["from"] = Reference("pawn"), ["to"] = Reference("thing", true) }
+            ["properties"] = new JObject { ["from"] = Reference("pawn"), ["to"] = Reference("thing", true), ["detail"] = new JObject { ["type"] = "string", ["enum"] = new JArray("summary", "route"), ["default"] = "summary", ["description"] = "summary checks reachability only; route also computes a native path in the same call. No ETA." } }
         }
     };
     private static JObject Reference(string kind, bool cell = false)
@@ -37,7 +38,9 @@ internal static class SpatialContract
 
     internal static void Validate(JObject args)
     {
-        CheckKeys(args, "spatial_query", "from", "to");
+        CheckKeys(args, "spatial_query", "from", "to", "detail");
+        if (args.TryGetValue("detail", out var detail) && (detail.Type != JTokenType.String || detail.ToString() is not ("summary" or "route")))
+            throw ReadContext.Error("invalid_arguments", "detail must be summary or route.");
         foreach (var key in new[] { "from", "to" }) {
             if (args[key] is not JObject value) throw ReadContext.Error("invalid_arguments", key + " must be an object.");
             CheckKeys(value, key, "kind", "id", "name", "map", "x", "z");

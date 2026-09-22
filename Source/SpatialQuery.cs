@@ -11,7 +11,7 @@ namespace Neko.RimWorld;
 
 /// <summary>
 /// V2.1-A: one-shot, current-tick native reachability evidence.
-/// This deliberately does not expose routes, Rooms, Regions or WorkGivers.
+/// Optional native path summary; no Rooms, Regions or WorkGivers.
 /// </summary>
 internal static class SpatialQuery
 {
@@ -51,6 +51,7 @@ internal static class SpatialQuery
                 if (lifetime.Elapsed.TotalSeconds > 2) throw ReadContext.Error("spatial_deadline", "Spatial request exceeded its total lifetime.");
                 do {
                     if (!work.MoveNext()) { Dispose(); return true; }
+                    if (work.Current == 1) return false;
                 } while (slice.Elapsed.TotalMilliseconds < 2);
             } catch (ExecutionError error) {
                 if (error.Code == "invalid_arguments" || error.Code == "object_unavailable")
@@ -85,6 +86,10 @@ internal static class SpatialQuery
                 value["map"] = ResolveMap((string?)value["map"])!.GetUniqueLoadID();
             }
             result["request"] = args.DeepClone();
+            if ((string?)args["detail"] == "route") {
+                result["route"] = new JObject { ["status"] = "not_computed", ["reason"] = "identity_or_reachability_not_resolved" };
+                result["meaning"] = "Native reachability and optional path summary. No reservation, work eligibility, scheduling or arrival-time check. Policy parameters are not an observed blocking cause.";
+            }
             var from = new Reference(); var to = new Reference();
             result["stage"] = "actor_lookup";
             foreach (var step in Resolve((JObject)args["from"]!, from, context, true)) yield return step;
@@ -99,6 +104,11 @@ internal static class SpatialQuery
             result["sample"]!["game_tick"] = session.GameTick;
             result["lookup_finished_tick"] = session.GameTick;
             result["lookup_consistency"] = "Each reference scans the object membership captured at its lookup start; names sampled over the reported tick interval. Objects created afterwards are outside that lookup. Reachability checks the resolved IDs at the final tick.";
+            // Start the native check on a fresh slice. FindPathNow is synchronous
+            // and cannot be preempted; never run more than one path search per request.
+            if (result["route"] != null) { yield return 1; context.RestartSlice(); }
+            session.GameTick = Find.TickManager.TicksGame;
+            result["sample"]!["game_tick"] = session.GameTick;
             Outcome = Compute(from, to, result, context);
         }
         public void Dispose() => work.Dispose();
@@ -210,6 +220,49 @@ internal static class SpatialQuery
             result["explanation"] = reachable
                 ? "Native reachability found a valid current path under this Pawn's movement parameters."
                 : "Native reachability found no valid current path under this Pawn's movement parameters.";
+            if (result["route"] is JObject route) {
+                if (!reachable) {
+                    route["status"] = "not_computed";
+                    route["reason"] = "reachability_false";
+                } else {
+                    result["stage"] = "route";
+                    try {
+                        context.Check();
+                        var routeStarted = System.Diagnostics.Stopwatch.StartNew();
+                        // Use explicit traversal params: the Pawn overload silently
+                        // chooses Danger.Deadly and derives bashing from its current job.
+                        var endMode = target.HasThing ? PathEndMode.ClosestTouch : PathEndMode.OnCell;
+                        var pathTarget = (LocalTargetInfo)GenPath.ResolvePathMode(pawn, target.ToTargetInfo(map), ref endMode);
+                        using (var path = map.pathFinder.FindPathNow(pawn.Position, pathTarget,
+                            TraverseParms.For(pawn, Danger.Some, TraverseMode.ByPawn),
+                            PathFinderCostTuning.For(pawn), endMode)) {
+                            // The synchronous native search cannot be interrupted. Once it
+                            // returns a path, preserve it rather than discard known facts and
+                            // make the Agent repeat an expensive cold search.
+                            context.RestartSlice();
+                            if (!path.Found) throw ReadContext.Error("route_not_found", "Native pathfinder returned no path; the separate reachability reading remains valid.");
+                            if (path.NodesReversed.Count > SpatialRouteSummary.MaxNodes)
+                                throw ReadContext.Error("route_node_limit", "Native path exceeded the summary node bound.");
+                            var nodes = new List<(int X,int Z)>();
+                            foreach (var cell in path.NodesReversed) { context.Check(); nodes.Add((cell.x,cell.z)); }
+                            result["route"] = SpatialRouteSummary.Create(nodes,path.TotalCost,map.GetUniqueLoadID());
+                            context.Check();
+                        }
+                        result["route"]!["end_mode"] = endMode.ToString();
+                        result["route"]!["read_ms"] = routeStarted.Elapsed.TotalMilliseconds;
+                        result["route"]!["policy"] = "Explicit ByPawn/Some traversal request with native Pawn cost tuning and allowed-area handling. This is not a safety, job eligibility or travel-time guarantee.";
+                        if (routeStarted.Elapsed.TotalMilliseconds > ReadBudgetMilliseconds) {
+                            result["route"]!["read_budget_exceeded"] = true;
+                            return new QueryOutcome { Status = ProtocolStatuses.Partial, Data = result,
+                                Issues = new[] { new QueryIssue { Code = "route_budget_overrun", Message = "The synchronous native read exceeded the cooperative time target. The returned path summary is complete; no retry is needed.", Path = new JArray("route", "read_ms") } } };
+                        }
+                    } catch (Exception error) when (ReadContext.Recoverable(error)) {
+                        result["route"] = new JObject { ["status"] = "unavailable", ["reason"] = (error as ExecutionError)?.Code ?? "route_unavailable" };
+                        return new QueryOutcome { Status = ProtocolStatuses.Partial, Data = result,
+                            Issues = new[] { new QueryIssue { Code = (error as ExecutionError)?.Code ?? "route_unavailable", Message = "Path summary unavailable; preserve the completed reachability result. No distance or ETA is known.", Path = new JArray("route") } } };
+                    }
+                }
+            }
             return Ok(result);
     }
 

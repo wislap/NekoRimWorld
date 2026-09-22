@@ -34,6 +34,9 @@ internal static class QueryEngineTests
         var source = new FakeData();
         var catalog = engine.Execute("query_catalog", new JObject(), source, Session);
         Require(catalog.Status == "ok" && source.Reads.Count == 0, "catalog should not read game state");
+        Require((string?)catalog.Data?["spatial_query"]?["version"] == "spatial_query.v1" &&
+            (string?)catalog.Data?["spatial_query"]?["operation"] == "spatial_query",
+            "spatial capability was not advertised by the executable catalog");
         var fixture = Environment.GetEnvironmentVariable("NEKO_QUERY_CATALOG");
         if (!string.IsNullOrEmpty(fixture)) File.WriteAllText(fixture, catalog.Data!.ToString());
         var batch = Templates(engine, source, @"{'requests':[

@@ -25,10 +25,15 @@ query_result payload: status, optional data object, issues array; non-data
 statuses additionally require error_code and message. Game field meanings are
 owned by query readers; protocol code does not validate a gameplay DTO union.
 
-Current operations: query_catalog, describe_schema, template_query, graphql and resource_report. colony_snapshot
+Current operations: query_catalog, describe_schema, template_query, graphql, resource_report and spatial_query. colony_snapshot
 is removed. query_result may include a generic execution object containing the
 expanded query, variables, schema ID and template-root bindings. See DATA_PATH.md
 for supported fields, limits, pagination and error paths.
+
+`spatial_query` is an additive v2.1 operation. It accepts one `from` Pawn
+reference and one `to` Thing or map-cell reference, resolves names/IDs on the
+game thread, and returns current-tick native reachability. It does not execute a
+Job, inspect WorkGivers, compute routes, or expose Room/Region graphs.
 
 Version 0.5.0 template arguments are requests[{target:{type,id?},sections:[...]}].
 Selectors: pawn + required id, colony, or colonists with discovery filters.

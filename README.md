@@ -9,6 +9,13 @@ schema-derived fields, related collections and whole-selection aggregates.
 The companion plugin normally presents these reads to the Agent as `look` / `count`,
 with the native vocabulary retained as a fallback. A published local Def directory
 also enables the plugin's `wiki(query)` tool.
+
+The v2.1 spatial capability adds a separate `spatial_query` operation. It performs
+one current-tick native reachability check from a resolved Pawn to one Thing or map
+cell. It accepts names or IDs, returns ambiguity instead of choosing a target, and
+does not infer WorkGiver eligibility, reservation success, routes, Rooms or Regions.
+The semantic plugin exposes this capability as `inspect_space` only when the
+connected Mod advertises `spatial_query.v1`.
 Selection lists now accept both field paths and field maps. Bare child maps
 are accepted only when every key is a known child field and no option keyword
 is present. Ambiguous overlaps, mixed field/options and invalid arguments are

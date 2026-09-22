@@ -49,6 +49,8 @@ public sealed class NekoGameComponent : GameComponent
             return;
         }
 
+        VerseKnowledge.Update();
+
         var runtime = NekoRimWorldMod.Runtime;
         var tickManager = Find.TickManager;
         runtime.TouchSession(
@@ -70,6 +72,7 @@ public sealed class NekoGameComponent : GameComponent
 
     private void StartSession(string source)
     {
+        VerseKnowledge.StartOnce();
         NormalizeOrCreateColonyId();
 
         loadEpoch = Guid.NewGuid().ToString("N");

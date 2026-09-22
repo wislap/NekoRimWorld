@@ -17,6 +17,10 @@ internal static class Program
     {
         try
         {
+            KnowledgeTests.Run();
+            KnowledgeCompletenessTests.Run();
+            KnowledgeBoundsTests.Run();
+            KnowledgeStreamingPublisherTests.Run();
             QueryEngineTests.Run();
             SelectionTests.Run();
             NativeEnumTests.Run();

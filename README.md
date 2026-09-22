@@ -1,10 +1,14 @@
 # N.E.K.O RimWorld Bridge
 
-Read-only RimWorld 1.6 bridge for N.E.K.O. The current checkout contains the
-v1.6.1 query/execution revision; package version remains 1.0.0.
+Read-only RimWorld 1.6 bridge for N.E.K.O. The current checkout includes the
+v2.0 local Def Wiki publisher milestone alongside the existing query engine.
+Package version remains 1.0.0; this milestone names the feature checkpoint.
 
-The Agent uses `query` / `describe_query` with `public_query.v2`, canonical
+The Mod exposes `query` / `describe_query` with `public_query.v2`, canonical
 schema-derived fields, related collections and whole-selection aggregates.
+The companion plugin normally presents these reads to the Agent as `look` / `count`,
+with the native vocabulary retained as a fallback. A published local Def directory
+also enables the plugin's `wiki(query)` tool.
 Selection lists now accept both field paths and field maps. Bare child maps
 are accepted only when every key is a known child field and no option keyword
 is present. Ambiguous overlaps, mixed field/options and invalid arguments are
@@ -101,6 +105,106 @@ user's installed assemblies.
 
 The bridge is disabled by default. It connects only to `127.0.0.1` and the
 default port is `48919`.
+
+## Automatic offline Def knowledge
+
+The publisher also produces `ready.json` (`neko.defs.index.v1`) referencing an
+immutable `snapshot-<id>.json`. The payload keeps every full Def record; the small
+ready directory contains names/descriptions, UTF-8 byte offsets/lengths and SHA-256
+per record, plus the whole payload hash and source metadata. The ready directory
+is atomically replaced last. Readers attach this directory without reparsing the
+full payload, then seek and validate only requested records. Existing readers can
+still use `current.json`, which is retained as a compatibility copy. Old immutable
+payloads remain available to consultations already using them.
+
+The sub-second target applies to reader attachment after publication. Game startup,
+Def enumeration, encoding, hashing and directory generation remain publisher work;
+they are not claimed to complete in one second.
+
+On the first `LoadedGame` or `StartedNewGame` in each game process, the Mod arms
+an automatic export. Actual Def enumeration, metadata reads and field reflection
+start on the next `GameComponentUpdate` on the game thread. No constructor-time
+Def reads or `ExecuteWhenFinished` assumptions are needed. Export continues at
+most eight work units / a cooperative 2 ms per rendered game frame, including
+paused games. One Def traversal is not preemptible; this is not a hard frame-time
+guarantee. Returning to the menu suspends extraction until another game is loaded.
+No game time, pause setting, map, or Pawn is changed. The exporter runs even when
+the TCP bridge is disabled and needs no model request, CLI, SQLite or network.
+
+The canonical publication is `ready.json` plus its immutable
+`snapshot-<id>.json` payload under `Environment.SpecialFolder.LocalApplicationData`
++ `neko-rimworld/knowledge`. Windows normally uses
+`%LOCALAPPDATA%/neko-rimworld/knowledge/ready.json`. Set
+`NEKO_RIMWORLD_KNOWLEDGE_DIR` in the game's environment to override the directory;
+configure the local reader with the same directory. This is host configuration,
+not a model-controlled path. The plugin reads this shared ready directory;
+`current.json` remains a compatibility copy for legacy/offline import. This Mod
+adds no wiki operation or protocol messages.
+
+Every process regenerates on its first game entry, without fingerprint cache
+reuse. Merely opening the main menu does not generate a new file. While generation
+is pending, or if writing fails, an existing file remains an **older snapshot**;
+its existence does not validate the current installation. `generated_at` records
+the UTC generation start, with `game_version`, `language` and the active `mods`
+list identifying the captured context. Consumers must check these metadata and
+`complete`/`issues`, and must not treat an older file as current verification.
+A successful generation replaces the file atomically from a flushed temporary
+file in the same directory. There is one process-local writer; it only receives
+plain DTOs. Failure leaves the previous file in place and logs a warning; no
+non-atomic copy/delete fallback is attempted. Separate RimWorld processes should
+use separate override directories when their active mod sets differ.
+
+The format is `neko.defs.v1`, with top-level `format`, `game_version`, `language`,
+`generated_at`, `mods: [{package_id,name}]`, `complete`, `provenance_complete`,
+`issues`, `warnings` and `entries`. Each entry contains `key`, `type`, `def_name`,
+`label`, `description`, `source_mod`, `package_id`, `facts: [{name,value}]`,
+`related: [{key,label}]`, `diagnostics: [{path,kind,reason}]` and `truncated`.
+Facts may also include `type` to preserve the CLR scalar type and distinguish actual
+null from the string "null". Existing v1 readers may ignore this optional metadata.
+`key` and related keys use the full runtime type name + `/` + `defName`, including
+the namespace. `type` also contains the full name. All current Def databases are
+enumerated through `GenDefDatabase`, with database types and typed keys deduplicated;
+this is not a fixed eight-type catalog. Source mod metadata is the Def's owning
+`modContentPack`, **not XML patch history**. Labels/descriptions use the active
+language's loaded fields, not generated display getters.
+
+Facts preserve the loaded Def object graph as bounded field paths and scalar values,
+list/array/dictionary/set contents and typed Def references. Runtime `Type` values
+are stored by their full type name; Def references are stored by typed key and also
+link the related entry. The extractor reads inherited public/private instance fields,
+excluding static, nonserialized, `[Unsaved(allowLoading:false)]`, compiler-generated
+backing fields and root Def metadata already stored in the entry. Nested labels
+and descriptions, readonly fields and loadable `[Unsaved(true)]` fields are kept;
+field names beginning with `cached` are not automatically discarded. It never invokes arbitrary
+properties/getters, `ToString` overrides or arbitrary custom enumerators. Unity assets,
+Delegates and live Thing/Map/Game/WorldObject graphs are expected omissions, not
+missing Def data. Object types are retained as `$type`; cycles use `$ref` with the target field path.
+Dictionary keys and values use indexed pairs so key types and punctuation are preserved.
+Exact framework containers are enumerated; custom containers and curves are read
+through fields without invoking their enumerators. Real traversal,
+entry or snapshot limits are recorded in `diagnostics` and set `truncated`; such an
+entry makes the snapshot `complete:false`. Missing source Mod metadata only affects
+`provenance_complete` and is reported in `warnings`. Null field values are explicitly
+represented as the string `null`, rather than hiding failures.
+
+Limits are process-safety guards rather than the model response budget: depth 128,
+8,192 fields per object and 1,000,000 items per collection, 2,000,000 visited values and 200,000
+facts per entry. Exact identity is rejected rather than shortened; ordinary fact
+names/values and descriptions are bounded only to protect the snapshot. Each entry
+is at most 8 MiB and the snapshot at most 512 MiB. There are at most 100000 entries,
+8192 database types, 1000000 database visits and 256 snapshot messages. The model
+still receives a small bounded result from `wiki`; these source limits must not be
+confused with its response limit. An entry can lose trailing data only when a real
+safety budget is hit, and then its `truncated` flag and diagnostics remain.
+
+`KnowledgeSnapshot.cs` and `KnowledgeFields.cs` have no Verse dependency and are
+covered by BridgeSmoke fixtures for safe field reads, typed references, bounds,
+metadata, UTF-8, atomic replacement, failed-publication preservation and concurrent
+writers. Production builds validate game reference APIs; real game lifecycle,
+large modpacks and platform-specific atomic filesystem behavior still need in-game
+validation. The extractor is independently implemented under this repository's
+MIT license. No RimSearcher source is vendored; RimSearcher revision `4d821ae`
+(MIT) was an architectural reference, not a runtime dependency.
 
 ## Deliberately not implemented
 

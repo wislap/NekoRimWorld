@@ -108,6 +108,11 @@ internal sealed class ReadContext
         var count = 0;
         foreach (var value in values) { Check(); if (++count > 8192) throw Error("node_scan_limit", "Collection exceeds 8192 records."); if (matches(value)) yield return value; }
     }
+    internal void RestartSlice()
+    {
+        if (Thread.CurrentThread.ManagedThreadId != threadId) throw Error("wrong_thread", "Spatial slice must remain on the game thread.");
+        clock = Stopwatch.StartNew();
+    }
     public void Check()
     {
         if (Thread.CurrentThread.ManagedThreadId != threadId)

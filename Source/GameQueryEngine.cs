@@ -53,58 +53,7 @@ internal sealed class GameQueryEngine
         specification["selection_contract"] = SelectionConditions.Contract();
         specification["resource_parameters"] = ResourceReports.Parameters();
         specification["resource_contract"] = ResourceReports.Contract();
-        specification["spatial_query"] = new JObject {
-            ["version"] = "spatial_query.v1",
-            ["operation"] = "spatial_query",
-            ["description"] = "Current-tick native Pawn reachability for one Pawn and one Thing or map cell. No route, Room, Region or WorkGiver inference.",
-            ["parameters"] = new JObject {
-                ["type"] = "object",
-                ["required"] = new JArray("from", "to"),
-                ["additionalProperties"] = false,
-                ["properties"] = new JObject {
-                    ["from"] = new JObject {
-                        ["type"] = "object",
-                        ["required"] = new JArray("kind"),
-                        ["additionalProperties"] = false,
-                        ["properties"] = new JObject {
-                            ["kind"] = new JObject { ["type"] = "string", ["enum"] = new JArray("pawn") },
-                            ["id"] = new JObject { ["type"] = "string" },
-                            ["name"] = new JObject { ["type"] = "string" },
-                            ["map"] = new JObject { ["type"] = "string" },
-                        },
-                        ["oneOf"] = new JArray(
-                            new JObject { ["required"] = new JArray("id"), ["not"] = new JObject { ["required"] = new JArray("name") } },
-                            new JObject { ["required"] = new JArray("name"), ["not"] = new JObject { ["required"] = new JArray("id") } }
-                        ),
-                    },
-                    ["to"] = new JObject {
-                        ["type"] = "object",
-                        ["required"] = new JArray("kind"),
-                        ["additionalProperties"] = false,
-                        ["properties"] = new JObject {
-                            ["kind"] = new JObject { ["type"] = "string", ["enum"] = new JArray("thing", "cell") },
-                            ["id"] = new JObject { ["type"] = "string" },
-                            ["name"] = new JObject { ["type"] = "string" },
-                            ["map"] = new JObject { ["type"] = "string" },
-                            ["x"] = new JObject { ["type"] = "integer" },
-                            ["z"] = new JObject { ["type"] = "integer" },
-                        },
-                        ["oneOf"] = new JArray(
-                            new JObject { ["required"] = new JArray("id"), ["not"] = new JObject { ["required"] = new JArray("name") } },
-                            new JObject { ["required"] = new JArray("name"), ["not"] = new JObject { ["required"] = new JArray("id") } },
-                            new JObject {
-                                ["required"] = new JArray("x", "z"),
-                                ["properties"] = new JObject { ["kind"] = new JObject { ["const"] = "cell" } },
-                                ["not"] = new JObject { ["anyOf"] = new JArray(
-                                    new JObject { ["required"] = new JArray("id") },
-                                    new JObject { ["required"] = new JArray("name") }
-                                ) },
-                            }
-                        ),
-                    },
-                },
-            },
-        };
+        specification["spatial_query"] = SpatialContract.Catalog();
         specification["public_query"] = publicQuery.Catalog();
         specification["schema_id"] = Hash(specification.ToString(Formatting.None));
         catalog = specification;

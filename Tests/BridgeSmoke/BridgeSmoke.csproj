@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../../Source/SpatialContract.cs" Link="SpatialContract.cs" />
     <Compile Include="../../Source/KnowledgeSnapshot.cs;../../Source/KnowledgeFields.cs;../../Source/KnowledgeStreamingPublisher.cs" Link="%(Filename)%(Extension)" />
     <None Include="../fixtures/native-enums.json" Link="native-enums.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../../Source/NativeEnumScalar.cs;../../Source/SelectionInput.cs;../../Source/PublicFields.cs;../../Source/PublicQuery.cs" Link="%(Filename)%(Extension)" />

@@ -95,7 +95,7 @@ internal static class ThingData
                 foreach (var thing in Descendants(map, context, holders, seen, 0))
                     if (thing.GetUniqueLoadID() == id) return Node(thing);
             }
-            throw ReadContext.Error("object_unavailable", "Thing ID was not found in loaded maps and their holder trees. IDs can disappear after stack changes.");
+            throw ReadContext.Error("object_not_found", "Thing ID was not found in loaded maps and their holder trees. IDs can disappear after stack changes.");
         }
         if (root is "thing_defs" or "query_defs")
         {

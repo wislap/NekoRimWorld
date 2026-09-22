@@ -84,6 +84,14 @@ internal static class ThingQueryTests
         var rejected = false;
         try { ThingPaging.Page(nodes, args, ctx); } catch (GraphQL.ExecutionError error) { rejected = error.Code == "stale_cursor"; }
         Require(rejected, "cursor crossed map/filter boundary");
+        var session = new SessionDescriptor(new string('2',32),new string('3',32),100,1);
+        var identityQuery = JObject.Parse("{from:'thing',args:{id:'missing'},select:['id']}");
+        var missing = new Data { LookupFailure = "object_not_found" };
+        var absent = engine.Execute("query",identityQuery,missing,session);
+        Require(absent.Status == "ok" && (int?)absent.Data?["results"]?[0]?["matched_count"] == 0 && (bool?)absent.Data?["results"]?[0]?["scan_complete"] == true,"Complete missing identity must be empty, not incomplete");
+        missing.LookupFailure = "deadline_exceeded";
+        var unknown = engine.Execute("query",identityQuery,missing,session);
+        Require(unknown.Status == "partial" && unknown.Data?["results"]?[0]?["matched_count"]?.Type == JTokenType.Null,"Interrupted identity search must remain unknown");
         Console.WriteLine("Thing query tests passed: native members, template parity, component polymorphism, unknown types, shared identities, selection budgets and changing collection pagination.");
     }
 
@@ -91,6 +99,7 @@ internal static class ThingQueryTests
     {
         public readonly List<string> Reads = new();
         public bool FailRot, MixedComponents;
+        public string? LookupFailure;
         public static GameNode Thing(string id) => new("Thing", id, new GameEntity(id, "map1", id), id);
         private static GameNode Child(GameNode parent, string kind, string key) => new(kind, key, parent.Owner, key);
         public IEnumerable<GameEntity> Maps() { Reads.Add("Maps"); yield return new GameEntity("map1", null, "map1"); }
@@ -102,6 +111,7 @@ internal static class ThingQueryTests
         public object? NativeRoot(string root, IReadOnlyDictionary<string, object?> args, ReadContext context)
         {
             Reads.Add("root:" + root);
+            if (LookupFailure != null) throw ReadContext.Error(LookupFailure,"lookup failure");
             return root == "thing" ? Thing((string)args["id"]!) : ThingPaging.Page(new[] { Thing("thing1"), Thing("thing2"), Thing("thing3") }, args, context);
         }
         public object? NativeField(GameNode n, string f, IReadOnlyDictionary<string, object?> args, ReadContext context)

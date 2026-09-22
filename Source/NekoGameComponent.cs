@@ -19,6 +19,10 @@ public sealed class NekoGameComponent : GameComponent
     private string colonyId = string.Empty;
     private string loadEpoch = string.Empty;
     private long snapshotSequence;
+    private SpatialQuery.Operation? spatial;
+    private ProtocolEnvelope? spatialRequest;
+    private SessionDescriptor? spatialSession;
+
 
     // RimWorld discovers GameComponents with this exact constructor signature.
     // Do not retain the Game reference: the process-scoped runtime must never
@@ -58,6 +62,13 @@ public sealed class NekoGameComponent : GameComponent
             tickManager?.TicksGame ?? 0,
             snapshotSequence);
 
+        if (spatial != null) {
+            if (spatial.Advance()) {
+                Publish(runtime, spatialRequest!, spatialSession!, spatial.Outcome!);
+                spatial.Dispose(); spatial = null; spatialRequest = null; spatialSession = null;
+            }
+            return;
+        }
         var startedAt = Stopwatch.GetTimestamp();
         var processed = 0;
 
@@ -72,6 +83,7 @@ public sealed class NekoGameComponent : GameComponent
 
     private void StartSession(string source)
     {
+        spatial?.Dispose(); spatial = null; spatialRequest = null; spatialSession = null;
         VerseKnowledge.StartOnce();
         NormalizeOrCreateColonyId();
 
@@ -125,6 +137,11 @@ public sealed class NekoGameComponent : GameComponent
 
         var next = checked(snapshotSequence + 1);
         var sampledSession = new SessionDescriptor(colonyId, loadEpoch, session.GameTick, next);
+        if (request.Payload.Operation == "spatial_query") {
+            spatial = new SpatialQuery.Operation(request.Payload.Arguments!, sampledSession);
+            spatialRequest = request; spatialSession = sampledSession;
+            return;
+        }
         QueryOutcome outcome;
         try
         {
@@ -135,6 +152,12 @@ public sealed class NekoGameComponent : GameComponent
             Log.WarningOnce($"[N.E.K.O RimWorld] Query read failed: {exception.GetType().Name}", 0x4e4b5110);
             outcome = QueryOutcome.Failure("query_failed", "The game-thread query could not complete.");
         }
+        Publish(runtime, request, sampledSession, outcome);
+    }
+
+    private void Publish(BridgeRuntime runtime, ProtocolEnvelope request, SessionDescriptor sampledSession, QueryOutcome outcome)
+    {
+        var next = sampledSession.SnapshotSequence;
         snapshotSequence = next;
         runtime.TouchSession(loadEpoch, sampledSession.GameTick, next);
         var response = ProtocolEnvelope.CreateQueryResult(request, request.ConnectionEpoch, 0,

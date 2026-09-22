@@ -279,8 +279,12 @@ internal sealed class PublicQuery
         if (root == "pawn") {
             var pawns = source is IQueryData query ? query.QueryPawns(new Dictionary<string,object?>(),state) : state.Colonists();
             var found = pawns.FirstOrDefault(p => p.Id == (string)args["id"]!);
-            if (found == null) throw ReadContext.Error("object_unavailable","Pawn ID was not found in the loaded-map and holder enumeration.");
+            if (found == null) return Array.Empty<object>();
             return new object[] { found };
+        }
+        if (root == "thing") {
+            try { return new[] { state.NativeRoot(root, args)! }; }
+            catch (ExecutionError error) when (error.Code == "object_not_found") { return Array.Empty<object>(); }
         }
         if (root == "thing_defs") return ((IEnumerable)state.NativeRoot("query_defs",args)!).Cast<object>();
         var field = roots[root]; var value = registry.Read("Query",state,field,args,state);

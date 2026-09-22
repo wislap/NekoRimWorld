@@ -17,6 +17,7 @@ internal static class Program
     {
         try
         {
+            SpatialContractTests.Run();
             KnowledgeTests.Run();
             KnowledgeCompletenessTests.Run();
             KnowledgeBoundsTests.Run();

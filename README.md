@@ -355,3 +355,18 @@ No action or reservation is performed. Detached cursor results expire after two
 minutes and are cleared on load changes. Native synchronous getter/pathfinder
 overruns are not claimed to be hard-preemptible. Test-only game construction and
 UUID evaluation hosting live in rimworld-bench's capture Mod, not this Mod.
+
+
+### V2.2.1 additive relationship fields
+
+Observation rows explicitly label `spatial_relation.relation` as `inside_region`,
+`on_path`, or `near_path`; route rows include intersecting `path_indices`.
+`fully_contained` remains authoritative for full object containment. Held objects
+use the reported holder-position basis. These fields describe geometry, not
+whether an object blocks movement or whether a route is safe.
+
+Object normal/physical reservations include `reservation_target`. Destination
+reservation `cell` is its actual target; `job.targets` may refer elsewhere.
+These remain observations, not occupancy or general action eligibility verdicts.
+No new tool parameters are required. The evaluated plugin summary/prompt
+candidates were not promoted; see the bench V221-RESULTS report.

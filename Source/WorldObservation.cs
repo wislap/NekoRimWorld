@@ -158,6 +158,14 @@ internal static class WorldObservation
                 context.RestartSlice(); var row = reader2.Read(t, actor, user, Array.Empty<string>(), details);
                 var occupied = t.Spawned ? t.OccupiedRect().Cells.ToArray() : new[] { t.PositionHeld };
                 row["spatial_relation"] = new JObject { ["intersects"] = occupied.Any(footprint.Contains), ["fully_contained"] = occupied.All(footprint.Contains), ["position_basis"] = t.Spawned ? "occupied_cells" : "holder_position", ["geometric_distance"] = centerCell.HasValue ? (JToken)Math.Sqrt(occupied.Min(c => (double)(c - centerCell.Value).LengthHorizontalSquared)) : JValue.CreateNull(), ["distance_unit"] = "map_cell_widths" };
+                if (onPath != null)
+                {
+                    var indices = pathCells!.Select((c, i) => (Cell: c, Index: i))
+                        .Where(p => occupied.Contains(p.Cell)).Select(p => p.Index).ToArray();
+                    row["spatial_relation"]!["relation"] = indices.Length > 0 ? "on_path" : "near_path";
+                    row["spatial_relation"]!["path_indices"] = new JArray(indices);
+                }
+                else row["spatial_relation"]!["relation"] = "inside_region";
                 rows2.Add(row); yield return 0;
             }
             result["objects_summary"]!["detail_retention_complete"] = selected.Count <= 1000;

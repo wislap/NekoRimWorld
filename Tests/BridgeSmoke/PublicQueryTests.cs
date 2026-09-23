@@ -241,8 +241,20 @@ internal static class PublicQueryTests
             result=Read(json);
             Check(!Message(result).Contains("already restricted") && Message(result).Contains("intended population"),"Broad/implicit source falsely diagnosed as an explicit singleton",result);
         }
-        result=Read(singleton.Replace("limit:0","limit:1,offset:8192,order_by:[{field:'id',direction:'asc'}],group_by:['id'],where:{id:{eq:'absent'}}"));
+        result=Read(singleton.Replace("limit:0","limit:1,offset:8192,order_by:[{field:'id',direction:'asc'}],group_by:['id'],where:{label:{eq:'absent'}}"));
         Check((int?)result.Data?["results"]?[0]?["known_matches"]==0 && (int?)result.Data?["results"]?[0]?["aggregates"]?["n"]?["known_value"]==0 && result.Data?["results"]?[0]?["aggregates"]?["n"]?["value"]?.Type==JTokenType.Null && Message(result).Contains("ordinary instance filters"),"Candidate cap became a matching-count lower bound or output options bypassed scan",result);
+        foreach (var clause in new[] { "id:{eq:'large8192'}", "id:{in:['large8192','large8192','absent']}", "id:{eq:'large8192',in:['large8192','absent']}" }) {
+            result=Read("{from:'things',where:{"+clause+"},select:['id'],aggregate:{n:{op:'count'}}}");
+            Check(result.Status=="ok" && (int?)result.Data?["results"]?[0]?["aggregates"]?["n"]?["value"]==1 && (string?)result.Data?["results"]?[0]?["rows"]?[0]?["id"]=="large8192","Exact ID did not narrow source candidates before the scan cap",result);
+        }
+        foreach (var clause in new[] { "id:{eq:'absent'}", "id:{eq:'large8192',in:['absent']}", "id:{eq:'large8192',ne:'large8192'}" }) {
+            result=Read("{from:'things',where:{"+clause+"},select:['id'],aggregate:{n:{op:'count'}}}");
+            Check(result.Status=="ok" && (int?)result.Data?["results"]?[0]?["aggregates"]?["n"]?["value"]==0,"ID pushdown lost intersection or residual predicate semantics",result);
+        }
+        foreach (var clause in new[] { "id:{eq:'LARGE8192',case_sensitive:false}", "any:[{id:{eq:'large8192'}},{id:{eq:'large0'}}]", "not:{id:{eq:'large8192'}}" }) {
+            result=Read("{from:'things',where:{"+clause+"},select:['id'],aggregate:{n:{op:'count'}}}");
+            Check(result.Status=="partial" && result.Issues.Any(i=>i.Code=="query_scan_limit"),"Unsafe ID expression was narrowed",result);
+        }
         data.LargeThings=8192;
         result=Read(singleton);
         Check(result.Status=="ok" && (int?)result.Data?["results"]?[0]?["aggregates"]?["n"]?["value"]==8192,"Exact boundary is not complete",result);
@@ -394,10 +406,10 @@ internal static class PublicQueryTests
         public bool FailEnumeration;
         public string? LastMap;
         private static GameNode Thing(string id) => new("Thing",id,new GameEntity(id,"map1",id),id);
-        public IEnumerable<GameNode> QueryThings(IReadOnlyDictionary<string,object?> args,ReadContext c,Func<GameNode,bool>? definitionFilter = null) {
+        public IEnumerable<GameNode> QueryThings(IReadOnlyDictionary<string,object?> args,ReadContext c,Func<GameNode,bool>? definitionFilter = null, IReadOnlyCollection<string>? exactIds = null) {
             LastMap = args.TryGetValue("mapId",out var map) ? map as string : null;
             foreach (var n in LargeThings>0 ? Enumerable.Range(0,LargeThings).Select(i=>Thing("large"+i)) : new[] { Thing("a"),Thing("b"),Thing("a") })
-                if (definitionFilter == null || definitionFilter((GameNode)c.ReadNode(n,"def")!)) { yield return n; if (FailEnumeration) throw ReadContext.Error(EnumerationError,"Incomplete fixture collection"); }
+                if ((exactIds == null || exactIds.Contains(n.Key)) && (definitionFilter == null || definitionFilter((GameNode)c.ReadNode(n,"def")!))) { yield return n; if (FailEnumeration) throw ReadContext.Error(EnumerationError,"Incomplete fixture collection"); }
         }
         public IEnumerable<GameEntity> QueryPawns(IReadOnlyDictionary<string,object?> args,ReadContext c) => LargePawns ? Enumerable.Range(0,8193).Select(i=>new GameEntity("pawn"+i,"map1",i)) : Colonists();
         public IEnumerable<GameEntity> Maps() => new[] { new GameEntity("map1",null,new object()), new GameEntity("map2",null,new object()) };

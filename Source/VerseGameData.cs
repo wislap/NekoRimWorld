@@ -7,7 +7,7 @@ namespace Neko.RimWorld;
 
 internal sealed class VerseGameData : IGameData, IThingData, IResourceData, IQueryData
 {
-    public IEnumerable<GameNode> QueryThings(IReadOnlyDictionary<string, object?> args, ReadContext context, Func<GameNode,bool>? definitionFilter = null) => ThingData.QueryThings(args, context,definitionFilter);
+    public IEnumerable<GameNode> QueryThings(IReadOnlyDictionary<string, object?> args, ReadContext context, Func<GameNode,bool>? definitionFilter = null, IReadOnlyCollection<string>? exactIds = null) => ThingData.QueryThings(args, context,definitionFilter,exactIds:exactIds);
     public IEnumerable<GameEntity> QueryPawns(IReadOnlyDictionary<string, object?> args, ReadContext context)
     {
         foreach (var node in ThingData.QueryThings(new Dictionary<string,object?>(args) { ["includeHeld"] = true, ["visibleOnly"] = false },context,requestGroup:ThingRequestGroup.Pawn))

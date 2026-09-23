@@ -369,6 +369,7 @@ internal static class SpatialQuery
         ["label"] = thing.LabelCap,
         ["def_name"] = thing.def.defName,
         ["map"] = thing.MapHeld?.GetUniqueLoadID(),
+        ["position"] = thing.Spawned && thing.Map != null ? DescribeCell(thing.Map, thing.Position) : null,
     };
 
     private static JObject DescribeCell(Map map, IntVec3 cell) => new()

@@ -11,7 +11,7 @@ namespace Neko.RimWorld;
 
 internal interface IQueryData
 {
-    IEnumerable<GameNode> QueryThings(IReadOnlyDictionary<string, object?> arguments, ReadContext context, Func<GameNode,bool>? definitionFilter = null);
+    IEnumerable<GameNode> QueryThings(IReadOnlyDictionary<string, object?> arguments, ReadContext context, Func<GameNode,bool>? definitionFilter = null, IReadOnlyCollection<string>? exactIds = null);
     IEnumerable<GameEntity> QueryPawns(IReadOnlyDictionary<string, object?> arguments, ReadContext context);
 }
 
@@ -149,7 +149,7 @@ internal sealed class PublicQuery
         compiledFields = 0;
         inputSyntax = new SelectionInput();
         paths.Clear();
-        var plans = new List<(string Root,Dictionary<string,object?> Args,Selection Select,SelectionConditions.Predicate? DefinitionFilter,bool FullyPushed)>();
+        var plans = new List<(string Root,Dictionary<string,object?> Args,Selection Select,SelectionConditions.Predicate? DefinitionFilter,bool FullyPushed,IReadOnlyCollection<string>? ExactIds)>();
         var validationErrors = new List<QueryIssue>(); var validIndices = new JArray();
         for (var requestIndex=0;requestIndex<requests.Count;requestIndex++)
         {
@@ -170,7 +170,8 @@ internal sealed class PublicQuery
                 if (projected.Condition != null) definitionFilter = conditions.Compile("ThingDef",projected.Condition);
             }
             if (fullyPushed) selection.Predicate = null; // The data source applies the entire validated predicate once per definition.
-            plans.Add((name,arguments,selection,definitionFilter,fullyPushed));
+            plans.Add((name,arguments,selection,definitionFilter,fullyPushed,
+                name == "things" ? ExactThingIds(obj["where"] as JObject) : null));
             validIndices.Add(requestIndex);
             } catch (ExecutionError error) {
                 var located=SelectionInput.Locate(error,inputPath,"request");
@@ -199,7 +200,7 @@ internal sealed class PublicQuery
                 if (match == null && plan.FullyPushed) throw ReadContext.Error("filter_unavailable","Definition membership is unknown.");
                 return match != false;
             };
-            var result = Collection(plan.Select, () => ReadRoot(plan.Root,plan.Args,source,state,filter), run,path,
+            var result = Collection(plan.Select, () => ReadRoot(plan.Root,plan.Args,source,state,filter,plan.ExactIds), run,path,
                 plan.Root == "things" ? () => ThingsScanLimitMessage(plan.Args) : (Func<string>?)null);
             result["from"] = plan.Root;
             result["scope"] = new JObject { ["args"] = JObject.FromObject(plan.Args.ToDictionary(p => PublicFields.Name(p.Key),p => p.Value)), ["description"] = (roots[plan.Root].Description ?? RootDescription(plan.Root)) + " The resolved args and requested where below define this reading; completeness is per aggregate/collection." };
@@ -257,7 +258,23 @@ internal sealed class PublicQuery
         return list.Length == 0 ? null : list.Length == 1 ? list[0] : new JObject { [operation] = new JArray(list) };
     }
 
-    private IEnumerable<object> ReadRoot(string root, Dictionary<string,object?> args, IGameData source, ReadContext state,Func<GameNode,bool>? definitionFilter)
+    // Only a directly supplied, exact ID clause is a safe candidate restriction.
+    // Full predicate evaluation remains in Collection; do not infer IDs through
+    // any/not or case-insensitive comparisons.
+    private static IReadOnlyCollection<string>? ExactThingIds(JObject? where)
+    {
+        if (where?["id"] is not JObject condition || (bool?)condition["case_sensitive"] == false) return null;
+        HashSet<string>? ids = null;
+        if (condition["eq"]?.Type == JTokenType.String)
+            ids = new HashSet<string>(new[] { (string)condition["eq"]! }, StringComparer.Ordinal);
+        if (condition["in"] is JArray values && values.All(v => v.Type == JTokenType.String)) {
+            var included = new HashSet<string>(values.Values<string>()!, StringComparer.Ordinal);
+            if (ids == null) ids = included; else ids.IntersectWith(included);
+        }
+        return ids;
+    }
+
+    private IEnumerable<object> ReadRoot(string root, Dictionary<string,object?> args, IGameData source, ReadContext state,Func<GameNode,bool>? definitionFilter,IReadOnlyCollection<string>? exactIds)
     {
         var mapArgument = root == "map" ? "id" : "mapId";
         if (args.TryGetValue(mapArgument,out var requestedMap) && requestedMap as string == "current")
@@ -267,7 +284,7 @@ internal sealed class PublicQuery
         if (root is "things" or "pawns")
         {
             if (source is not IQueryData query) throw ReadContext.Error("query_source_unavailable","This data source has no complete loaded-map/holder query capability.");
-            return root == "things" ? query.QueryThings(args,state,definitionFilter).Cast<object>() : query.QueryPawns(args,state).Cast<object>();
+            return root == "things" ? query.QueryThings(args,state,definitionFilter,exactIds).Cast<object>() : query.QueryPawns(args,state).Cast<object>();
         }
         if (root == "spawned_free_colonists")
         {

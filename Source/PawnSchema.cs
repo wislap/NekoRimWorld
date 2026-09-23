@@ -64,7 +64,8 @@ internal static class PawnSchema
         thought.GetField("moodOffset")!.Description = "Individual thought offset; grouping/stacking can change its effective contribution.";
         thought.GetField("ageTicks")!.Description = "Memory age in game ticks; null for non-memory thoughts.";
         thought.GetField("durationTicks")!.Description = "Game memory duration in ticks; null for non-memory thoughts.";
-        summary.GetField("bleedRate")!.Description = "Raw game BleedRateTotal, not a health percentage or a computed survival-time estimate.";
+        summary.GetField("bleedRate")!.Description = "Native BleedRateTotal: blood-loss fraction per game day (60000 ticks). Multiply by 100 for percentage points per game day; never per second. This rate alone is not a computed survival-time estimate.";
+        trait.GetField("degree")!.Description = "Trait variant identifier, not a numeric stat bonus. The game-generated description reports this trait's effects; suppression is separate.";
         summary.GetField("healthPercent")!.Description = "Game summaryHealth.SummaryHealthPercent: an overall game-computed health indicator. Report it separately from conditions and body-part HP; this read is not a blood-volume measurement. A value of 1 does not establish a cause or a general rule about which conditions affect it.";
         summary.GetField("pain")!.Description = "Game PainTotal aggregate, distinct from injury severity and health percentage. This aggregate alone does not attribute pain to individual listed conditions.";
         condition.GetField("severity")!.Description = "Raw Hediff severity; meaning/range depends on its definition. Not a universal 0..1 health fraction.";

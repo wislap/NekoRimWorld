@@ -340,3 +340,7 @@ Path summaries also publish `path_length` with explicit along-path semantics.
 `grid_distance` remains an equal-valued wire compatibility alias. The plugin
 shows one canonical length to the Agent; no path search or distance arithmetic
 changed in this refinement.
+
+## Exact IDs and spatial positions
+
+Public queries can push exact top-level id.eq/in into Thing candidate enumeration, retaining all original scope filters and predicate checks. Native deadlines still apply. Spatial Thing descriptors now include the spawned instance position (null when unspawned), separate from the path endpoint. Health/trait field descriptions document per-game-day bleeding and trait variant codes.

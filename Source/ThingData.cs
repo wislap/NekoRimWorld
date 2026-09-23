@@ -21,7 +21,7 @@ internal static class ThingData
     private static string TypeOf(object value) => value.GetType().FullName ?? value.GetType().Name;
     private static string Ref(GameNode node, ReadContext context) => context.NativeReference(node.Handle!);
 
-    internal static IEnumerable<GameNode> QueryThings(IReadOnlyDictionary<string,object?> args, ReadContext context,Func<GameNode,bool>? definitionFilter = null, ThingRequestGroup requestGroup = ThingRequestGroup.Everything)
+    internal static IEnumerable<GameNode> QueryThings(IReadOnlyDictionary<string,object?> args, ReadContext context,Func<GameNode,bool>? definitionFilter = null, ThingRequestGroup requestGroup = ThingRequestGroup.Everything, IReadOnlyCollection<string>? exactIds = null)
     {
         var mapId = args.TryGetValue("mapId",out var id) ? id as string : null;
         var maps = Find.Maps.Where(m => !m.Disposed && (mapId == null || m.GetUniqueLoadID() == mapId)).ToArray();
@@ -31,9 +31,11 @@ internal static class ThingData
         var unreal = args.TryGetValue("includeUnreal",out var un) && un is true;
         var names = Strings(args,"defNames");
         var defs = names?.Select(n => DefDatabase<ThingDef>.GetNamedSilentFail(n) ?? throw ReadContext.Error("unknown_definition","Unknown ThingDef: " + n)).ToArray();
+        var ids = exactIds == null ? null : new HashSet<string>(exactIds, StringComparer.Ordinal);
         var seen = new HashSet<Thing>(new IdentityComparer<Thing>());
         var definitionMatches = new Dictionary<ThingDef,bool>();
         bool Selected(Thing t) {
+            if (ids != null && !ids.Contains(t.GetUniqueLoadID())) return false;
             if (t.Destroyed || requestGroup != ThingRequestGroup.Everything && !requestGroup.Includes(t.def) || names != null && !names.Contains(t.def.defName)) return false;
             GraphQL.ExecutionError? membershipError = null;
             if (definitionFilter != null) {

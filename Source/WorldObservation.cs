@@ -79,6 +79,11 @@ internal static class WorldObservation
             if (args["user"] is JObject ur) foreach (var step in Resolve(ur, t => userRef = t, true)) yield return step;
             actorRef ??= userRef; Pawn? actor = actorRef?.Thing as Pawn; Pawn? user = userRef?.Thing as Pawn;
             bool details = (string?)args["detail"] == "details";
+            result["context"] = new JObject {
+                ["actor_id"] = actor?.GetUniqueLoadID(), ["user_id"] = user?.GetUniqueLoadID(),
+                ["requested_stats"] = args["stats"]?.DeepClone() ?? new JArray(),
+                ["meaning"] = "Resolved actor performs interaction/travel; user is the recipient. Missing context leaves dependent checks uncomputed. Only requested stats are evaluated; skill and trait descriptions are not final stat values."
+            };
             if (op == "inspect_state")
             {
                 var rows = new JArray(); result["objects"] = rows; var readers = new Dictionary<Map, WorldStateReader>();
@@ -150,6 +155,7 @@ internal static class WorldObservation
             bool Matches(Thing t) { if (args["select"] is not JObject sel) return true; return (sel["definitions"] is not JArray ds || ds.Values<string>().Contains(t.def.defName)) && (sel["capabilities"] is not JArray cs || WorldStateReader.Capabilities(t).Intersect(cs.Values<string>()).Any()); }
             var selected = objects.Where(t => !t.Destroyed && Matches(t)).OrderBy(t => t.GetUniqueLoadID(), StringComparer.Ordinal).ToList();
             result["objects_summary"] = new JObject { ["records"] = selected.Count, ["groups"] = new JArray(selected.GroupBy(t => t.def.defName).Select(g => new JObject { ["definition"] = g.Key, ["label"] = g.First().def.LabelCap.ToString(), ["records"] = g.Count(), ["stack_units"] = g.Sum(t => (long)t.stackCount) })), ["scan_complete"] = heldComplete && environment.CellsComplete, ["capabilities"] = new JArray(WorldObservationContract.Capabilities.Select(cap => new JObject { ["capability"] = cap, ["records"] = selected.Count(t => WorldStateReader.Capabilities(t).Contains(cap)) })), ["membership"] = "Any occupied cell intersects footprint; real held contents of observed holders included once. Map fog excludes unknown cells. Geometric inclusion is not reachability." };
+            WorldPresentation.ObjectScope((JObject)result["objects_summary"]!, args["select"]);
             var footprint = new HashSet<IntVec3>(cells);
             IntVec3? centerCell = geometry["resolved_center"] is JObject centerJson ? new IntVec3((int)centerJson["x"]!, 0, (int)centerJson["z"]!) : null;
             var rows2 = new List<JObject>();

@@ -50,11 +50,13 @@ internal sealed class WorldStateReader
     }
     internal JObject CellReservations(IntVec3 cell)
     {
-        return new JObject {
+        var value = new JObject {
             ["normal"] = new JArray(reservations.Where(r => !r.Target.HasThing && r.Target.Cell == cell).Select(r => new JObject { ["claimant"] = r.Claimant?.GetUniqueLoadID(), ["job"] = JobState(r.Job), ["layer"] = r.Layer?.defName, ["max_pawns"] = r.MaxPawns, ["stack_count"] = r.StackCount })),
             ["physical_interaction"] = new JArray(physicalRows.Where(r => !r.target.HasThing && r.target.Cell == cell).Select(r => new JObject { ["claimant"] = r.claimant?.GetUniqueLoadID(), ["job"] = JobState(r.job) })),
             ["destinations"] = new JArray(destinationRows.Where(r => r.target == cell).Select(r => new JObject { ["claimant"] = r.claimant?.GetUniqueLoadID(), ["job"] = JobState(r.job), ["obsolete"] = r.obsolete })),
             ["sample_tick"] = reservationTick, ["meaning"] = "Cell-specific records; reservations of objects occupying the cell remain in object state." };
+        WorldPresentation.Reservations(value, Cell(map, cell), true);
+        return value;
     }
     internal static IEnumerable<string> Capabilities(Thing t)
     {
@@ -105,6 +107,7 @@ internal sealed class WorldStateReader
         var requested = stats.Distinct(StringComparer.Ordinal).ToArray();
         if (requested.Length > 0) Add("stats", () => new JObject { ["values"] = new JArray(requested.Select(name => { context?.Check(); var def = DefDatabase<StatDef>.GetNamedSilentFail(name); if (def == null) return new JObject { ["definition"] = name, ["status"] = "unknown_definition" }; try { if (def.Worker.GetType().Assembly != typeof(Pawn).Assembly || def.parts != null && def.parts.Any(part => part.GetType().Assembly != typeof(Pawn).Assembly)) return new JObject { ["definition"] = name, ["status"] = "unsupported_mod_stat_worker" }; float value = t.GetStatValue(def); return new JObject { ["definition"] = name, ["value"] = value, ["display"] = def.ValueToString(value), ["status"] = "observed" }; } catch (Exception e) when (ReadContext.Recoverable(e)) { return new JObject { ["definition"] = name, ["status"] = "unavailable" }; } })) });
         if (facets["stats"] is JObject statsFacet && statsFacet["values"] is JArray statValues) { statsFacet["complete"] = statValues.All(v => (string?)v["status"] == "observed"); if ((bool?)statsFacet["complete"] == false) statsFacet["status"] = "unavailable"; }
+        if (facets["work"] is JObject work && work["work_types"] is JArray) WorldPresentation.Work(work);
         result["coverage"] = new JObject { ["registered_facets_read_successfully"] = !facets.Properties().Any(p => (string?)p.Value["status"] is "unavailable" or "unsupported"), ["unmodeled_components"] = unsupported.Count, ["meaning"] = "All applicable registered facets above; unsupported components are not empty/false. Current state and named predicates, not universal action eligibility." };
         result["read_ms"] = watch.Elapsed.TotalMilliseconds; result["cooperative_budget_overrun"] = watch.Elapsed.TotalMilliseconds > 12;
         return result;
@@ -112,7 +115,9 @@ internal sealed class WorldStateReader
     private JObject ReservationState(Thing t, Pawn? actor)
     {
         var rows = reservationIndex.TryGetValue(t, out var reserved) ? reserved : Array.Empty<ReservationManager.Reservation>(); var physical = physicalRows.Where(r => r.target.HasThing && r.target.Thing == t).ToArray(); var destinations = destinationRows.Where(r => t.Spawned && t.OccupiedRect().Contains(r.target)).ToArray();
-        return new JObject { ["normal"] = new JArray(rows.Select(r => new JObject { ["claimant"] = r.Claimant?.GetUniqueLoadID(), ["job"] = JobState(r.Job), ["layer"] = r.Layer?.defName, ["max_pawns"] = r.MaxPawns, ["stack_count"] = r.StackCount, ["whole_stack"] = r.StackCount == -1 })), ["physical_interaction"] = new JArray(physical.Select(r => new JObject { ["claimant"] = r.claimant.GetUniqueLoadID(), ["job"] = JobState(r.job) })), ["destinations"] = new JArray(destinations.Select(r => new JObject { ["cell"] = Cell(map, r.target), ["claimant"] = r.claimant.GetUniqueLoadID(), ["job"] = JobState(r.job), ["obsolete"] = r.obsolete })), ["normal_reservations_tick"] = reservationTick, ["other_reservations_tick"] = reservationTick, ["meaning"] = "Reservation records are separate from actual occupancy. Different jobs use different quantities/layers; no generic CanReserve default is substituted." };
+        var value = new JObject { ["normal"] = new JArray(rows.Select(r => new JObject { ["claimant"] = r.Claimant?.GetUniqueLoadID(), ["job"] = JobState(r.Job), ["layer"] = r.Layer?.defName, ["max_pawns"] = r.MaxPawns, ["stack_count"] = r.StackCount, ["whole_stack"] = r.StackCount == -1 })), ["physical_interaction"] = new JArray(physical.Select(r => new JObject { ["claimant"] = r.claimant.GetUniqueLoadID(), ["job"] = JobState(r.job) })), ["destinations"] = new JArray(destinations.Select(r => new JObject { ["cell"] = Cell(map, r.target), ["claimant"] = r.claimant.GetUniqueLoadID(), ["job"] = JobState(r.job), ["obsolete"] = r.obsolete })), ["normal_reservations_tick"] = reservationTick, ["other_reservations_tick"] = reservationTick, ["meaning"] = "Reservation records are separate from actual occupancy. Different jobs use different quantities/layers; no generic CanReserve default is substituted." };
+        WorldPresentation.Reservations(value, new JObject { ["id"] = t.GetUniqueLoadID(), ["map"] = map.GetUniqueLoadID() });
+        return value;
     }
     private static JObject BedState(Building_Bed bed, Pawn? user, Pawn? actor)
     {

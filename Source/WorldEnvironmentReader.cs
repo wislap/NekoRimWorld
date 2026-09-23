@@ -119,7 +119,7 @@ internal sealed class WorldEnvironmentReader
         }
 
         foreach (var h in hazards) { var id = (string?)h["source"]?["id"]; var t = things.FirstOrDefault(t => t.GetUniqueLoadID() == id); var indices = t == null ? new int[0] : pathIndices.Where(p => t.OccupiedRect().Contains(p.Key)).SelectMany(p => p.Value).ToArray(); if(pathIndices.Count>0){h["on_path"] = indices.Length > 0; h["path_indices"] = new JArray(indices);} h["relation"] = pathIndices.Count == 0 ? "inside_region" : indices.Length > 0 ? "on_path" : "near_path"; }
-        return new JObject
+        return WorldPresentation.Environment(new JObject
         {
             ["path_environment_bands"] = new JArray(bands.Take(200)),
             ["path_environment_bands_total"] = bands.Count,
@@ -143,7 +143,7 @@ internal sealed class WorldEnvironmentReader
             ["local_hazards_listing_complete"] = hazards.Count <= 200,
             ["attack_influences"] = threats, ["attack_check_status"] = actor==null?"not_computed_actor_required":threatComplete?"completed_for_supported_attacks":"partial",
             ["coverage"] = new JObject { ["cell_scan_complete"] = scanComplete && !errors, ["changes_detected"] = Changed, ["visibility_complete"] = hidden == 0, ["native_attack_checks_complete"] = threatComplete && scanComplete && !errors && !Changed, ["not_modeled"] = new JArray("future fire spread", "future enemy movement", "projectile travel or explosion blast simulation", "arbitrary mod hazards", "roof collapse prediction"), ["read_errors"] = new JArray(failures), ["meaning"] = "No universal safe verdict. Hidden cells and unmodeled effects are not proven absent. Range checks can include sources outside the footprint." }
-        };
+        });
     }
     internal IReadOnlyCollection<Thing> Things => things;
     private static void Add(Dictionary<string, int> d, string key) => d[key] = d.TryGetValue(key, out var n) ? n + 1 : 1;

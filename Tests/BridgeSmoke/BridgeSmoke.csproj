@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../../Source/WorldPresentation.cs" Link="WorldPresentation.cs" />
     <Compile Include="../../Source/WorldResultPaging.cs" Link="WorldResultPaging.cs" />
     <Compile Include="../../Source/SpatialRouteSummary.cs" Link="SpatialRouteSummary.cs" />
     <Compile Include="../../Source/SpatialContract.cs" Link="SpatialContract.cs" />

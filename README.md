@@ -355,3 +355,28 @@ No action or reservation is performed. Detached cursor results expire after two
 minutes and are cleared on load changes. Native synchronous getter/pathfinder
 overruns are not claimed to be hard-preemptible. Test-only game construction and
 UUID evaluation hosting live in rimworld-bench's capture Mod, not this Mod.
+
+
+### V2.2.1 redo: scoped observations and compact support references
+
+The first V2.2.1 relationship patch was reverted. The redo keeps the V2.2 tool
+names and arguments. `objects_summary.scope` states the exact object selection:
+its zero counts cannot establish absence outside that selection. Environment
+scope remains the observed footprint independently of the object filter.
+`context` reports resolved actor/user IDs and explicitly requested StatDefs.
+
+Reservation `scope.direction=reservations_on_target` distinguishes records on
+this object (or cell) from reservations claimed by a Pawn elsewhere. Destination
+cells and job targets remain separate. The work facet explains current native
+work-type disablement and assignment priority without inferring job eligibility.
+
+`environment.roof_support_objects` now contains compact identity/location
+references in both detail modes. Only runtime type, holder type/chain and
+capability metadata are omitted there; IDs, locations, footprint, faction,
+membership and any other fields remain. Totals, row limits, coverage and hazards
+are unchanged. `inspect_state` still returns full state and containment metadata.
+Formatting happens before native page fitting and output-size checks. No Pawn
+health/work lists are pruned and no model-facing entity dictionary is introduced.
+
+The separately evaluated output-policy rewrite was not promoted. Benchmark
+results and limitations are documented in rimworld-bench/planning/V221-REDO.md.

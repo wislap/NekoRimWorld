@@ -335,3 +335,8 @@ completed valid summary that exceeds the cooperative 12ms target is preserved
 with `route_budget_overrun` and `read_budget_exceeded`, not discarded or retried.
 Node reduction remains bounded. This is not a hard frame-time or travel-time
 guarantee, nor a diagnosis of which obstacle caused a negative reachability result.
+
+Path summaries also publish `path_length` with explicit along-path semantics.
+`grid_distance` remains an equal-valued wire compatibility alias. The plugin
+shows one canonical length to the Agent; no path search or distance arithmetic
+changed in this refinement.

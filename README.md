@@ -344,3 +344,14 @@ changed in this refinement.
 ## Exact IDs and spatial positions
 
 Public queries can push exact top-level id.eq/in into Thing candidate enumeration, retaining all original scope filters and predicate checks. Native deadlines still apply. Spatial Thing descriptors now include the spawned instance position (null when unspawned), separate from the path endpoint. Health/trait field descriptions document per-game-day bleeding and trait variant codes.
+
+## V2.2 observation operations
+
+The catalog exposes survey_space, inspect_route and inspect_state through
+world_observation.v2.2. Reads run on the game thread through the frame-operation
+pump, share native state/environment projections, and keep scoped completeness
+and sampled tick intervals explicit. Existing spatial_query remains compatible.
+No action or reservation is performed. Detached cursor results expire after two
+minutes and are cleared on load changes. Native synchronous getter/pathfinder
+overruns are not claimed to be hard-preemptible. Test-only game construction and
+UUID evaluation hosting live in rimworld-bench's capture Mod, not this Mod.

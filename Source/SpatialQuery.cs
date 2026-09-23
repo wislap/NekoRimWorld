@@ -18,14 +18,14 @@ internal static class SpatialQuery
     private const double ReadBudgetMilliseconds = 12;
     private const int MaxCandidates = 16;
 
-    internal sealed class Operation : IDisposable
+    internal sealed class Operation : IFrameQueryOperation
     {
         private readonly SessionDescriptor session;
         private readonly ReadContext context;
         private readonly JObject result;
         private readonly IEnumerator<int> work;
         private readonly System.Diagnostics.Stopwatch lifetime = System.Diagnostics.Stopwatch.StartNew();
-        internal QueryOutcome? Outcome { get; private set; }
+        public QueryOutcome? Outcome { get; private set; }
         internal Operation(JObject args, SessionDescriptor session)
         {
             this.session = session;
@@ -42,7 +42,7 @@ internal static class SpatialQuery
             result["lookup_consistency"] = "Each reference scans the object membership captured at its lookup start; names sampled over the reported tick interval. Objects created afterwards are outside that lookup. Reachability checks the resolved IDs at the final tick.";
             work = Run(args).GetEnumerator();
         }
-        internal bool Advance()
+        public bool Advance()
         {
             if (Outcome != null) return true;
             context.RestartSlice();
@@ -275,7 +275,7 @@ internal static class SpatialQuery
         return result;
     }
 
-    private sealed class Reference
+    internal sealed class Reference
     {
         internal object? Value;
         internal Map? Map;
@@ -284,7 +284,7 @@ internal static class SpatialQuery
         internal bool CandidatesTruncated;
     }
 
-    private static IEnumerable<int> Resolve(JObject raw, Reference resolved, ReadContext context, bool requirePawn)
+    internal static IEnumerable<int> Resolve(JObject raw, Reference resolved, ReadContext context, bool requirePawn, bool visibleOnly = false)
     {
         var map = ResolveMap((string?)raw["map"])!;
         if ((string?)raw["kind"] == "cell") {
@@ -305,6 +305,7 @@ internal static class SpatialQuery
             if (map.Disposed) throw ReadContext.Error("object_unavailable", "Selected map was unloaded during lookup.");
             var thing = members[i];
             if (thing.Destroyed || thing.MapHeld != map) continue;
+            if (visibleOnly && (!thing.SpawnedOrAnyParentSpawned || thing.PositionHeld.Fogged(map))) continue;
             if (id != null && !string.Equals(thing.GetUniqueLoadID(), id, StringComparison.Ordinal)) continue;
             if (name != null && !string.Equals(thing.LabelShortCap, name, StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(thing.LabelCap, name, StringComparison.OrdinalIgnoreCase)) continue;
@@ -346,7 +347,7 @@ internal static class SpatialQuery
             foreach (var thing in Held(root, 0)) yield return thing;
     }
 
-    private static Map? ResolveMap(string? requested)
+    internal static Map? ResolveMap(string? requested)
     {
         if (requested == null || requested == "current")
             return Find.CurrentMap ?? throw ReadContext.Error("object_unavailable", "There is no current loaded map.");
@@ -362,7 +363,7 @@ internal static class SpatialQuery
         _ => new JObject(),
     };
 
-    private static JObject DescribeThing(Thing thing) => new()
+    internal static JObject DescribeThing(Thing thing) => new()
     {
         ["kind"] = thing is Pawn ? "pawn" : "thing",
         ["id"] = thing.GetUniqueLoadID(),
@@ -372,7 +373,7 @@ internal static class SpatialQuery
         ["position"] = thing.Spawned && thing.Map != null ? DescribeCell(thing.Map, thing.Position) : null,
     };
 
-    private static JObject DescribeCell(Map map, IntVec3 cell) => new()
+    internal static JObject DescribeCell(Map map, IntVec3 cell) => new()
     {
         ["kind"] = "cell",
         ["map"] = map.GetUniqueLoadID(),

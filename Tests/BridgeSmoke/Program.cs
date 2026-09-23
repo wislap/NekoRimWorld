@@ -23,6 +23,7 @@ internal static class Program
             KnowledgeCompletenessTests.Run();
             KnowledgeBoundsTests.Run();
             KnowledgeStreamingPublisherTests.Run();
+            WorldContractTests.Run();
             QueryEngineTests.Run();
             SelectionTests.Run();
             NativeEnumTests.Run();

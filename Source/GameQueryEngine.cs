@@ -54,6 +54,7 @@ internal sealed class GameQueryEngine
         specification["resource_parameters"] = ResourceReports.Parameters();
         specification["resource_contract"] = ResourceReports.Contract();
         specification["spatial_query"] = SpatialContract.Catalog();
+        specification["world_observation"] = WorldObservationContract.Catalog();
         specification["public_query"] = publicQuery.Catalog();
         specification["schema_id"] = Hash(specification.ToString(Formatting.None));
         catalog = specification;

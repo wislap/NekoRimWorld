@@ -19,7 +19,7 @@ public sealed class NekoGameComponent : GameComponent
     private string colonyId = string.Empty;
     private string loadEpoch = string.Empty;
     private long snapshotSequence;
-    private SpatialQuery.Operation? spatial;
+    private IFrameQueryOperation? spatial;
     private ProtocolEnvelope? spatialRequest;
     private SessionDescriptor? spatialSession;
 
@@ -84,6 +84,7 @@ public sealed class NekoGameComponent : GameComponent
     private void StartSession(string source)
     {
         spatial?.Dispose(); spatial = null; spatialRequest = null; spatialSession = null;
+        WorldObservation.Clear();
         VerseKnowledge.StartOnce();
         NormalizeOrCreateColonyId();
 
@@ -137,8 +138,8 @@ public sealed class NekoGameComponent : GameComponent
 
         var next = checked(snapshotSequence + 1);
         var sampledSession = new SessionDescriptor(colonyId, loadEpoch, session.GameTick, next);
-        if (request.Payload.Operation == "spatial_query") {
-            spatial = new SpatialQuery.Operation(request.Payload.Arguments!, sampledSession);
+        if (request.Payload.Operation == "spatial_query" || Array.IndexOf(WorldObservationContract.Operations, request.Payload.Operation) >= 0) {
+            spatial = request.Payload.Operation == "spatial_query" ? new SpatialQuery.Operation(request.Payload.Arguments!, sampledSession) : new WorldObservation.Operation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession);
             spatialRequest = request; spatialSession = sampledSession;
             return;
         }

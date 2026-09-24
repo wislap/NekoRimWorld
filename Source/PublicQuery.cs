@@ -66,7 +66,9 @@ internal sealed class PublicQuery
             GameArguments.Create("includeHeld",new BooleanGraphType(),"Traverse nested holder contents in addition to spawned map Things. false retains spawned map Things, including storage-cell contents. This selects current containment, not player ownership or movement history.",defaultValue:true),
             GameArguments.Create("includeUnreal",new BooleanGraphType(),"When including held Things, false excludes a Thing whose immediate holder has unreal contents. Descendant holders are still traversed and their Things checked separately. Spawned map Things are unaffected.",defaultValue:false),
             GameArguments.Create("visibleOnly",new BooleanGraphType(),"Exclude Things whose root held position is fogged.",defaultValue:true),
-            GameArguments.Ids("defNames")) };
+            GameArguments.Ids("defNames"),
+            GameArguments.Create("capabilities", new ListGraphType(new StringGraphType()), "Match any native capability before projection/aggregation; intersects other selectors.",
+                new JObject { ["minItems"] = 1, ["maxItems"] = WorldObservationContract.Capabilities.Length, ["items"] = new JObject { ["enum"] = new JArray(WorldObservationContract.Capabilities) } })) };
         roots["pawns"] = new FieldType { Name = "pawns", ResolvedType = registry.Type("Pawn"), Description = "Pawn instances enumerated from selected loaded maps and their nested holders, including humans, animals and mechanoids regardless of faction. No fog filter. This is object enumeration, not pathfinding access; excludes world caravans.", Arguments = new QueryArguments(GameArguments.Create("mapId",new StringGraphType(),"Loaded map ID; omitted means all loaded maps.")) };
     }
     internal JObject Catalog() {

@@ -34,39 +34,53 @@ internal static class WorldObservation
         private sealed class Target { internal Thing? Thing; internal Map Map = null!; internal IntVec3 Cell; internal bool Held; }
         private IEnumerable<int> Resolve(JObject reference, Action<Target> set, bool pawn = false)
         {
+            bool includeFogged = op == "inspect_state" && (bool?)args["include_fogged"] == true;
             var raw = (JObject)reference.DeepClone(); raw["kind"] = raw["x"] != null ? "cell" : pawn ? "pawn" : "thing";
             if (pawn && raw["x"] != null) throw ReadContext.Error("invalid_arguments", "Pawn context requires id/name");
             var r = new SpatialQuery.Reference();
-            var selectedMap = SpatialQuery.ResolveMap((string?)raw["map"])!; r.Map = selectedMap;
+            bool allMaps = op == "inspect_state" && !pawn && raw["x"] == null && reference["map"] == null && (bool?)args["exact_lookup"] == true;
+            var defaultMap = allMaps ? null : SpatialQuery.ResolveMap((string?)raw["map"]); r.Map = defaultMap;
             if (raw["x"] != null) r.Cell = new IntVec3((int)raw["x"]!, 0, (int)raw["z"]!);
             else
             {
                 bool pawnsOnly = pawn || (string?)reference["kind"] == "pawn";
-                var queue = new Queue<Thing>(selectedMap.listerThings.ThingsInGroup(pawnsOnly ? ThingRequestGroup.Pawn : ThingRequestGroup.Everything).ToArray());
-                var allHolders = new List<IThingHolder>(); selectedMap.GetChildHolders(allHolders);
-                var holders = new Queue<IThingHolder>(allHolders); var seenHolders = new HashSet<IThingHolder>(); var seenThings = new HashSet<Thing>(); var matches = new List<object>(); int scanned = 0;
-                while (queue.Count > 0 || holders.Count > 0)
+                var maps = allMaps ? Find.Maps.Where(m => !m.Disposed).ToArray() : new[] { defaultMap! };
+
+                var matches = new List<object>(); int scanned = 0;
+                foreach (var selectedMap in maps)
                 {
-                    if ((scanned++ & 31) == 0) yield return 0;
-                    if (selectedMap.Disposed) throw ReadContext.Error("object_unavailable", "Map unloaded during lookup");
-                    if (scanned > 100000) throw ReadContext.Error("identity_scan_limit", "Identity lookup exceeded bounded membership");
-                    if (queue.Count == 0)
+                    var queue = new Queue<Thing>(selectedMap.listerThings.ThingsInGroup(pawnsOnly ? ThingRequestGroup.Pawn : ThingRequestGroup.Everything).ToArray());
+                    var allHolders = new List<IThingHolder>(); selectedMap.GetChildHolders(allHolders);
+                    var holders = new Queue<IThingHolder>(allHolders); var seenHolders = new HashSet<IThingHolder>(); var seenThings = new HashSet<Thing>();
+                    while (queue.Count > 0 || holders.Count > 0)
                     {
-                        var holder = holders.Dequeue(); if (!seenHolders.Add(holder)) continue;
-                        WorldNativeAccess.RequireNative(holder, "GetDirectlyHeldThings", "GetChildHolders");
-                        var contents = holder.GetDirectlyHeldThings(); if (contents != null) foreach (var item in contents.ToArray()) if (!item.Spawned && (item.ParentHolder == null || ThingOwnerUtility.AreImmediateContentsReal(item.ParentHolder))) queue.Enqueue(item);
-                        var children = new List<IThingHolder>(); holder.GetChildHolders(children); foreach (var child in children) holders.Enqueue(child); continue;
+                        if ((scanned++ & 31) == 0) yield return 0;
+                        if (selectedMap.Disposed) throw ReadContext.Error("object_unavailable", "Map unloaded during lookup");
+                        if (scanned > 100000) throw ReadContext.Error("identity_scan_limit", "Identity lookup exceeded bounded membership");
+                        if (queue.Count == 0)
+                        {
+                            var holder = holders.Dequeue(); if (!seenHolders.Add(holder)) continue;
+                            WorldNativeAccess.RequireNative(holder, "GetDirectlyHeldThings", "GetChildHolders");
+                            var contents = holder.GetDirectlyHeldThings(); if (contents != null) foreach (var item in contents.ToArray()) if (!item.Spawned && (item.ParentHolder == null || ThingOwnerUtility.AreImmediateContentsReal(item.ParentHolder))) queue.Enqueue(item);
+                            var children = new List<IThingHolder>(); holder.GetChildHolders(children); foreach (var child in children) holders.Enqueue(child); continue;
+                        }
+                        var item2 = queue.Dequeue(); if (!seenThings.Add(item2) || item2.Destroyed || item2.MapHeld != selectedMap || !item2.SpawnedOrAnyParentSpawned || (!includeFogged && item2.PositionHeld.Fogged(selectedMap)) || pawnsOnly && item2 is not Pawn) continue;
+                        if (raw["id"] != null) { if (item2.GetUniqueLoadID() != (string?)raw["id"]) continue; }
+                        else {
+                            WorldNativeAccess.RequireNative(item2, "get_Label");
+                            bool exact = op == "inspect_state" && !pawn && (bool?)args["exact_lookup"] == true;
+                            if (exact) { if (!string.Equals(pawnsOnly ? item2.LabelShort : item2.Label, (string?)raw["name"], StringComparison.Ordinal)) continue; }
+                            else if (!string.Equals(item2.LabelShortCap, (string?)raw["name"], StringComparison.OrdinalIgnoreCase) && !string.Equals(item2.LabelCap, (string?)raw["name"], StringComparison.OrdinalIgnoreCase)) continue;
+                        }
+                        matches.Add(item2); if (raw["id"] != null || matches.Count > 16) break;
                     }
-                    var item2 = queue.Dequeue(); if (!seenThings.Add(item2) || item2.Destroyed || item2.MapHeld != selectedMap || !item2.SpawnedOrAnyParentSpawned || item2.PositionHeld.Fogged(selectedMap) || pawnsOnly && item2 is not Pawn) continue;
-                    if (raw["id"] != null) { if (item2.GetUniqueLoadID() != (string?)raw["id"]) continue; }
-                    else { WorldNativeAccess.RequireNative(item2, "get_Label"); if (!string.Equals(item2.LabelShortCap, (string?)raw["name"], StringComparison.OrdinalIgnoreCase) && !string.Equals(item2.LabelCap, (string?)raw["name"], StringComparison.OrdinalIgnoreCase)) continue; }
-                    matches.Add(item2); if (raw["id"] != null || matches.Count > 16) break;
+                    if (raw["id"] != null && matches.Count > 0 || matches.Count > 16) break;
                 }
                 if (matches.Count == 1) r.Value = matches[0]; else if (matches.Count > 1) { r.Candidates = matches.Take(16).ToList(); r.CandidatesTruncated = matches.Count > 16; }
             }
             if (r.Candidates != null) { result["resolution"] = new JObject { ["status"] = "ambiguous", ["reference"] = reference, ["candidates"] = new JArray(r.Candidates.OfType<Thing>().Select(WorldStateReader.Identity)), ["truncated"] = r.CandidatesTruncated }; throw ReadContext.Error("ambiguous_reference", "Choose a precise reference from candidates"); }
-            if (r.Value is Thing t) { if (!t.SpawnedOrAnyParentSpawned || t.MapHeld == null) throw ReadContext.Error("object_unavailable", "Reference has no loaded position"); if (t.PositionHeld.Fogged(t.MapHeld)) throw ReadContext.Error("object_unavailable", "Reference is hidden by fog"); resolvedVersions.Add((t, t.MapHeld, t.PositionHeld)); set(new Target { Thing = t, Map = t.MapHeld, Cell = t.PositionHeld, Held = !t.Spawned }); }
-            else if (r.Cell.HasValue && r.Map != null) { if (!r.Cell.Value.InBounds(r.Map)) throw ReadContext.Error("invalid_arguments", "Cell outside map"); if (r.Cell.Value.Fogged(r.Map)) throw ReadContext.Error("object_unavailable", "Cell hidden by fog"); set(new Target { Map = r.Map, Cell = r.Cell.Value }); }
+            if (r.Value is Thing t) { if (!t.SpawnedOrAnyParentSpawned || t.MapHeld == null) throw ReadContext.Error("object_unavailable", "Reference has no loaded position"); if (!includeFogged && t.PositionHeld.Fogged(t.MapHeld)) throw ReadContext.Error("object_unavailable", "Reference is hidden by fog"); resolvedVersions.Add((t, t.MapHeld, t.PositionHeld)); set(new Target { Thing = t, Map = t.MapHeld, Cell = t.PositionHeld, Held = !t.Spawned }); }
+            else if (r.Cell.HasValue && r.Map != null) { if (!r.Cell.Value.InBounds(r.Map)) throw ReadContext.Error("invalid_arguments", "Cell outside map"); if (!includeFogged && r.Cell.Value.Fogged(r.Map)) throw ReadContext.Error("object_unavailable", "Cell hidden by fog"); set(new Target { Map = r.Map, Cell = r.Cell.Value }); }
             else throw ReadContext.Error("object_unavailable", "Reference not found in requested map");
         }
         private IEnumerable<int> Run()
@@ -99,7 +113,14 @@ internal static class WorldObservation
                         }
                     }
                     if (resolutionError != null) { rows.Add(new JObject { ["requested_target"] = target.DeepClone(), ["status"] = "unavailable", ["reason"] = (resolutionError as ExecutionError)?.Code, ["message"] = resolutionError.Message, ["resolution"] = result["resolution"]?.DeepClone() }); result.Remove("resolution"); result["status"] = "partial"; continue; }
-                    map = resolved!.Map; if (actorRef != null && actorRef.Map != map || userRef != null && userRef.Map != map) throw ReadContext.Error("invalid_arguments", "Contexts and target must be on the same map"); if (!readers.TryGetValue(map, out var reader)) readers[map] = reader = new WorldStateReader(map, context); if (resolved.Thing != null) rows.Add(reader.Read(resolved.Thing, actor, user, (args["stats"] as JArray)?.Values<string>().Select(s => s!) ?? Array.Empty<string>(), details)); else rows.Add(new JObject { ["target"] = WorldStateReader.Cell(map, resolved.Cell), ["environment"] = WorldEnvironmentReader.CellState(map, resolved.Cell, actor), ["reservations"] = reader.CellReservations(resolved.Cell) }); yield return 0;
+                    map = resolved!.Map; if (actorRef != null && actorRef.Map != map || userRef != null && userRef.Map != map) throw ReadContext.Error("invalid_arguments", "Contexts and target must be on the same map"); if (!readers.TryGetValue(map, out var reader)) readers[map] = reader = new WorldStateReader(map, context); if (resolved.Thing != null) rows.Add(reader.Read(resolved.Thing, actor, user, (args["stats"] as JArray)?.Values<string>().Select(s => s!) ?? Array.Empty<string>(), details, (args["sections"] as JArray)?.Values<string>().Select(s => s!).ToArray(), (int?)args["detail_limit"])); else {
+                        var cellRow = new JObject { ["target"] = WorldStateReader.Cell(map, resolved.Cell), ["sample_tick"] = Find.TickManager.TicksGame };
+                        if (args["sections"] == null || ((JArray)args["sections"]!).Values<string>().Contains("state")) {
+                            cellRow["environment"] = WorldEnvironmentReader.CellState(map, resolved.Cell, actor);
+                            cellRow["reservations"] = reader.CellReservations(resolved.Cell);
+                        }
+                        rows.Add(cellRow);
+                    } yield return 0;
                 }
                 result["meaning"] = "Current object state and named native predicates; no action, reservation, job test or universal usability verdict."; yield break;
             }
@@ -152,9 +173,9 @@ internal static class WorldObservation
             result["region"]!["area_zone_intersections"] = areaCoverage;
             var reader2 = new WorldStateReader(map, context); var objects = new HashSet<Thing>(environment.Things); var holders = new Queue<IThingHolder>(objects.OfType<IThingHolder>()); var visitedHolders = new HashSet<IThingHolder>(); bool heldComplete = true;
             while (holders.Count > 0) { var h = holders.Dequeue(); if (!visitedHolders.Add(h)) continue; if (visitedHolders.Count > 4096) { heldComplete = false; break; } if (!WorldNativeAccess.NativeMethod(h, "GetDirectlyHeldThings") || !WorldNativeAccess.NativeMethod(h, "GetChildHolders")) { heldComplete = false; continue; } var children = new List<IThingHolder>(); h.GetChildHolders(children); foreach (var childHolder in children) holders.Enqueue(childHolder); var direct = h.GetDirectlyHeldThings(); if (direct != null) foreach (var t in direct.ToArray()) { if (!t.Destroyed && (t.ParentHolder == null || ThingOwnerUtility.AreImmediateContentsReal(t.ParentHolder))) objects.Add(t); if (t is IThingHolder child) holders.Enqueue(child); } yield return 0; }
-            bool Matches(Thing t) { if (args["select"] is not JObject sel) return true; return (sel["definitions"] is not JArray ds || ds.Values<string>().Contains(t.def.defName)) && (sel["capabilities"] is not JArray cs || WorldStateReader.Capabilities(t).Intersect(cs.Values<string>()).Any()); }
+            bool Matches(Thing t) { if (args["select"] is not JObject sel) return true; return (sel["definitions"] is not JArray ds || ds.Values<string>().Contains(t.def.defName)) && (sel["capabilities"] is not JArray cs || ThingCapabilities.For(t).Intersect(cs.Values<string>()).Any()); }
             var selected = objects.Where(t => !t.Destroyed && Matches(t)).OrderBy(t => t.GetUniqueLoadID(), StringComparer.Ordinal).ToList();
-            result["objects_summary"] = new JObject { ["records"] = selected.Count, ["groups"] = new JArray(selected.GroupBy(t => t.def.defName).Select(g => new JObject { ["definition"] = g.Key, ["label"] = g.First().def.LabelCap.ToString(), ["records"] = g.Count(), ["stack_units"] = g.Sum(t => (long)t.stackCount) })), ["scan_complete"] = heldComplete && environment.CellsComplete, ["capabilities"] = new JArray(WorldObservationContract.Capabilities.Select(cap => new JObject { ["capability"] = cap, ["records"] = selected.Count(t => WorldStateReader.Capabilities(t).Contains(cap)) })), ["membership"] = "Any occupied cell intersects footprint; real held contents of observed holders included once. Map fog excludes unknown cells. Geometric inclusion is not reachability." };
+            result["objects_summary"] = new JObject { ["records"] = selected.Count, ["groups"] = new JArray(selected.GroupBy(t => t.def.defName).Select(g => new JObject { ["definition"] = g.Key, ["label"] = g.First().def.LabelCap.ToString(), ["records"] = g.Count(), ["stack_units"] = g.Sum(t => (long)t.stackCount) })), ["scan_complete"] = heldComplete && environment.CellsComplete, ["capabilities"] = new JArray(WorldObservationContract.Capabilities.Select(cap => new JObject { ["capability"] = cap, ["records"] = selected.Count(t => ThingCapabilities.For(t).Contains(cap)) })), ["membership"] = "Any occupied cell intersects footprint; real held contents of observed holders included once. Map fog excludes unknown cells. Geometric inclusion is not reachability." };
             WorldPresentation.ObjectScope((JObject)result["objects_summary"]!, args["select"]);
             var footprint = new HashSet<IntVec3>(cells);
             IntVec3? centerCell = geometry["resolved_center"] is JObject centerJson ? new IntVec3((int)centerJson["x"]!, 0, (int)centerJson["z"]!) : null;

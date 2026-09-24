@@ -12,6 +12,7 @@ internal interface IFrameQueryOperation : IDisposable
 internal static class WorldObservationContract
 {
     internal const string Version = "world_observation.v2.2";
+    internal static readonly string[] StateSections = { "identity", "health", "skills", "gear", "work", "state" };
     internal static readonly string[] Operations = { "survey_space", "inspect_route", "inspect_state" };
     internal static readonly string[] Capabilities = { "pawn", "building", "item", "plant", "medicine", "sleeping_place", "openable", "powered", "refuelable", "storage", "production", "hazard" };
     internal static JObject Text() => new() { ["type"] = "string", ["minLength"] = 1, ["maxLength"] = 256 };
@@ -62,6 +63,10 @@ internal static class WorldObservationContract
         };
         var route = (JObject)common.DeepClone(); route["actor"] = Ref(); route["user"] = Ref(); route["to"] = Ref(); route["start"] = Ref(); route["margin"] = Int(0, 12, 2); route["limit"] = Int(1, 50, 20); route["cursor"] = Text();
         var state = (JObject)common.DeepClone(); state["targets"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["maxItems"] = 8, ["items"] = Ref() }; state["actor"] = Ref(); state["user"] = Ref();
+        state["exact_lookup"] = new JObject { ["type"] = "boolean", ["default"] = false, ["description"] = "Resolve object targets by exact case-sensitive Pawn.LabelShort / Thing.Label. Search loaded maps when map is omitted; actor/user and cells retain current-map defaults." };
+        state["detail_limit"] = Int(1, 100, 20);
+        state["include_fogged"] = new JObject { ["type"] = "boolean", ["default"] = false, ["description"] = "Explicit visibility policy for object-state reads; default excludes hidden targets." };
+        state["sections"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["maxItems"] = 6, ["items"] = new JObject { ["type"] = "string", ["enum"] = new JArray(StateSections) }, ["description"] = "Selected current-state sections; omitted means all native facets. Selection does not claim omitted facets absent." };
         state["stats"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["maxItems"] = 16, ["items"] = Text(), ["description"] = "Exact StatDef names, evaluated by the game. No formula reconstruction." };
         JObject Tool(string name, string description, JObject props, params string[] required) => new() { ["name"] = name, ["operation"] = name, ["description"] = description, ["parameters"] = new JObject { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = props, ["required"] = new JArray(required) } };
         return new JObject
@@ -81,9 +86,12 @@ internal static class WorldObservationContract
         foreach (var key in ((JArray)schema["required"]!).Values<string>()) if (args[key!] == null) Fail("Missing " + key);
         foreach (var key in new[] { "actor", "user", "to", "start" }) if (args[key] != null) ValidateRef(args[key], key);
         if (args["detail"] != null && (string?)args["detail"] is not ("summary" or "details")) Fail("detail must be summary or details");
-        Number(args, "limit", 1, 50); Number(args, "margin", 0, 12);
+        Number(args, "detail_limit", 1, 100); Number(args, "limit", 1, 50); Number(args, "margin", 0, 12);
         if (args["cursor"] != null) String(args["cursor"], "cursor");
         if (args["targets"] != null) { if (args["targets"] is not JArray a || a.Count < 1 || a.Count > 8) Fail("targets requires 1..8 refs"); foreach (var t in (JArray)args["targets"]!) ValidateRef(t, "target"); }
+        if (args["exact_lookup"] != null && args["exact_lookup"]!.Type != JTokenType.Boolean) Fail("exact_lookup must be boolean");
+        if (args["include_fogged"] != null && args["include_fogged"]!.Type != JTokenType.Boolean) Fail("include_fogged must be boolean");
+        if (args["sections"] != null) { Strings(args["sections"], StateSections.Length, "sections"); if (((JArray)args["sections"]!).Any(s => !StateSections.Contains(s.ToString()))) Fail("Unknown state section"); }
         if (args["stats"] != null) Strings(args["stats"], 16, "stats");
         if (args["select"] != null) { if (args["select"] is not JObject s) { Fail("select must be object"); return; } Keys(s, "definitions", "capabilities"); foreach (var k in new[] { "definitions", "capabilities" }) if (s[k] != null) Strings(s[k], k == "definitions" ? 32 : 12, k); if (s["capabilities"] is JArray cs && cs.Any(c => !Capabilities.Contains(c.ToString()))) Fail("Unknown capability"); }
         if (args["region"] != null)

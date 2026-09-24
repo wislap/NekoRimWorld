@@ -11,6 +11,11 @@ internal static class WorldContractTests
         Good("survey_space","{'region':{'near':{'id':'pawn'},'radius':0}}");
         Good("survey_space","{'region':{'rect':{'min_x':0,'min_z':0,'max_x':1,'max_z':2}}}");
         Good("inspect_state","{'targets':[{'id':'bed'},{'x':0,'z':0}],'user':{'name':'Patient'},'actor':{'name':'Helper'},'stats':['MoveSpeed']}");
+        Good("inspect_state", "{'targets':[{'x':1,'z':1}],'sections':['identity'],'include_fogged':false,'detail_limit':1,'exact_lookup':true}");
+        Bad("inspect_state", "{'targets':[{'id':'a'}],'sections':['rescue']}");
+        Bad("inspect_state", "{'targets':[{'id':'a'}],'include_fogged':'false'}");
+        Bad("inspect_state", "{'targets':[{'id':'a'}],'detail_limit':0}");
+        Bad("inspect_state", "{'targets':[{'id':'a'}],'exact_lookup':1}");
         Good("inspect_route","{'actor':{'id':'pawn'},'to':{'id':'bed'},'start':{'x':0,'z':0}}");
         foreach(var json in new[]{"{'region':{}}","{'region':{'radius':2}}","{'region':{'near':{'id':'x'},'room_of':{'id':'x'}}}","{'region':{'rect':{'min_x':2,'min_z':0,'max_x':1,'max_z':2}}}","{'region':{'map':'current'},'select':{'capabilities':['RescueBest']}}"})Bad("survey_space",json);
         foreach(var json in new[]{"{'targets':[]}","{'targets':[{'kind':'cell','id':'bed'}]}","{'targets':[{'kind':'pawn','x':1,'z':0}]}","{'targets':[{'x':2147483648,'z':0}]}","{'targets':[{'id':'a','name':'b'}]}","{'targets':[{'id':'a'}],'command':'reserve'}"})Bad("inspect_state",json);

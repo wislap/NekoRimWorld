@@ -13,13 +13,24 @@ namespace Neko.RimWorld;
 internal sealed class WorldStateReader
 {
     private readonly Map map;
-    private readonly List<ReservationManager.Reservation> reservations;
+    private List<ReservationManager.Reservation> reservations = null!;
     private readonly ReadContext? context;
-    private readonly Dictionary<Thing, ReservationManager.Reservation[]> reservationIndex;
-    private readonly PhysicalInteractionReservationManager.PhysicalInteractionReservation[] physicalRows;
-    private readonly PawnDestinationReservationManager.PawnDestinationReservation[] destinationRows;
-    private readonly int reservationTick = Find.TickManager.TicksGame;
-    internal WorldStateReader(Map map, ReadContext? context = null) { this.map = map; this.context = context; reservations = map.reservationManager.ReservationsReadOnly.ToList(); reservationIndex = reservations.Where(r => r.Target.HasThing).GroupBy(r => r.Target.Thing).ToDictionary(g => g.Key, g => g.ToArray()); physicalRows = WorldNativeAccess.PhysicalRows(map); destinationRows = WorldNativeAccess.DestinationRows(map); }
+    private Dictionary<Thing, ReservationManager.Reservation[]> reservationIndex = null!;
+    private PhysicalInteractionReservationManager.PhysicalInteractionReservation[] physicalRows = null!;
+    private PawnDestinationReservationManager.PawnDestinationReservation[] destinationRows = null!;
+    private int reservationTick;
+    private bool reservationsRead;
+    internal WorldStateReader(Map map, ReadContext? context = null) { this.map = map; this.context = context; }
+    private void ReadReservations()
+    {
+        if (reservationsRead) return;
+        reservations = map.reservationManager.ReservationsReadOnly.ToList();
+        reservationIndex = reservations.Where(r => r.Target.HasThing).GroupBy(r => r.Target.Thing).ToDictionary(g => g.Key, g => g.ToArray());
+        physicalRows = WorldNativeAccess.PhysicalRows(map);
+        destinationRows = WorldNativeAccess.DestinationRows(map);
+        reservationTick = Find.TickManager.TicksGame;
+        reservationsRead = true;
+    }
     internal static JObject Cell(Map map, IntVec3 c) => SpatialQuery.DescribeCell(map, c);
     internal static JObject Identity(Thing t) => new()
     {
@@ -38,8 +49,25 @@ internal sealed class WorldStateReader
         ["holder_type"] = t.ParentHolder?.GetType().FullName, ["holder_chain"] = HolderChain(t),
         ["pawn_membership"] = t is Pawn member ? new JObject{["is_colonist"]=member.IsColonist,["is_free_colonist"]=member.IsFreeColonist,["is_prisoner"]=member.IsPrisonerOfColony,["is_slave"]=member.IsSlaveOfColony}:null,
         ["faction"] = t.Faction == null ? null : new JObject { ["name"] = t.Faction.Name, ["definition"] = t.Faction.def.defName, ["is_player"] = t.Faction == Faction.OfPlayer },
-        ["capabilities"] = new JArray(Capabilities(t))
+        ["capabilities"] = new JArray(ThingCapabilities.For(t))
     };
+    private static JObject ObjectIdentity(Thing thing)
+    {
+        var value = Identity(thing);
+        value["name"] = thing is Pawn ? thing.LabelShort : thing.Label;
+        value["definition_label"] = thing.def.LabelCap.ToString();
+        value["guest_status"] = (thing as Pawn)?.GuestStatus?.ToString();
+        var holder = ThingData.HeldByPawn(thing);
+        value["held_by"] = holder == null ? null : new JObject { ["id"] = holder.GetUniqueLoadID(), ["runtime_type"] = holder.GetType().FullName };
+        JObject? FactionInfo(Faction? faction) => faction == null ? null : new JObject {
+            ["name"] = faction.Name, ["def_name"] = faction.def.defName,
+            ["is_player"] = faction == Faction.OfPlayer, ["player_relation"] = faction.PlayerRelationKind.ToString()
+        };
+        value["faction"] = FactionInfo(thing.Faction);
+        value["held_by_faction"] = FactionInfo(holder?.Faction);
+        return value;
+    }
+
     private static JObject HolderChain(Thing t)
     {
         var rows = new JArray(); var seen = new HashSet<IThingHolder>(); var h = t.ParentHolder;
@@ -50,6 +78,7 @@ internal sealed class WorldStateReader
     }
     internal JObject CellReservations(IntVec3 cell)
     {
+        ReadReservations();
         var value = new JObject {
             ["normal"] = new JArray(reservations.Where(r => !r.Target.HasThing && r.Target.Cell == cell).Select(r => new JObject { ["claimant"] = r.Claimant?.GetUniqueLoadID(), ["job"] = JobState(r.Job), ["layer"] = r.Layer?.defName, ["max_pawns"] = r.MaxPawns, ["stack_count"] = r.StackCount })),
             ["physical_interaction"] = new JArray(physicalRows.Where(r => !r.target.HasThing && r.target.Cell == cell).Select(r => new JObject { ["claimant"] = r.claimant?.GetUniqueLoadID(), ["job"] = JobState(r.job) })),
@@ -58,22 +87,17 @@ internal sealed class WorldStateReader
         WorldPresentation.Reservations(value, Cell(map, cell), true);
         return value;
     }
-    internal static IEnumerable<string> Capabilities(Thing t)
+    internal JObject Read(Thing t, Pawn? actor, Pawn? user, IEnumerable<string> stats, bool details, string[]? sections = null, int? detailLimit = null)
     {
-        if (t is Pawn) yield return "pawn"; if (t is Building) yield return "building"; if (t.def.category == ThingCategory.Item) yield return "item";
-        if (t is Plant) yield return "plant"; if (t.def.IsMedicine) yield return "medicine"; if (t is Building_Bed) yield return "sleeping_place";
-        if (t is Building_Door) yield return "openable"; if (t is ISlotGroupParent) yield return "storage"; if (t is IBillGiver) yield return "production";
-        if (t.TryGetComp<CompPowerTrader>() != null) yield return "powered"; if (t.TryGetComp<CompRefuelable>() != null) yield return "refuelable";
-        if (t is Fire || t is Building_Trap || t is Building_Turret || t.TryGetComp<CompExplosive>() != null) yield return "hazard";
-    }
-    internal JObject Read(Thing t, Pawn? actor, Pawn? user, IEnumerable<string> stats, bool details)
-    {
-        var watch = System.Diagnostics.Stopwatch.StartNew(); var facets = new JObject(); var unsupported = new JArray(); var result = new JObject { ["target"] = Identity(t), ["facets"] = facets, ["unsupported_components"] = unsupported, ["sample_tick"] = Find.TickManager.TicksGame };
-        void Add(string name, Func<JObject> read) { try { context?.Check(); var value = read(); if (value["status"] == null) value["status"] = "observed"; facets[name] = value; } catch (Exception e) when (ReadContext.Recoverable(e)) { facets[name] = new JObject { ["status"] = (e as ExecutionError)?.Code == "unsupported_mod_override" ? "unsupported" : "unavailable", ["reason"] = (e as ExecutionError)?.Code ?? e.GetType().Name }; } }
+        var watch = System.Diagnostics.Stopwatch.StartNew(); var facets = new JObject(); var unsupported = new JArray(); var result = new JObject { ["target"] = sections == null ? Identity(t) : ObjectIdentity(t), ["facets"] = facets, ["unsupported_components"] = unsupported, ["sample_tick"] = Find.TickManager.TicksGame };
+        bool All = sections == null || sections.Contains("state");
+        bool Wants(string section) => All || sections!.Contains(section);
+        bool Facet(string name) => All || name == "stats" || name == "pawn" && (Wants("health") || Wants("skills") || Wants("gear")) || name == "work" && Wants("work");
+        void Add(string name, Func<JObject> read) { if (!Facet(name)) return; try { context?.Check(); var value = read(); if (value["status"] == null) value["status"] = "observed"; facets[name] = value; } catch (Exception e) when (ReadContext.Recoverable(e)) { facets[name] = new JObject { ["status"] = (e as ExecutionError)?.Code == "unsupported_mod_override" ? "unsupported" : "unavailable", ["reason"] = (e as ExecutionError)?.Code ?? e.GetType().Name }; } }
         Add("condition", () => new JObject { ["stack_count"] = t.stackCount, ["hit_points"] = t.def.useHitPoints ? (JToken)t.HitPoints : JValue.CreateNull(), ["max_hit_points"] = t.def.useHitPoints ? (JToken)t.MaxHitPoints : JValue.CreateNull(), ["burning"] = t.IsBurning(), ["quality"] = t.TryGetQuality(out var q) ? q.ToString() : null, ["forbidden"] = t.TryGetComp<CompForbiddable>()?.Forbidden, ["forbidden_to_actor"] = actor == null ? null : (JToken)t.IsForbidden(actor) });
         Add("reservations", () => ReservationState(t, actor));
         Add("containment", () => { if (t is IThingHolder hh) WorldNativeAccess.RequireNative(hh, "GetDirectlyHeldThings"); var owner = t is IThingHolder h ? h.GetDirectlyHeldThings() : null; return new JObject { ["holder"] = t.ParentHolder is Thing p ? Identity(p) : null, ["holder_type"] = t.ParentHolder?.GetType().FullName, ["holder_chain"] = HolderChain(t), ["real_contents"] = t.ParentHolder == null || ThingOwnerUtility.AreImmediateContentsReal(t.ParentHolder), ["contents"] = owner == null ? null : new JObject { ["count"] = owner.Count, ["rows"] = new JArray(owner.Cast<Thing>().Take(details ? 100 : 8).Select(Identity)), ["complete"] = owner.Count <= (details ? 100 : 8) } }; });
-        if (t is ThingWithComps twc)
+        if (All && t is ThingWithComps twc)
         {
             foreach (var comp in twc.AllComps.ToArray())
             {
@@ -92,8 +116,8 @@ internal sealed class WorldStateReader
         }
         if (t is Pawn pawn)
         {
-            Add("pawn", () => PawnState(pawn, details));
-            Add("work", () => new JObject { ["current_job"] = JobState(pawn.CurJob), ["queued_jobs"] = pawn.jobs == null ? null : new JArray(pawn.jobs.jobQueue.Take(32).Select(j => JobState(j.job))), ["queued_jobs_complete"] = pawn.jobs == null || pawn.jobs.jobQueue.Count <= 32, ["drafted"] = pawn.Drafted, ["mental_state"] = pawn.MentalStateDef?.defName, ["work_types"] = new JArray(DefDatabase<WorkTypeDef>.AllDefsListForReading.Select(w => new JObject { ["definition"] = w.defName, ["disabled"] = pawn.WorkTypeIsDisabled(w), ["priority"] = pawn.workSettings == null ? null : (JToken)pawn.workSettings.GetPriority(w) })), ["medical_care"] = pawn.playerSettings?.medCare.ToString(), ["allowed_area"] = pawn.playerSettings?.EffectiveAreaRestrictionInPawnCurrentMap?.GetUniqueLoadID() });
+            Add("pawn", () => PawnState(pawn, details, sections, detailLimit));
+            Add("work", () => new JObject { ["current_job"] = CurrentJobState(pawn), ["queued_jobs"] = pawn.jobs == null ? null : new JArray(pawn.jobs.jobQueue.Take(32).Select(j => JobState(j.job))), ["queued_jobs_total"] = pawn.jobs?.jobQueue.Count, ["queued_jobs_complete"] = pawn.jobs == null || pawn.jobs.jobQueue.Count <= 32, ["drafted"] = pawn.Drafted, ["mental_state"] = pawn.MentalStateDef?.defName, ["work_types"] = new JArray(DefDatabase<WorkTypeDef>.AllDefsListForReading.Select(w => new JObject { ["definition"] = w.defName, ["disabled"] = pawn.WorkTypeIsDisabled(w), ["priority"] = pawn.workSettings == null ? null : (JToken)pawn.workSettings.GetPriority(w) })), ["medical_care"] = pawn.playerSettings?.medCare.ToString(), ["allowed_area"] = pawn.playerSettings?.EffectiveAreaRestrictionInPawnCurrentMap?.GetUniqueLoadID() });
         }
         if (t is Building_Bed bed) Add("bed", () => BedState(bed, user, actor));
         if (t is Building_Door door) Add("door", () => { WorldNativeAccess.RequireNative(door, "PawnCanOpen", "CanPhysicallyPass"); return new JObject { ["open"] = door.Open, ["hold_open"] = door.HoldOpen, ["context_checks"] = new JObject{["status"]=actor==null?"not_computed":"evaluated",["reason"]=actor==null?"actor_required":null,["actor_id"]=actor?.GetUniqueLoadID()}, ["actor_can_open"] = actor == null ? null : (JToken)door.PawnCanOpen(actor), ["actor_can_physically_pass"] = actor == null ? null : (JToken)door.CanPhysicallyPass(actor), ["checks_meaning"] = "Native door predicates at this observation; no move/open command issued." }; });
@@ -108,12 +132,19 @@ internal sealed class WorldStateReader
         if (requested.Length > 0) Add("stats", () => new JObject { ["values"] = new JArray(requested.Select(name => { context?.Check(); var def = DefDatabase<StatDef>.GetNamedSilentFail(name); if (def == null) return new JObject { ["definition"] = name, ["status"] = "unknown_definition" }; try { if (def.Worker.GetType().Assembly != typeof(Pawn).Assembly || def.parts != null && def.parts.Any(part => part.GetType().Assembly != typeof(Pawn).Assembly)) return new JObject { ["definition"] = name, ["status"] = "unsupported_mod_stat_worker" }; float value = t.GetStatValue(def); return new JObject { ["definition"] = name, ["value"] = value, ["display"] = def.ValueToString(value), ["status"] = "observed" }; } catch (Exception e) when (ReadContext.Recoverable(e)) { return new JObject { ["definition"] = name, ["status"] = "unavailable" }; } })) });
         if (facets["stats"] is JObject statsFacet && statsFacet["values"] is JArray statValues) { statsFacet["complete"] = statValues.All(v => (string?)v["status"] == "observed"); if ((bool?)statsFacet["complete"] == false) statsFacet["status"] = "unavailable"; }
         if (facets["work"] is JObject work && work["work_types"] is JArray) WorldPresentation.Work(work);
-        result["coverage"] = new JObject { ["registered_facets_read_successfully"] = !facets.Properties().Any(p => (string?)p.Value["status"] is "unavailable" or "unsupported"), ["unmodeled_components"] = unsupported.Count, ["meaning"] = "All applicable registered facets above; unsupported components are not empty/false. Current state and named predicates, not universal action eligibility." };
+        if (detailLimit.HasValue) {
+            if (facets["pawn"] is JObject pawnFacts) WorldPresentation.LimitRows(pawnFacts, detailLimit.Value);
+            if (facets["work"] is JObject workFacts) WorldPresentation.LimitRows(workFacts, detailLimit.Value);
+        }
+        if (!All) result["unsupported_components"] = JValue.CreateNull();
+        result["requested_sections"] = sections == null ? new JArray("state") : new JArray(sections);
+        result["coverage"] = new JObject { ["registered_facets_read_successfully"] = !facets.Properties().Any(p => (string?)p.Value["status"] is "unavailable" or "unsupported"), ["components_inspected"] = All, ["unmodeled_components"] = All ? (JToken)unsupported.Count : JValue.CreateNull(), ["meaning"] = "Requested applicable registered facets above; omitted facets are not absent. Unsupported components are not empty/false. Current state and named predicates, not universal action eligibility." };
         result["read_ms"] = watch.Elapsed.TotalMilliseconds; result["cooperative_budget_overrun"] = watch.Elapsed.TotalMilliseconds > 12;
         return result;
     }
     private JObject ReservationState(Thing t, Pawn? actor)
     {
+        ReadReservations();
         var rows = reservationIndex.TryGetValue(t, out var reserved) ? reserved : Array.Empty<ReservationManager.Reservation>(); var physical = physicalRows.Where(r => r.target.HasThing && r.target.Thing == t).ToArray(); var destinations = destinationRows.Where(r => t.Spawned && t.OccupiedRect().Contains(r.target)).ToArray();
         var value = new JObject { ["normal"] = new JArray(rows.Select(r => new JObject { ["claimant"] = r.Claimant?.GetUniqueLoadID(), ["job"] = JobState(r.Job), ["layer"] = r.Layer?.defName, ["max_pawns"] = r.MaxPawns, ["stack_count"] = r.StackCount, ["whole_stack"] = r.StackCount == -1 })), ["physical_interaction"] = new JArray(physical.Select(r => new JObject { ["claimant"] = r.claimant.GetUniqueLoadID(), ["job"] = JobState(r.job) })), ["destinations"] = new JArray(destinations.Select(r => new JObject { ["cell"] = Cell(map, r.target), ["claimant"] = r.claimant.GetUniqueLoadID(), ["job"] = JobState(r.job), ["obsolete"] = r.obsolete })), ["normal_reservations_tick"] = reservationTick, ["other_reservations_tick"] = reservationTick, ["meaning"] = "Reservation records are separate from actual occupancy. Different jobs use different quantities/layers; no generic CanReserve default is substituted." };
         WorldPresentation.Reservations(value, new JObject { ["id"] = t.GetUniqueLoadID(), ["map"] = map.GetUniqueLoadID() });
@@ -125,29 +156,57 @@ internal sealed class WorldStateReader
         if (user != null) { WorldNativeAccess.RequireNative(bed, "get_Medical", "get_SleepingSlotsCount", "GetCurOccupant"); o["can_use_bed_now"] = RestUtility.CanUseBedNow(bed, user, true); if (actor != null) o["is_valid_bed_for"] = RestUtility.IsValidBedFor(bed, user, actor, true); o["context"] = new JObject { ["user"] = user.GetUniqueLoadID(), ["actor"] = actor?.GetUniqueLoadID(), ["check_social_properness"] = true, ["ignore_other_reservations"] = false, ["meaning"] = "Native predicates, including their built-in scope; false does not identify a unique cause. IsValidBedFor checks from actor's CURRENT position, not a simulated carry leg. No bed is reserved." }; }
         else o["context_checks"] = new JObject { ["status"] = "not_computed", ["reason"] = "user_required" }; return o;
     }
-    private static JObject PawnState(Pawn p, bool details)
+    private static JObject PawnState(Pawn p, bool details, string[]? sections, int? detailLimit)
     {
+        bool Wants(string section) => sections == null || sections.Contains("state") || sections.Contains(section);
+        var result = new JObject();
+        if (Wants("health"))
+        {
         var hediffs = p.health.hediffSet.hediffs.Where(h => h.Visible).ToArray(); var parts = p.health.hediffSet.GetNotMissingParts().Where(b => p.health.hediffSet.GetPartHealth(b) < b.def.GetMaxHealth(p)).ToArray();
-        return new JObject
+        var health = new JObject
         {
             ["dead"] = p.Dead,
             ["downed"] = p.Downed,
             ["health_summary_fraction"] = p.health.summaryHealth.SummaryHealthPercent,
             ["pain_fraction"] = p.health.hediffSet.PainTotal,
+            ["in_pain_shock"] = p.health.InPainShock,
             ["bleed_fraction_per_game_day"] = p.health.hediffSet.BleedRateTotal,
-            ["conditions"] = new JArray(hediffs.Select(h => new JObject { ["id"] = h.GetUniqueLoadID(), ["definition"] = h.def.defName, ["label"] = h.LabelCap, ["severity"] = h.Severity, ["part"] = h.Part?.Index, ["tended"] = h.IsTended() })),
+            ["conditions"] = new JArray(hediffs.Select(h => new JObject { ["id"] = h.GetUniqueLoadID(), ["definition"] = h.def.defName, ["label"] = h.LabelCap, ["severity"] = h.Severity, ["severity_label"] = h.SeverityLabel, ["visible"] = h.Visible, ["part"] = h.Part?.Index, ["tended"] = h.IsTended() })),
             ["conditions_scope"] = "visible native hediffs; not all hidden conditions",
+            ["body_parts"] = new JArray(p.RaceProps.body.AllParts.Take(detailLimit ?? (details ? 100 : 20)).Select(b => new JObject { ["key"] = p.GetUniqueLoadID() + "/body:" + b.body.defName + "/part:" + b.Index, ["index"] = b.Index, ["definition"] = b.def.defName, ["label"] = b.Label, ["health"] = p.health.hediffSet.GetPartHealth(b), ["max_health"] = b.def.GetMaxHealth(p) })),
+            ["body_parts_total"] = p.RaceProps.body.AllParts.Count,
+            ["body_parts_complete"] = p.RaceProps.body.AllParts.Count <= (detailLimit ?? (details ? 100 : 20)),
             ["missing_parts"] = new JArray(p.health.hediffSet.GetMissingPartsCommonAncestors().Select(h => new JObject { ["definition"] = h.Part?.def.defName, ["part_index"] = h.Part?.Index })),
             ["damaged_present_parts"] = new JArray(parts.Select(b => new JObject { ["index"] = b.Index, ["label"] = b.Label, ["health"] = p.health.hediffSet.GetPartHealth(b), ["max_health"] = b.def.GetMaxHealth(p) })),
-            ["capacities"] = new JArray(DefDatabase<PawnCapacityDef>.AllDefsListForReading.Where(d => d.CanShowOnPawn(p)).Select(d => new JObject { ["definition"] = d.defName, ["level"] = p.health.capacities.GetLevel(d) })),
-            ["skills"] = p.skills == null ? null : new JArray(p.skills.skills.Select(s => new JObject { ["definition"] = s.def.defName, ["level"] = s.Level, ["passion"] = s.passion.ToString(), ["disabled"] = s.TotallyDisabled })),
-            ["traits"] = p.story?.traits == null ? null : new JArray(p.story.traits.allTraits.Select(t => new JObject { ["definition"] = t.def.defName, ["variant_code"] = t.Degree, ["suppressed"] = t.Suppressed, ["description"] = t.TipString(p) })),
-            ["carried"] = p.carryTracker?.CarriedThing == null ? null : Identity(p.carryTracker.CarriedThing),
-            ["equipment"] = p.equipment == null ? null : new JArray(p.equipment.AllEquipmentListForReading.Select(Identity)),
-            ["apparel"] = p.apparel == null ? null : new JArray(p.apparel.WornApparel.Select(Identity)),
-            ["inventory"] = p.inventory == null ? null : new JArray(p.inventory.innerContainer.Take(100).Select(Identity)),
-            ["inventory_complete"] = p.inventory == null || p.inventory.innerContainer.Count <= 100
+            ["capacities"] = new JArray(DefDatabase<PawnCapacityDef>.AllDefsListForReading.Where(d => d.CanShowOnPawn(p)).Select(d => new JObject { ["definition"] = d.defName, ["label"] = d.LabelCap.ToString(), ["level"] = p.health.capacities.GetLevel(d) }))
         };
+        foreach (var property in health.Properties()) result[property.Name] = property.Value.DeepClone();
+        }
+        if (Wants("skills")) result["skills"] = p.skills == null ? null : new JArray(p.skills.skills.Select(s => new JObject { ["definition"] = s.def.defName, ["label"] = s.def.LabelCap.ToString(), ["level"] = s.Level, ["passion"] = s.passion.ToString(), ["aptitude"] = s.Aptitude, ["disabled"] = s.TotallyDisabled, ["permanently_disabled"] = s.PermanentlyDisabled }));
+        if (sections == null || sections.Contains("state")) result["traits"] = p.story?.traits == null ? null : new JArray(p.story.traits.allTraits.Select(t => new JObject { ["definition"] = t.def.defName, ["variant_code"] = t.Degree, ["suppressed"] = t.Suppressed, ["description"] = t.TipString(p) }));
+        if (Wants("gear"))
+        {
+            var gear = new JObject
+            {
+            ["carried"] = p.carryTracker?.CarriedThing == null ? null : GearIdentity(p.carryTracker.CarriedThing),
+            ["equipment"] = p.equipment == null ? null : new JArray(p.equipment.AllEquipmentListForReading.Select(GearIdentity)),
+            ["apparel"] = p.apparel == null ? null : new JArray(p.apparel.WornApparel.Select(GearIdentity)),
+            ["inventory"] = p.inventory == null ? null : new JArray(p.inventory.innerContainer.Take(100).Select(GearIdentity)),
+            ["inventory_total"] = p.inventory?.innerContainer.Count,
+            ["inventory_complete"] = p.inventory == null || p.inventory.innerContainer.Count <= 100
+
+            };
+            foreach (var property in gear.Properties()) result[property.Name] = property.Value.DeepClone();
+        }
+        return result;
+    }
+    private static JObject GearIdentity(Thing thing)
+    {
+        var value = Identity(thing); value["stack_count"] = thing.stackCount; return value;
+    }
+    private static JObject? CurrentJobState(Pawn pawn)
+    {
+        var value = JobState(pawn.CurJob); if (value != null) value["report"] = pawn.GetJobReport(); return value;
     }
     internal static JObject? JobState(Job? job) => job == null ? null : new JObject { ["definition"] = job.def.defName, ["id"] = job.GetUniqueLoadID(), ["player_forced"] = job.playerForced, ["targets"] = new JArray(new JToken[] { (JToken?)TargetState(job.targetA) ?? JValue.CreateNull(), (JToken?)TargetState(job.targetB) ?? JValue.CreateNull(), (JToken?)TargetState(job.targetC) ?? JValue.CreateNull() }) };
     internal static JObject? TargetState(LocalTargetInfo target) => !target.IsValid ? null : target.HasThing ? Identity(target.Thing) : new JObject { ["x"] = target.Cell.x, ["z"] = target.Cell.z };

@@ -46,6 +46,11 @@ internal static class WorldPresentationTests
         WorldResultPaging.Put(small, rows, 0, 3, "cursor", 3000);
         Require((int?)large["page"]?["returned"] == 1 && (int?)small["page"]?["returned"] == 3, "Compaction must precede page fitting");
         Require((int?)small["objects_summary"]?["records"] == 3, "Page fitting changed aggregate");
+        var bounded = JObject.Parse("{'skills':[1,2,3],'inventory':[1,2],'inventory_total':7,'inventory_complete':false,'conditions':null}");
+        WorldPresentation.LimitRows(bounded, 1);
+        Require((int?)bounded["skills_total"] == 3 && (bool?)bounded["skills_complete"] == false && ((JArray)bounded["skills"]!).Count == 1, "Nested display limit lost total/coverage");
+        Require((int?)bounded["inventory_total"] == 7 && (bool?)bounded["inventory_complete"] == false, "Existing partial collection marked complete");
+        Require(bounded["conditions"]!.Type == JTokenType.Null, "Unavailable list became empty");
         Console.WriteLine("World presentation tests passed: scoped counts, target direction, unknowns, preserved facts, idempotence and page fitting.");
     }
 }

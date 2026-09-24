@@ -48,6 +48,10 @@ internal sealed class ThingSchema
         Link(owner, "Owner", holder, referenceOnly: true); Scalars(owner, "i:Count i:TotalStackCount"); Slice(owner, "items", Thing);
         var position = Type("IntVec3", "Verse.IntVec3 coordinates: x and z are the map plane; y is vertical. Read map identity separately.");
         Scalars(position, "i:x i:y i:z");
+        var capabilities = PawnSchema.Add(Thing, "capabilities", new ListGraphType(new StringGraphType()), c => State(c).ReadNode((GameNode)c.Source!, "capabilities", Args(c)));
+        capabilities.Metadata["node_member"] = true;
+        capabilities.Metadata["explicit_selection"] = true;
+        capabilities.Description = "Native capability membership shared with spatial surveys. Filter with some/in before aggregation and paging; overlapping capabilities do not imply usability.";
         Scalars(Thing, "s:id s:runtimeType s:Label i:stackCount i:HitPoints i:MaxHitPoints b:Spawned b:Destroyed b:IngestibleNow");
         Scalars(Faction, "s:defName s:name b:isPlayer e:playerRelation:RimWorld.FactionRelationKind");
         Link(Thing, "Faction", Faction, "Native Thing.Faction: the faction that owns this instance, null when it has none. This is the native membership fact. Container membership, position and definition do not establish faction.");

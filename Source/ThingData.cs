@@ -29,6 +29,9 @@ internal static class ThingData
         var includeHeld = !args.TryGetValue("includeHeld",out var held) || held is not false;
         var visible = !args.TryGetValue("visibleOnly",out var vis) || vis is not false;
         var unreal = args.TryGetValue("includeUnreal",out var un) && un is true;
+        var requestedCapabilities = Strings(args, "capabilities");
+        if (requestedCapabilities != null && (requestedCapabilities.Length == 0 || requestedCapabilities.Length > WorldObservationContract.Capabilities.Length || requestedCapabilities.Any(c => !WorldObservationContract.Capabilities.Contains(c))))
+            throw ReadContext.Error("invalid_arguments", "Unknown or invalid capability selection.");
         var names = Strings(args,"defNames");
         var defs = names?.Select(n => DefDatabase<ThingDef>.GetNamedSilentFail(n) ?? throw ReadContext.Error("unknown_definition","Unknown ThingDef: " + n)).ToArray();
         var ids = exactIds == null ? null : new HashSet<string>(exactIds, StringComparer.Ordinal);
@@ -46,6 +49,7 @@ internal static class ThingData
             }
             context.Check();
             if (visible && (!t.SpawnedOrAnyParentSpawned || t.PositionHeld.Fogged(t.MapHeld))) return false;
+            if (requestedCapabilities != null && !ThingCapabilities.Matches(t, requestedCapabilities)) return false;
             if (membershipError != null) throw membershipError; // Invisible objects are outside this population even if their definition read failed.
             return true;
         }
@@ -189,6 +193,7 @@ internal static class ThingData
             var t = (Thing)h;
             return field switch
             {
+                "capabilities" => ThingCapabilities.For(t).ToArray(),
                 "id" => t.GetUniqueLoadID(), "def" => Definition(t.def), "Label" => t.Label, "stackCount" => t.stackCount,
                 "Stuff" => t.Stuff == null ? null : Definition(t.Stuff), "HitPoints" => t.def.useHitPoints ? (int?)t.HitPoints : null,
                 "MaxHitPoints" => t.def.useHitPoints ? (int?)t.MaxHitPoints : null, "Spawned" => t.Spawned, "Destroyed" => t.Destroyed,

@@ -380,3 +380,20 @@ health/work lists are pruned and no model-facing entity dictionary is introduced
 
 The separately evaluated output-policy rewrite was not promoted. Benchmark
 results and limitations are documented in rimworld-bench/planning/V221-REDO.md.
+
+### V2.3 object-reader support
+
+Native `inspect_state` accepts optional `sections` (`identity`, `health`, `skills`,
+`gear`, `work`, `state`), `detail_limit`, `include_fogged`, and `exact_lookup`.
+Omitted options retain legacy state and visible-only behavior. Exact lookup is an
+adapter contract: case-sensitive Pawn.LabelShort / Thing.Label matching, loaded-map
+search when map is absent, with context and cell current-map defaults unchanged.
+Sections gate reads before facet evaluation; reservation snapshots are initialized
+only when requested. Pawn body parts, real skills, work assignments and native
+StatDefs preserve totals, bounds and unknowns.
+
+The `things` root accepts native `capabilities`, shared with world observation and
+applied before paging/counting. The scalar capability field is explicit-selection
+only. This supports discovery without environmental scans or vanilla definition
+lists. The modern semantic Agent exposes this through look/count, with state merged
+into look; the underlying native operations remain compatible.

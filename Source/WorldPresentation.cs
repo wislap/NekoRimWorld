@@ -1,4 +1,5 @@
 using Newtonsoft.Json.Linq;
+using System.Linq;
 namespace Neko.RimWorld;
 
 // Presentation of detached observations only. Never infer absence or usability.
@@ -31,6 +32,20 @@ internal static class WorldPresentation
         }
         value["scope"] = "observed_footprint_not_object_selection";
         return value;
+    }
+
+    internal static void LimitRows(JObject value, int limit)
+    {
+        foreach (var property in value.Properties().ToArray())
+        {
+            if (property.Value is not JArray rows) continue;
+            var completeKey = property.Name + "_complete";
+            var totalKey = property.Name + "_total";
+            bool previouslyComplete = (bool?)value[completeKey] != false;
+            if (value[totalKey] == null && previouslyComplete) value[totalKey] = rows.Count;
+            value[completeKey] = previouslyComplete && rows.Count <= limit;
+            if (rows.Count > limit) property.Value = new JArray(rows.Take(limit).Select(row => row.DeepClone()));
+        }
     }
 
     internal static void Work(JObject value)

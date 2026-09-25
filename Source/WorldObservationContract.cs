@@ -66,6 +66,11 @@ internal static class WorldObservationContract
             ["description"] = "Exact definition names and/or native capabilities. OR within each list, AND between lists. Selection filters objects, never suppresses environmental hazards. " + CapabilityMeanings().ToString(Newtonsoft.Json.Formatting.None)
         };
         var route = (JObject)common.DeepClone(); route["actor"] = Ref(); route["user"] = Ref(); route["to"] = Ref(); route["start"] = Ref(); route["margin"] = Int(0, 12, 2); route["limit"] = Int(1, 50, 20); route["cursor"] = Text();
+        route["detail"]!["description"] = "Always computes a path. summary/details controls object detail, not path availability. Use summary unless object detail is needed.";
+        route["actor"]!["description"] = "Travelling Pawn; path traversal rules and costs use this Pawn, regardless of start. Not the recipient.";
+        route["start"]!["description"] = "Optional hypothetical origin: use the referenced object position or cell instead of actor current position. actor remains the traveller. Does not simulate carrying or a Job.";
+        route["to"]!["description"] = "Destination object or cell. Object paths use the resolved touch endpoint; inspect returned end_mode and stopping cell.";
+        route["user"]!["description"] = "Optional recipient Pawn for environmental tolerances, not a replacement for actor and not a carrying simulation.";
         var state = (JObject)common.DeepClone(); state["targets"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["maxItems"] = 8, ["items"] = Ref() }; state["actor"] = Ref(); state["user"] = Ref();
         state["exact_lookup"] = new JObject { ["type"] = "boolean", ["default"] = false, ["description"] = "Resolve object targets by exact case-sensitive Pawn.LabelShort / Thing.Label. Search loaded maps when map is omitted; actor/user and cells retain current-map defaults." };
         state["detail_limit"] = Int(1, 100, 20);
@@ -81,7 +86,7 @@ internal static class WorldObservationContract
             ["visibility"] = "Visible spawned objects/cells and real contents of visible holders. Hidden objects are not evidence of absence.",
             ["tools"] = new JArray {
             Tool("survey_space","Discover a spatial footprint, scoped object counts and current environment together. Resolve names directly. Objects include spatial condition/passage/hazard facets, not full health/work/bed/reservation state; use object inspection for those. Inspect returned coverage; not a safety guarantee.",survey,"region"),
-            Tool("inspect_route","Compute one native Pawn path and inspect its cells and surrounding environment in one call. No preliminary inspect_space/route ID. Objects include spatial condition/passage/hazard facets, not full object state. start is hypothetical when supplied. Path costs are not ETA; current hazards are not a future combat simulation.",route,"actor","to"),
+            Tool("inspect_route","Compute a path for actor from its current position or optional start to a destination, together with path and surrounding environment. No preliminary inspect_space/route ID. Objects include spatial condition/passage/hazard facets, not full object state. For a later journey leg, keep actor as the traveller and set start to that leg origin; do not substitute another Pawn as actor to move the origin. Path costs are not ETA; current hazards are not a future combat simulation.",route,"actor","to"),
             Tool("inspect_state","Read all supported state facets of 1..8 objects or cells. user is the intended user/recipient; actor is the interacting/travelling Pawn (defaults to user). Returns occupancy, reservation sources, native contextual checks and coverage separately, never universal can_use.",state,"targets") }
         };
     }

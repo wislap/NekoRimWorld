@@ -51,6 +51,15 @@ internal static class WorldPresentationTests
         Require((int?)bounded["skills_total"] == 3 && (bool?)bounded["skills_complete"] == false && ((JArray)bounded["skills"]!).Count == 1, "Nested display limit lost total/coverage");
         Require((int?)bounded["inventory_total"] == 7 && (bool?)bounded["inventory_complete"] == false, "Existing partial collection marked complete");
         Require(bounded["conditions"]!.Type == JTokenType.Null, "Unavailable list became empty");
+        var completeTables = JObject.Parse("{'skills':[1,2,3],'capacities':[1,2],'work_types':[1,2,3,4],'body_parts':[1,2,3],'inventory':[1,2],'inventory_total':7,'inventory_complete':false}");
+        WorldPresentation.LimitRows(completeTables, 1, "skills", "capacities", "work_types");
+        Require(((JArray)completeTables["skills"]!).Count == 3 && (bool?)completeTables["skills_complete"] == true, "Low detail hid skills");
+        Require(((JArray)completeTables["capacities"]!).Count == 2 && ((JArray)completeTables["work_types"]!).Count == 4, "Low detail hid capacity/work tables");
+        Require(((JArray)completeTables["body_parts"]!).Count == 1 && (bool?)completeTables["body_parts_complete"] == false, "Long details were not bounded");
+        Require((int?)completeTables["inventory_total"] == 7 && (bool?)completeTables["inventory_complete"] == false, "Prior incomplete state lost");
+        var partialTable = JObject.Parse("{'skills':[1,2],'skills_total':7,'skills_complete':false}");
+        WorldPresentation.LimitRows(partialTable, 1, "skills");
+        Require((bool?)partialTable["skills_complete"] == false && (int?)partialTable["skills_total"] == 7, "Existing failed table marked complete");
         Console.WriteLine("World presentation tests passed: scoped counts, target direction, unknowns, preserved facts, idempotence and page fitting.");
     }
 }

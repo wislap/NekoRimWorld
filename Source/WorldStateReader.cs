@@ -161,8 +161,8 @@ internal sealed class WorldStateReader
             WorldPresentation.NullField(work, "allowed_area", "observed_none", "no_effective_area_restriction");
         }
         if (detailLimit.HasValue) {
-            if (facets["pawn"] is JObject pawnFacts) WorldPresentation.LimitRows(pawnFacts, detailLimit.Value);
-            if (facets["work"] is JObject workFacts) WorldPresentation.LimitRows(workFacts, detailLimit.Value);
+            if (facets["pawn"] is JObject pawnFacts) WorldPresentation.LimitRows(pawnFacts, detailLimit.Value, "skills", "capacities");
+            if (facets["work"] is JObject workFacts) WorldPresentation.LimitRows(workFacts, detailLimit.Value, "work_types");
         }
         if (!All && !spatial) result["unsupported_components"] = JValue.CreateNull();
         result["requested_sections"] = sections == null ? new JArray("state") : new JArray(sections);

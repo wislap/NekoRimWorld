@@ -100,7 +100,7 @@ internal static class PawnSchema
             var name = pair.Item1;
             Add(pawn, name, pair.Item2, c => State(c).ReadNode(PawnNode((GameEntity)c.Source!), name)).Metadata["node_member"] = true;
         }
-        pawn.GetField("mapId")!.Description = "Map ID attached to this Pawn by the selected root. Loaded-map pawn queries use the containing map (native MapHeld), including held Pawns; not evidence that the Pawn itself is spawned. status.position uses the Pawn's own spawned position.";
+        pawn.GetField("mapId")!.Description = "Map ID attached to this Pawn by the selected root. The general pawns root includes held Pawns using their containing map (native MapHeld); this field alone does not establish spawned status. The spawnedFreeColonists root selects only FreeColonistsSpawned; that root membership already establishes spawned free-colonist status. status.position uses the Pawn's own spawned position.";
         status.GetField("position")!.Description = "This Pawn's own spawned map position; null when not spawned. A null position does not establish absence from a loaded map or caravan membership.";
         status.GetField("currentJob")!.Description = "Current native job; null when there is no current job. It does not establish health, faction or the reason for inactivity.";
         // Preserve native tracker fields for the legacy protocol, but expose their contents consistently to the Agent.

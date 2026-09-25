@@ -80,7 +80,7 @@ internal static class WorldPresentation
         stats["status"] = observed == values.Count ? "observed" : observed > 0 ? "partial" : "unavailable";
     }
 
-    internal static void LimitRows(JObject value, int limit)
+    internal static void LimitRows(JObject value, int limit, params string[] completeTables)
     {
         foreach (var property in value.Properties().ToArray())
         {
@@ -89,8 +89,9 @@ internal static class WorldPresentation
             var totalKey = property.Name + "_total";
             bool previouslyComplete = (bool?)value[completeKey] != false;
             if (value[totalKey] == null && previouslyComplete) value[totalKey] = rows.Count;
-            value[completeKey] = previouslyComplete && rows.Count <= limit;
-            if (rows.Count > limit) property.Value = new JArray(rows.Take(limit).Select(row => row.DeepClone()));
+            bool keepTable = completeTables.Contains(property.Name);
+            value[completeKey] = previouslyComplete && (keepTable || rows.Count <= limit);
+            if (!keepTable && rows.Count > limit) property.Value = new JArray(rows.Take(limit).Select(row => row.DeepClone()));
         }
     }
 

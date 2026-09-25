@@ -17,6 +17,11 @@ internal static class WorldContractTests
         Bad("inspect_state", "{'targets':[{'id':'a'}],'detail_limit':0}");
         Bad("inspect_state", "{'targets':[{'id':'a'}],'exact_lookup':1}");
         Good("inspect_route","{'actor':{'id':'pawn'},'to':{'id':'bed'},'start':{'x':0,'z':0}}");
+        Bad("inspect_state", "{'targets':[{'id':'a'}],'sections':['spatial']}");
+        foreach (var facet in new[] { "door", "trap", "explosive", "condition", "turret" })
+            if (!SpatialStatePolicy.Includes(facet)) throw new Exception("Spatial hazard/passage facet omitted: " + facet);
+        foreach (var facet in new[] { "pawn", "work", "reservations", "production", "storage", "containment" })
+            if (SpatialStatePolicy.Includes(facet)) throw new Exception("Spatial reads must not acquire full object state: " + facet);
         foreach(var json in new[]{"{'region':{}}","{'region':{'radius':2}}","{'region':{'near':{'id':'x'},'room_of':{'id':'x'}}}","{'region':{'rect':{'min_x':2,'min_z':0,'max_x':1,'max_z':2}}}","{'region':{'map':'current'},'select':{'capabilities':['RescueBest']}}"})Bad("survey_space",json);
         foreach(var json in new[]{"{'targets':[]}","{'targets':[{'kind':'cell','id':'bed'}]}","{'targets':[{'kind':'pawn','x':1,'z':0}]}","{'targets':[{'x':2147483648,'z':0}]}","{'targets':[{'id':'a','name':'b'}]}","{'targets':[{'id':'a'}],'command':'reserve'}"})Bad("inspect_state",json);
         var first=JObject.Parse("{'region':{'map':'current','near':{'id':'x'}},'limit':20}");

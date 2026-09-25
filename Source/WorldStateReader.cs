@@ -88,12 +88,16 @@ internal sealed class WorldStateReader
         WorldPresentation.Reservations(value, Cell(map, cell), true);
         return value;
     }
+    internal JObject ReadSpatial(Thing t, Pawn? actor, Pawn? user, bool details)
+        => Read(t, actor, user, Array.Empty<string>(), details, new[] { "spatial" });
+
     internal JObject Read(Thing t, Pawn? actor, Pawn? user, IEnumerable<string> stats, bool details, string[]? sections = null, int? detailLimit = null)
     {
-        var watch = System.Diagnostics.Stopwatch.StartNew(); var facets = new JObject(); var unsupported = new JArray(); var result = new JObject { ["target"] = sections == null ? Identity(t) : ObjectIdentity(t), ["facets"] = facets, ["unsupported_components"] = unsupported, ["sample_tick"] = Find.TickManager.TicksGame };
+        var watch = System.Diagnostics.Stopwatch.StartNew(); var facets = new JObject(); var unsupported = new JArray(); var result = new JObject { ["target"] = sections == null || sections.Contains("spatial") ? Identity(t) : ObjectIdentity(t), ["facets"] = facets, ["unsupported_components"] = unsupported, ["sample_tick"] = Find.TickManager.TicksGame };
         bool All = sections == null || sections.Contains("state");
+        bool spatial = sections?.Contains("spatial") == true;
         bool Wants(string section) => All || sections!.Contains(section);
-        bool Facet(string name) => All || name == "stats" || name == "pawn" && (Wants("health") || Wants("skills") || Wants("gear")) || name == "work" && Wants("work");
+        bool Facet(string name) => spatial ? SpatialStatePolicy.Includes(name) : All || name == "stats" || name == "pawn" && (Wants("health") || Wants("skills") || Wants("gear")) || name == "work" && Wants("work");
         void Add(string name, Func<JObject> read) { if (!Facet(name)) return; try { context?.Check(); var value = read(); if (value["status"] == null) value["status"] = "observed"; facets[name] = value; } catch (Exception e) when (ReadContext.Recoverable(e)) { facets[name] = new JObject { ["status"] = (e as ExecutionError)?.Code == "unsupported_mod_override" ? "unsupported" : "unavailable", ["reason"] = (e as ExecutionError)?.Code ?? e.GetType().Name }; } }
         Add("condition", () => {
             var forbiddable = t.TryGetComp<CompForbiddable>();
@@ -112,7 +116,7 @@ internal sealed class WorldStateReader
         Add("containment", () => { if (t is IThingHolder hh) WorldNativeAccess.RequireNative(hh, "GetDirectlyHeldThings"); var owner = t is IThingHolder h ? h.GetDirectlyHeldThings() : null; var value = new JObject { ["holder"] = t.ParentHolder is Thing p ? Identity(p) : null, ["holder_type"] = t.ParentHolder?.GetType().FullName, ["holder_chain"] = HolderChain(t), ["real_contents"] = t.ParentHolder == null || ThingOwnerUtility.AreImmediateContentsReal(t.ParentHolder), ["contents"] = owner == null ? null : new JObject { ["count"] = owner.Count, ["rows"] = new JArray(owner.Cast<Thing>().Take(details ? 100 : 8).Select(Identity)), ["complete"] = owner.Count <= (details ? 100 : 8) } };
             WorldPresentation.NullField(value, "holder", t.ParentHolder == null ? "observed_none" : "not_applicable", t.ParentHolder == null ? "no_parent_holder" : "parent_holder_is_not_a_thing");
             WorldPresentation.NullField(value, "contents", "not_applicable", t is IThingHolder ? "no_direct_container" : "not_a_thing_holder"); return value; });
-        if (All && t is ThingWithComps twc)
+        if ((All || spatial) && t is ThingWithComps twc)
         {
             foreach (var comp in twc.AllComps.ToArray())
             {
@@ -160,9 +164,9 @@ internal sealed class WorldStateReader
             if (facets["pawn"] is JObject pawnFacts) WorldPresentation.LimitRows(pawnFacts, detailLimit.Value);
             if (facets["work"] is JObject workFacts) WorldPresentation.LimitRows(workFacts, detailLimit.Value);
         }
-        if (!All) result["unsupported_components"] = JValue.CreateNull();
+        if (!All && !spatial) result["unsupported_components"] = JValue.CreateNull();
         result["requested_sections"] = sections == null ? new JArray("state") : new JArray(sections);
-        result["coverage"] = new JObject { ["registered_facets_read_successfully"] = !facets.Properties().Any(p => (string?)p.Value["status"] is "partial" or "unavailable" or "unsupported"), ["components_inspected"] = All, ["unmodeled_components"] = All ? (JToken)unsupported.Count : JValue.CreateNull(), ["meaning"] = "Requested applicable registered facets above; omitted facets are not absent. Partial facets retain observed members. Unsupported components are not empty/false. Current state and named predicates, not universal action eligibility." };
+        result["coverage"] = new JObject { ["registered_facets_read_successfully"] = !facets.Properties().Any(p => (string?)p.Value["status"] is "partial" or "unavailable" or "unsupported"), ["components_inspected"] = All || spatial, ["unmodeled_components"] = All || spatial ? (JToken)unsupported.Count : JValue.CreateNull(), ["meaning"] = spatial ? SpatialStatePolicy.Meaning : "Requested applicable registered facets above; omitted facets are not absent. Partial facets retain observed members. Unsupported components are not empty/false. Current state and named predicates, not universal action eligibility." };
         result["read_ms"] = watch.Elapsed.TotalMilliseconds; result["cooperative_budget_overrun"] = watch.Elapsed.TotalMilliseconds > 12;
         return result;
     }

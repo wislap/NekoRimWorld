@@ -77,10 +77,11 @@ internal static class WorldObservationContract
         {
             ["version"] = Version,
             ["capability_meanings"] = CapabilityMeanings(),
+            ["spatial_object_state"] = "spatial_object_state.v1",
             ["visibility"] = "Visible spawned objects/cells and real contents of visible holders. Hidden objects are not evidence of absence.",
             ["tools"] = new JArray {
-            Tool("survey_space","Discover a spatial footprint, scoped object counts and current environment together. Resolve names directly. Includes state summaries of displayed objects. Inspect returned coverage; not a safety guarantee.",survey,"region"),
-            Tool("inspect_route","Compute one native Pawn path and inspect its cells and surrounding environment in one call. No preliminary inspect_space/route ID. start is hypothetical when supplied. Path costs are not ETA; current hazards are not a future combat simulation.",route,"actor","to"),
+            Tool("survey_space","Discover a spatial footprint, scoped object counts and current environment together. Resolve names directly. Objects include spatial condition/passage/hazard facets, not full health/work/bed/reservation state; use object inspection for those. Inspect returned coverage; not a safety guarantee.",survey,"region"),
+            Tool("inspect_route","Compute one native Pawn path and inspect its cells and surrounding environment in one call. No preliminary inspect_space/route ID. Objects include spatial condition/passage/hazard facets, not full object state. start is hypothetical when supplied. Path costs are not ETA; current hazards are not a future combat simulation.",route,"actor","to"),
             Tool("inspect_state","Read all supported state facets of 1..8 objects or cells. user is the intended user/recipient; actor is the interacting/travelling Pawn (defaults to user). Returns occupancy, reservation sources, native contextual checks and coverage separately, never universal can_use.",state,"targets") }
         };
     }

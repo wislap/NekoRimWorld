@@ -160,6 +160,9 @@ internal sealed class ThingSchema
             GameArguments.Ids("defNames"), Text("name"), GameArguments.Create("visibleOnly", new BooleanGraphType(), "Default true: exclude fogged map things.", defaultValue: true), First(), Text("after")));
         Root(root, "thing_def", Def, new QueryArguments(Text("defName", true)));
         Root(root, "thing_defs", defPage, new QueryArguments(Text("name"), Text("categoryDefName"),
+            GameArguments.Create("exactNames", new ListGraphType(new NonNullGraphType(new StringGraphType())),
+                "Exact canonical defName OR current localized label, case-insensitive. Retains every matching definition (including ambiguities); duplicates do not duplicate rows. Does not assert any physical instance exists.",
+                new JObject { ["minItems"] = 1, ["maxItems"] = DefinitionCandidates.MaxNames, ["items"] = new JObject { ["minLength"] = 1, ["maxLength"] = 128 } }),
             First(), Text("after")));
         Root(root, "map", Map, new QueryArguments(Text("id", true)));
     }

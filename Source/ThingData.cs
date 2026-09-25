@@ -110,7 +110,10 @@ internal static class ThingData
             if (categoryName != null && category == null) throw ReadContext.Error("unknown_definition", "ThingCategoryDef was not found.");
             IEnumerable<GameNode> Definitions()
             {
-                foreach (var def in DefDatabase<ThingDef>.AllDefsListForReading)
+                var exactNames = Strings(args, "exactNames");
+                var candidates = exactNames == null ? DefDatabase<ThingDef>.AllDefsListForReading.AsEnumerable()
+                    : DefinitionCandidates.Exact(DefDatabase<ThingDef>.AllDefsListForReading, exactNames, d => d.defName, d => d.label, context.Check);
+                foreach (var def in candidates)
                 {
                     context.Check();
                     if (category != null && !def.IsWithinCategory(category)) continue;

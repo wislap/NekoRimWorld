@@ -68,8 +68,19 @@ internal sealed class WorldEnvironmentReader
         }
         catch (Exception e) when (ReadContext.Recoverable(e)) { errors = true; if (failures.Count < 8) failures.Add(e.GetType().Name + " at " + c); }
     }
-    internal IEnumerable<int> Threats(JArray output, Action<bool> done)
+    internal IEnumerable<int> Threats(JArray output, Action<bool> done, JArray? pathOutput = null)
     {
+        void Publish(JObject row, IEnumerable<IntVec3>? affected = null)
+        {
+            row["scope"] = "observed_corridor_or_region_cells";
+            output.Add(row);
+            if (pathOutput == null) return;
+            if ((row["path_indices"] as JArray)?.Count == 0 && (string?)row["status"] == "checked") return;
+            var source = row["source"]?["position"] as JObject;
+            bool sourceOnPath = source != null && pathIndices.ContainsKey(new IntVec3((int)source["x"]!, 0, (int)source["z"]!));
+            var cells = (affected ?? Array.Empty<IntVec3>()).Where(pathIndices.ContainsKey).Select(c => WorldStateReader.Cell(map, c));
+            pathOutput.Add(WorldPresentation.AttackForPath(row, cells, sourceOnPath));
+        }
         bool complete = actor != null; int pairs = 0, visitedSources = 0;
         if (actor == null) { done(false); yield break; }
         foreach (var t in map.listerThings.AllThings.ToArray())
@@ -79,11 +90,11 @@ internal sealed class WorldEnvironmentReader
             if (t is Pawn p && (p.Dead || p.Downed) || t is Building_TurretGun gun && !gun.Active) continue;
             var sourcePosition = t.Position; var sourceTick = Find.TickManager.TicksGame;
             var verbs = WorldNativeAccess.ExistingAttacks(t, out var trackersComplete);
-            if (t is Pawn wearer && wearer.apparel != null && wearer.apparel.WornApparel.Any(a => !WorldNativeAccess.NativeMethod(a, "AllowVerbCast"))) { complete = false; output.Add(new JObject { ["source"] = WorldStateReader.Identity(t), ["status"] = "unsupported_apparel_attack_hook" }); continue; }
+            if (t is Pawn wearer && wearer.apparel != null && wearer.apparel.WornApparel.Any(a => !WorldNativeAccess.NativeMethod(a, "AllowVerbCast"))) { complete = false; Publish(new JObject { ["source"] = WorldStateReader.Identity(t), ["status"] = "unsupported_apparel_attack_hook" }); continue; }
             objectVersions[t] = (t.Position, t.Map, t.Spawned, t.HitPoints, (t as Building_Door)?.Open);
             var equipment = (t as Pawn)?.equipment?.AllEquipmentListForReading.ToArray() ?? Array.Empty<ThingWithComps>();
             string? job = (t as Pawn)?.CurJob?.GetUniqueLoadID(); bool? active = (t as Building_TurretGun)?.Active;
-            if (verbs.Count == 0) { complete = false; output.Add(new JObject { ["source"] = WorldStateReader.Identity(t), ["status"] = "unavailable_attack", ["reason"] = "No initialized attack verbs; query does not create or randomly select combat verbs." }); continue; }
+            if (verbs.Count == 0) { complete = false; Publish(new JObject { ["source"] = WorldStateReader.Identity(t), ["status"] = "unavailable_attack", ["reason"] = "No initialized attack verbs; query does not create or randomly select combat verbs." }); continue; }
             var affected = new HashSet<IntVec3>(); bool sourceComplete = trackersComplete; int visits = 0;
             foreach (var verb in verbs)
             {
@@ -101,12 +112,12 @@ internal sealed class WorldEnvironmentReader
             }
             if (t.Destroyed || !t.Spawned || t.Map != map || t.Position != sourcePosition || job != (t as Pawn)?.CurJob?.GetUniqueLoadID() || active != (t as Building_TurretGun)?.Active || !equipment.SequenceEqual((t as Pawn)?.equipment?.AllEquipmentListForReading.ToArray() ?? Array.Empty<ThingWithComps>())) sourceComplete = false;
             if (!sourceComplete) complete = false;
-            if (affected.Count > 0 || !sourceComplete) output.Add(new JObject { ["source"] = WorldStateReader.Identity(t), ["checked_from"] = WorldStateReader.Cell(map, sourcePosition), ["started_tick"] = sourceTick, ["finished_tick"] = Find.TickManager.TicksGame, ["attack_trackers_complete"] = trackersComplete, ["activity"] = t is Pawn attacking ? new JObject { ["mental_state"] = attacking.MentalStateDef?.defName, ["current_job"] = WorldStateReader.JobState(attacking.CurJob) } : t is Building_Turret turret ? new JObject { ["current_target"] = WorldStateReader.TargetState(turret.CurrentTarget) } : null, ["status"] = sourceComplete ? "checked" : "partial", ["affected_observed_cells"] = affected.Count, ["example_cells"] = new JArray(affected.Take(8).Select(c => WorldStateReader.Cell(map, c))), ["path_indices"] = new JArray(pathIndices.Where(p => affected.Contains(p.Key)).SelectMany(p => p.Value)), ["source_inside_footprint"] = visited.Contains(t.Position), ["meaning"] = "Native range/line-of-fire eligibility against sampled cells using existing verbs; not hit probability, future movement, firing schedule or all abilities." });
+            if (affected.Count > 0 || !sourceComplete) Publish(new JObject { ["source"] = WorldStateReader.Identity(t), ["checked_from"] = WorldStateReader.Cell(map, sourcePosition), ["started_tick"] = sourceTick, ["finished_tick"] = Find.TickManager.TicksGame, ["attack_trackers_complete"] = trackersComplete, ["activity"] = t is Pawn attacking ? new JObject { ["mental_state"] = attacking.MentalStateDef?.defName, ["current_job"] = WorldStateReader.JobState(attacking.CurJob) } : t is Building_Turret turret ? new JObject { ["current_target"] = WorldStateReader.TargetState(turret.CurrentTarget) } : null, ["status"] = sourceComplete ? "checked" : "partial", ["affected_observed_cells"] = affected.Count, ["example_cells"] = new JArray(affected.Take(8).Select(c => WorldStateReader.Cell(map, c))), ["path_indices"] = new JArray(pathIndices.Where(p => affected.Contains(p.Key)).SelectMany(p => p.Value)), ["source_inside_footprint"] = visited.Contains(t.Position), ["meaning"] = "Native range/line-of-fire eligibility against sampled cells using existing verbs; not hit probability, future movement, firing schedule or all abilities." }, affected);
             if (pairs > 32768) break; yield return 0;
         }
         done(complete);
     }
-    internal JObject Result(bool scanComplete, JArray threats, bool threatComplete)
+    internal JObject Result(bool scanComplete, JArray threats, bool threatComplete, string scope = "observed_footprint_not_object_selection")
     {
         var bands = new JArray(); JObject? band = null; string? prior = null;
         foreach (var pair in pathIndices.SelectMany(p => p.Value.Select(i => (Index: i, Cell: p.Key))).OrderBy(p => p.Index))
@@ -121,9 +132,11 @@ internal sealed class WorldEnvironmentReader
         foreach (var h in hazards) { var id = (string?)h["source"]?["id"]; var t = things.FirstOrDefault(t => t.GetUniqueLoadID() == id); var indices = t == null ? new int[0] : pathIndices.Where(p => t.OccupiedRect().Contains(p.Key)).SelectMany(p => p.Value).ToArray(); if(pathIndices.Count>0){h["on_path"] = indices.Length > 0; h["path_indices"] = new JArray(indices);} h["relation"] = pathIndices.Count == 0 ? "inside_region" : indices.Length > 0 ? "on_path" : "near_path"; }
         return WorldPresentation.Environment(new JObject
         {
+            ["scope"] = scope,
             ["path_environment_bands"] = new JArray(bands.Take(200)),
             ["path_environment_bands_total"] = bands.Count,
             ["path_environment_bands_complete"] = bands.Count <= 200,
+            ["path_cell_coverage"] = WorldPresentation.PathCoverage(pathIndices.Values.SelectMany(v => v), pathIndices.Where(p => pathSamples.ContainsKey(p.Key)).SelectMany(p => p.Value)),
             ["roof_support_objects"] = new JArray(roofSupports.Take(100)),
             ["roof_support_objects_total"] = roofSupports.Count,
             ["map_context"] = new JObject { ["weather"] = map.weatherManager.curWeather?.defName, ["active_conditions"] = new JArray(map.gameConditionManager.ActiveConditions.Select(g => new JObject { ["definition"] = g.def.defName, ["label"] = g.Label, ["ticks_left"] = g.TicksLeft })) }, ["observed_cells"] = visibleCells.Count,

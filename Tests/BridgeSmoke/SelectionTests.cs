@@ -63,6 +63,8 @@ internal static class SelectionTests
         }
         Require(conditions.Compile("NovelObject", JObject.Parse("{'fields':{'children':{'every':{'fields':{'newBoolean':{'eq':true}}}}}}"))(values, context) == true, "empty every is not true");
         Require(conditions.Compile("NovelObject", JObject.Parse("{'fields':{'children':{'some':{'fields':{'newBoolean':{'eq':true}}}}}}"))(values, context) == false, "empty some is not false");
+        var exactDefs = engine.Execute("query", JObject.Parse("{'from':'thing_defs','args':{'exact_names':['STEEL','Fake medicine']},'select':['def_name','label'],'where':{'any':[{'def_name':{'eq':'steel','case_sensitive':false}},{'label':{'eq':'Fake medicine','case_sensitive':false}}]}}"), new Data(), Session);
+        Require(exactDefs.Status == "ok" && (string?)exactDefs.Data?["results"]?[0]?["rows"]?[0]?["def_name"] == "steel", "exact_names was not accepted/projected by real public-query schema: " + exactDefs.Message + exactDefs.Data);
         Console.WriteLine("Selection tests passed: shared native booleans, numeric/text/null/collection/ancestry conditions, unknown logic, new schema fields, paging and pre-read rejection.");
     }
 
@@ -89,6 +91,11 @@ internal static class SelectionTests
         public object? ColonistField(GameEntity pawn, string field) => null;
         public object? NodeField(GameNode node, string field, IReadOnlyDictionary<string, object?> arguments) { Reads++; if (field == FailField) throw ReadContext.Error("field_unavailable", "Injected missing field"); return ((Dictionary<string, object?>)node.Handle!)[field]; }
         public object? NativeField(GameNode node, string field, IReadOnlyDictionary<string, object?> args, ReadContext context) => NodeField(node, field, args);
-        public object? NativeRoot(string root, IReadOnlyDictionary<string, object?> args, ReadContext context) { Reads++; return root == "thing_def" ? definitions.First(n => n.Key == (string)args["defName"]!) : ThingPaging.Page(definitions, args, context); }
+        public object? NativeRoot(string root, IReadOnlyDictionary<string, object?> args, ReadContext context) {
+            Reads++; if (root == "thing_def") return definitions.First(n => n.Key == (string)args["defName"]!);
+            var selected = args.TryGetValue("exactNames", out var exact) && exact != null
+                ? DefinitionCandidates.Exact(definitions, ((System.Collections.IEnumerable)exact).Cast<string>(), n => n.Key, n => (string?)((Dictionary<string, object?>)n.Handle!)["label"], context.Check) : definitions;
+            return root == "query_defs" ? selected : ThingPaging.Page(selected, args, context);
+        }
     }
 }

@@ -14,7 +14,11 @@ internal static class WorldObservationContract
     internal const string Version = "world_observation.v2.2";
     internal static readonly string[] StateSections = { "identity", "health", "skills", "gear", "work", "state" };
     internal static readonly string[] Operations = { "survey_space", "inspect_route", "inspect_state" };
-    internal static readonly string[] Capabilities = { "pawn", "building", "item", "plant", "medicine", "sleeping_place", "openable", "powered", "refuelable", "storage", "production", "hazard" };
+    internal static readonly string[] Capabilities = { "pawn", "building", "item", "plant", "medicine", "sleeping_place", "openable", "powered", "refuelable", "storage", "production", "bill_giver", "hazard" };
+    internal static JObject CapabilityMeanings() => new() {
+        ["bill_giver"] = "Native IBillGiver: an owner of bills, including Pawn surgery orders as well as worktable production. Not proof of manufacturing capability or executable work.",
+        ["production"] = "Compatibility alias of bill_giver (IBillGiver), including Pawn surgery bills. Inspect bill_owner and bill_kind; this is not a manufacturing-only category."
+    };
     internal static JObject Text() => new() { ["type"] = "string", ["minLength"] = 1, ["maxLength"] = 256 };
     internal static JObject Ref() => JObject.Parse(@"{'type':'object','additionalProperties':false,'properties':{'id':{'type':'string','minLength':1,'maxLength':256},'name':{'type':'string','minLength':1,'maxLength':256},'map':{'type':'string','default':'current'},'kind':{'type':'string','enum':['pawn','thing','cell']},'x':{'type':'integer','minimum':-2147483648,'maximum':2147483647},'z':{'type':'integer','minimum':-2147483648,'maximum':2147483647}},'allOf':[{'if':{'properties':{'kind':{'const':'cell'}},'required':['kind']},'then':{'required':['x','z']}},{'if':{'properties':{'kind':{'enum':['pawn','thing']}},'required':['kind']},'then':{'not':{'anyOf':[{'required':['x']},{'required':['z']}]}}}],'oneOf':[{'required':['id'],'not':{'anyOf':[{'required':['name']},{'required':['x']},{'required':['z']}]}},{'required':['name'],'not':{'anyOf':[{'required':['id']},{'required':['x']},{'required':['z']}]}},{'required':['x','z'],'not':{'anyOf':[{'required':['id']},{'required':['name']}]}}]}");
     private static JObject Int(int min, int max, int value) => new() { ["type"] = "integer", ["minimum"] = min, ["maximum"] = max, ["default"] = value };
@@ -57,9 +61,9 @@ internal static class WorldObservationContract
             ["properties"] = new JObject
             {
                 ["definitions"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["maxItems"] = 32, ["items"] = Text() },
-                ["capabilities"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["maxItems"] = 12, ["items"] = new JObject { ["type"] = "string", ["enum"] = new JArray(Capabilities) } }
+                ["capabilities"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["maxItems"] = Capabilities.Length, ["items"] = new JObject { ["type"] = "string", ["enum"] = new JArray(Capabilities) } }
             },
-            ["description"] = "Exact definition names and/or native capabilities. OR within each list, AND between lists. Selection filters objects, never suppresses environmental hazards."
+            ["description"] = "Exact definition names and/or native capabilities. OR within each list, AND between lists. Selection filters objects, never suppresses environmental hazards. " + CapabilityMeanings().ToString(Newtonsoft.Json.Formatting.None)
         };
         var route = (JObject)common.DeepClone(); route["actor"] = Ref(); route["user"] = Ref(); route["to"] = Ref(); route["start"] = Ref(); route["margin"] = Int(0, 12, 2); route["limit"] = Int(1, 50, 20); route["cursor"] = Text();
         var state = (JObject)common.DeepClone(); state["targets"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["maxItems"] = 8, ["items"] = Ref() }; state["actor"] = Ref(); state["user"] = Ref();
@@ -72,6 +76,7 @@ internal static class WorldObservationContract
         return new JObject
         {
             ["version"] = Version,
+            ["capability_meanings"] = CapabilityMeanings(),
             ["visibility"] = "Visible spawned objects/cells and real contents of visible holders. Hidden objects are not evidence of absence.",
             ["tools"] = new JArray {
             Tool("survey_space","Discover a spatial footprint, scoped object counts and current environment together. Resolve names directly. Includes state summaries of displayed objects. Inspect returned coverage; not a safety guarantee.",survey,"region"),
@@ -93,7 +98,7 @@ internal static class WorldObservationContract
         if (args["include_fogged"] != null && args["include_fogged"]!.Type != JTokenType.Boolean) Fail("include_fogged must be boolean");
         if (args["sections"] != null) { Strings(args["sections"], StateSections.Length, "sections"); if (((JArray)args["sections"]!).Any(s => !StateSections.Contains(s.ToString()))) Fail("Unknown state section"); }
         if (args["stats"] != null) Strings(args["stats"], 16, "stats");
-        if (args["select"] != null) { if (args["select"] is not JObject s) { Fail("select must be object"); return; } Keys(s, "definitions", "capabilities"); foreach (var k in new[] { "definitions", "capabilities" }) if (s[k] != null) Strings(s[k], k == "definitions" ? 32 : 12, k); if (s["capabilities"] is JArray cs && cs.Any(c => !Capabilities.Contains(c.ToString()))) Fail("Unknown capability"); }
+        if (args["select"] != null) { if (args["select"] is not JObject s) { Fail("select must be object"); return; } Keys(s, "definitions", "capabilities"); foreach (var k in new[] { "definitions", "capabilities" }) if (s[k] != null) Strings(s[k], k == "definitions" ? 32 : Capabilities.Length, k); if (s["capabilities"] is JArray cs && cs.Any(c => !Capabilities.Contains(c.ToString()))) Fail("Unknown capability"); }
         if (args["region"] != null)
         {
             if (args["region"] is not JObject r) { Fail("region must be object"); return; }

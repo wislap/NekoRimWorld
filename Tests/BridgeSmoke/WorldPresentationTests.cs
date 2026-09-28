@@ -28,6 +28,15 @@ internal static class WorldPresentationTests
         var once = (JObject)env.DeepClone(); WorldPresentation.Environment(env);
         Require(JToken.DeepEquals(once, env), "Formatting is not idempotent");
 
+        var changed = JObject.Parse("{'status':'ok','environment':{'coverage':{'changes_detected':false,'native_attack_checks_complete':true}},'path_environment':{'coverage':{'changes_detected':false,'native_attack_checks_complete':true}}}");
+        WorldPresentation.FinalizeChanges(changed, true);
+        Require((bool?)changed["changed_during_read"] == true && (string?)changed["status"] == "partial", "Final change lost");
+        foreach (var key in new[] { "environment", "path_environment" })
+            Require((bool?)changed[key]?["coverage"]?["changes_detected"] == true && (bool?)changed[key]?["coverage"]?["native_attack_checks_complete"] == false, "Late change disagrees with environment coverage");
+        var unchanged = (JObject)changed.DeepClone();
+        WorldPresentation.FinalizeChanges(changed, false);
+        Require(JToken.DeepEquals(unchanged, changed), "Continuation erased change evidence");
+
         var reservations = JObject.Parse("{'normal':[],'physical_interaction':[],'destinations':[{'cell':{'x':1,'z':2},'job':{'targets':[{'x':8,'z':9}]}}]}");
         var records = reservations["destinations"]!.DeepClone();
         WorldPresentation.Reservations(reservations, new JObject { ["id"] = "bed" });

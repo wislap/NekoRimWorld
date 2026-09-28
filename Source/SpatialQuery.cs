@@ -92,11 +92,11 @@ internal static class SpatialQuery
             }
             var from = new Reference(); var to = new Reference();
             result["stage"] = "actor_lookup";
-            foreach (var step in Resolve((JObject)args["from"]!, from, context, true)) yield return step;
+            foreach (var step in Resolve((JObject)args["from"]!, from, context, true, visibleOnly: true)) yield return step;
             result["checked"]!["actor_resolved"] = from.Value is Pawn;
             if (from.Value is Thing actor) result["from"] = DescribeThing(actor);
             result["stage"] = "target_lookup";
-            foreach (var step in Resolve((JObject)args["to"]!, to, context, false)) yield return step;
+            foreach (var step in Resolve((JObject)args["to"]!, to, context, false, visibleOnly: true)) yield return step;
             result["checked"]!["target_resolved"] = to.Value is Thing || to.Cell.HasValue;
             if (to.Value is Thing target) result["target"] = DescribeThing(target);
             else if (to.Cell.HasValue) result["target"] = DescribeCell(to.Map!, to.Cell.Value);
@@ -288,7 +288,10 @@ internal static class SpatialQuery
     {
         var map = ResolveMap((string?)raw["map"])!;
         if ((string?)raw["kind"] == "cell") {
-            resolved.Map = map; resolved.Cell = new IntVec3((int)raw["x"]!, 0, (int)raw["z"]!);
+            var cell = new IntVec3((int)raw["x"]!, 0, (int)raw["z"]!);
+            if (!cell.InBounds(map) || (visibleOnly && cell.Fogged(map)))
+                throw ReadContext.Error("object_unavailable", "Cell is hidden or outside the loaded map.");
+            resolved.Map = map; resolved.Cell = cell;
             yield break;
         }
         var id = (string?)raw["id"]; var name = (string?)raw["name"];

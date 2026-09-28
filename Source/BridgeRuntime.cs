@@ -194,9 +194,14 @@ public sealed class BridgeRuntime
             Log(BridgeLogLevel.Error, "Bridge worker did not stop; refusing to create a second worker.");
             return false;
         }
-        inbound.Clear();
-        control.Clear();
-        telemetry.Clear();
+        lock (sessionGate)
+        {
+            // Stop and attach must serialize queue invalidation. Otherwise a
+            // response for a newly attached session can be cleared by StopCore.
+            inbound.Clear();
+            control.Clear();
+            telemetry.Clear();
+        }
         ClearConnection();
         SetState(BridgeConnectionState.Stopped, "Bridge stopped.");
         return true;
@@ -288,6 +293,11 @@ public sealed class BridgeRuntime
                     wake.WaitOne(250);
                     continue;
                 }
+                long connectionSessionGeneration;
+                lock (sessionGate)
+                {
+                    connectionSessionGeneration = sessionGeneration;
+                }
                 try
                 {
                     SetWorkerState(generation, BridgeConnectionState.Connecting,
@@ -312,9 +322,17 @@ public sealed class BridgeRuntime
                 {
                     CloseActiveClient(generation);
                     ClearConnection(generation);
-                    inbound.Clear();
-                    control.Clear();
-                    telemetry.Clear();
+                    lock (sessionGate)
+                    {
+                        // Do not clear a response queued after a new session was
+                        // attached while this older connection was unwinding.
+                        if (sessionGeneration == connectionSessionGeneration)
+                        {
+                            inbound.Clear();
+                            control.Clear();
+                            telemetry.Clear();
+                        }
+                    }
                 }
                 if (!IsCurrentWorker(generation, cancellation))
                 {

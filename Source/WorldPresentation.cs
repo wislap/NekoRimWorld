@@ -15,6 +15,20 @@ internal static class WorldPresentation
         };
     }
 
+    internal static void FinalizeChanges(JObject result, bool changed)
+    {
+        if (!changed) return;
+        result["changed_during_read"] = true;
+        result["status"] = "partial";
+        foreach (var key in new[] { "environment", "path_environment" })
+        {
+            if (result[key] is not JObject environment) continue;
+            if (environment["coverage"] is not JObject) environment["coverage"] = new JObject();
+            environment["coverage"]!["changes_detected"] = true;
+            environment["coverage"]!["native_attack_checks_complete"] = false;
+        }
+    }
+
     internal static JObject Environment(JObject value)
     {
         if (value["roof_support_objects"] is JArray supports)

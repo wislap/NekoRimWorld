@@ -397,3 +397,17 @@ applied before paging/counting. The scalar capability field is explicit-selectio
 only. This supports discovery without environmental scans or vanilla definition
 lists. The modern semantic Agent exposes this through look/count, with state merged
 into look; the underlying native operations remain compatible.
+
+## Contract world_observation.v2.3: on-demand object detail
+
+`survey_space` and `inspect_route` accept an optional boolean `objects`
+(default `true`). With `objects:false` the native read skips generating the
+incidental object listing, the per-object spatial rows and their paging;
+`objects_summary` reports `status:not_requested` with the explicit meaning
+that not-requested objects are not evidence of absence. Environment, gases,
+hazards, coverage, area/zone intersections and route segments (including door
+reads) are internal forensics of every read and are never suppressed by this
+flag — output selection and necessary evidence collection stay separate.
+`inspect_state` targets do not accept the flag. The catalog advertises
+`world_observation.v2.3`; the parameter is additive, so requests without it
+keep the previous complete behavior byte-for-byte.

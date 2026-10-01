@@ -11,7 +11,7 @@ internal interface IFrameQueryOperation : IDisposable
 
 internal static class WorldObservationContract
 {
-    internal const string Version = "world_observation.v2.2";
+    internal const string Version = "world_observation.v2.3";
     internal static readonly string[] StateSections = { "identity", "health", "skills", "gear", "work", "state" };
     internal static readonly string[] Operations = { "survey_space", "inspect_route", "inspect_state" };
     internal static readonly string[] Capabilities = { "pawn", "building", "item", "plant", "medicine", "sleeping_place", "openable", "powered", "refuelable", "storage", "production", "bill_giver", "hazard" };
@@ -20,6 +20,15 @@ internal static class WorldObservationContract
         ["production"] = "Compatibility alias of bill_giver (IBillGiver), including Pawn surgery bills. Inspect bill_owner and bill_kind; this is not a manufacturing-only category."
     };
     internal static JObject Text() => new() { ["type"] = "string", ["minLength"] = 1, ["maxLength"] = 256 };
+    // On-demand object detail selection. Environmental hazard forensics (fire,
+    // doors, attack sources, gases, coverage, route segments) are internal
+    // obligations of every read and are never suppressed by this flag.
+    internal static JObject Objects() => new()
+    {
+        ["type"] = "boolean",
+        ["default"] = true,
+        ["description"] = "false skips generating the incidental object listing and per-object spatial detail for this read. Environment, gases, hazards, coverage and route segments are always computed. Not-requested objects are not evidence of absence."
+    };
     internal static JObject Ref() => JObject.Parse(@"{'type':'object','additionalProperties':false,'properties':{'id':{'type':'string','minLength':1,'maxLength':256},'name':{'type':'string','minLength':1,'maxLength':256},'map':{'type':'string','default':'current'},'kind':{'type':'string','enum':['pawn','thing','cell']},'x':{'type':'integer','minimum':-2147483648,'maximum':2147483647},'z':{'type':'integer','minimum':-2147483648,'maximum':2147483647}},'allOf':[{'if':{'properties':{'kind':{'const':'cell'}},'required':['kind']},'then':{'required':['x','z']}},{'if':{'properties':{'kind':{'enum':['pawn','thing']}},'required':['kind']},'then':{'not':{'anyOf':[{'required':['x']},{'required':['z']}]}}}],'oneOf':[{'required':['id'],'not':{'anyOf':[{'required':['name']},{'required':['x']},{'required':['z']}]}},{'required':['name'],'not':{'anyOf':[{'required':['id']},{'required':['x']},{'required':['z']}]}},{'required':['x','z'],'not':{'anyOf':[{'required':['id']},{'required':['name']}]}}]}");
     private static JObject Int(int min, int max, int value) => new() { ["type"] = "integer", ["minimum"] = min, ["maximum"] = max, ["default"] = value };
     internal static JObject Region() => new()
@@ -53,7 +62,7 @@ internal static class WorldObservationContract
     internal static JObject Catalog()
     {
         var common = new JObject { ["detail"] = new JObject { ["type"] = "string", ["enum"] = new JArray("summary", "details"), ["default"] = "summary" } };
-        var survey = (JObject)common.DeepClone(); survey["region"] = Region(); survey["actor"] = Ref(); survey["limit"] = Int(1, 50, 20); survey["cursor"] = Text();
+        var survey = (JObject)common.DeepClone(); survey["region"] = Region(); survey["actor"] = Ref(); survey["limit"] = Int(1, 50, 20); survey["cursor"] = Text(); survey["objects"] = Objects();
         survey["select"] = new JObject
         {
             ["type"] = "object",
@@ -65,7 +74,7 @@ internal static class WorldObservationContract
             },
             ["description"] = "Exact definition names and/or native capabilities. OR within each list, AND between lists. Selection filters objects, never suppresses environmental hazards. " + CapabilityMeanings().ToString(Newtonsoft.Json.Formatting.None)
         };
-        var route = (JObject)common.DeepClone(); route["actor"] = Ref(); route["user"] = Ref(); route["to"] = Ref(); route["start"] = Ref(); route["margin"] = Int(0, 12, 2); route["limit"] = Int(1, 50, 20); route["cursor"] = Text();
+        var route = (JObject)common.DeepClone(); route["actor"] = Ref(); route["user"] = Ref(); route["to"] = Ref(); route["start"] = Ref(); route["margin"] = Int(0, 12, 2); route["limit"] = Int(1, 50, 20); route["cursor"] = Text(); route["objects"] = Objects();
         route["detail"]!["description"] = "Always computes a path. summary/details controls object detail, not path availability. Use summary unless object detail is needed.";
         route["actor"]!["description"] = "Travelling Pawn; path traversal rules and costs use this Pawn, regardless of start. Not the recipient.";
         route["start"]!["description"] = "Optional hypothetical origin: use the referenced object position or cell instead of actor current position. actor remains the traveller. Does not simulate carrying or a Job.";
@@ -102,6 +111,7 @@ internal static class WorldObservationContract
         if (args["targets"] != null) { if (args["targets"] is not JArray a || a.Count < 1 || a.Count > 8) Fail("targets requires 1..8 refs"); foreach (var t in (JArray)args["targets"]!) ValidateRef(t, "target"); }
         if (args["exact_lookup"] != null && args["exact_lookup"]!.Type != JTokenType.Boolean) Fail("exact_lookup must be boolean");
         if (args["include_fogged"] != null && args["include_fogged"]!.Type != JTokenType.Boolean) Fail("include_fogged must be boolean");
+        if (args["objects"] != null && args["objects"]!.Type != JTokenType.Boolean) Fail("objects must be boolean");
         if (args["sections"] != null) { Strings(args["sections"], StateSections.Length, "sections"); if (((JArray)args["sections"]!).Any(s => !StateSections.Contains(s.ToString()))) Fail("Unknown state section"); }
         if (args["stats"] != null) Strings(args["stats"], 16, "stats");
         if (args["select"] != null) { if (args["select"] is not JObject s) { Fail("select must be object"); return; } Keys(s, "definitions", "capabilities"); foreach (var k in new[] { "definitions", "capabilities" }) if (s[k] != null) Strings(s[k], k == "definitions" ? 32 : Capabilities.Length, k); if (s["capabilities"] is JArray cs && cs.Any(c => !Capabilities.Contains(c.ToString()))) Fail("Unknown capability"); }

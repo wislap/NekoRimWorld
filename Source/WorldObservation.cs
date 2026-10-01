@@ -183,7 +183,16 @@ internal static class WorldObservation
             foreach (var zone in map.zoneManager.AllZones) { int intersect = zone.Cells.Count(footprintSet.Contains); if (intersect > 0) areaCoverage.Add(new JObject { ["kind"] = "zone", ["id"] = zone.GetUniqueLoadID(), ["name"] = zone.label, ["intersecting_cells"] = intersect, ["total_cells"] = zone.Cells.Count }); yield return 0; }
             result["region"]!["area_zone_intersections"] = areaCoverage;
             result["object_state_scope"] = SpatialStatePolicy.Meaning;
-            var reader2 = new WorldStateReader(map, context); var objects = new HashSet<Thing>(environment.Things); var holders = new Queue<IThingHolder>(objects.OfType<IThingHolder>()); var visitedHolders = new HashSet<IThingHolder>(); bool heldComplete = true;
+            var reader2 = new WorldStateReader(map, context);
+            // On-demand object detail: the incidental object listing and per-object
+            // spatial rows are the only opt-out generation. Environment, gases,
+            // threats, coverage and route segments (including doors) are internal
+            // forensics of every read and are never suppressed by this flag.
+            bool objectsRequested = (bool?)args["objects"] != false;
+            var rows2 = new List<JObject>();
+            if (objectsRequested)
+            {
+            var objects = new HashSet<Thing>(environment.Things); var holders = new Queue<IThingHolder>(objects.OfType<IThingHolder>()); var visitedHolders = new HashSet<IThingHolder>(); bool heldComplete = true;
             while (holders.Count > 0) { var h = holders.Dequeue(); if (!visitedHolders.Add(h)) continue; if (visitedHolders.Count > 4096) { heldComplete = false; break; } if (!WorldNativeAccess.NativeMethod(h, "GetDirectlyHeldThings") || !WorldNativeAccess.NativeMethod(h, "GetChildHolders")) { heldComplete = false; continue; } var children = new List<IThingHolder>(); h.GetChildHolders(children); foreach (var childHolder in children) holders.Enqueue(childHolder); var direct = h.GetDirectlyHeldThings(); if (direct != null) foreach (var t in direct.ToArray()) { if (!t.Destroyed && (t.ParentHolder == null || ThingOwnerUtility.AreImmediateContentsReal(t.ParentHolder))) objects.Add(t); if (t is IThingHolder child) holders.Enqueue(child); } yield return 0; }
             bool Matches(Thing t) { if (args["select"] is not JObject sel) return true; return (sel["definitions"] is not JArray ds || ds.Values<string>().Contains(t.def.defName)) && (sel["capabilities"] is not JArray cs || ThingCapabilities.For(t).Intersect(cs.Values<string>()).Any()); }
             var selected = objects.Where(t => !t.Destroyed && Matches(t)).OrderBy(t => t.GetUniqueLoadID(), StringComparer.Ordinal).ToList();
@@ -191,7 +200,6 @@ internal static class WorldObservation
             WorldPresentation.ObjectScope((JObject)result["objects_summary"]!, args["select"]);
             var footprint = new HashSet<IntVec3>(cells);
             IntVec3? centerCell = geometry["resolved_center"] is JObject centerJson ? new IntVec3((int)centerJson["x"]!, 0, (int)centerJson["z"]!) : null;
-            var rows2 = new List<JObject>();
             foreach (var t in selected.Take(1000))
             {
                 context.RestartSlice(); var row = reader2.ReadSpatial(t, actor, user, details);
@@ -200,8 +208,13 @@ internal static class WorldObservation
                 rows2.Add(row); yield return 0;
             }
             result["objects_summary"]!["detail_retention_complete"] = selected.Count <= 1000;
+            }
+            else result["objects_summary"] = new JObject { ["status"] = "not_requested", ["meaning"] = "The incidental object listing and per-object spatial detail were not requested for this read; this is not evidence that the footprint or corridor contains no objects." };
             if (pathCells != null) { var segments = new JArray(); var segmentObserved = new List<int>(); JObject? segment = null; string? last = null; for (int i = 0; i < pathCells.Count; i++) { var c = pathCells[i]; if (c.Fogged(map)) { last = null; continue; } segmentObserved.Add(i); var room = c.GetRoom(map); var door = c.GetEdifice(map) as Building_Door; var key = c.GetTerrain(map).defName + ":" + room?.ID + ":" + door?.GetUniqueLoadID(); if (key != last) { segment = new JObject { ["first_index"] = i, ["last_index"] = i, ["first_cell"] = WorldStateReader.Cell(map, c), ["last_cell"] = WorldStateReader.Cell(map, c), ["terrain"] = c.GetTerrain(map).defName, ["room_id"] = room?.ID, ["door"] = door == null ? null : reader2.ReadSpatial(door, actor, user, false) }; segments.Add(segment); last = key; } else { segment!["last_index"] = i; segment["last_cell"] = WorldStateReader.Cell(map, c); } yield return 0; } result["route"]!["segments"] = segments; result["route"]!["segments_coverage"] = WorldPresentation.PathCoverage(Enumerable.Range(0,pathCells.Count),segmentObserved); result["route"]!["environment_meaning"] = "Path nodes and surrounding corridor inspected over reported interval; not a carry-job simulation, not all future hazards."; }
-            string pageId = Guid.NewGuid().ToString("N"); cachedPageId = pageId; result["observation_started_tick"] = startTick; result["observation_finished_tick"] = Find.TickManager.TicksGame; result["sample"] = new JObject { ["load_epoch"] = session.LoadEpoch, ["snapshot_sequence"] = session.SnapshotSequence, ["started_tick"] = startTick, ["finished_tick"] = Find.TickManager.TicksGame, ["same_tick"] = startTick == Find.TickManager.TicksGame, ["atomic"] = false };
+            result["observation_started_tick"] = startTick; result["observation_finished_tick"] = Find.TickManager.TicksGame; result["sample"] = new JObject { ["load_epoch"] = session.LoadEpoch, ["snapshot_sequence"] = session.SnapshotSequence, ["started_tick"] = startTick, ["finished_tick"] = Find.TickManager.TicksGame, ["same_tick"] = startTick == Find.TickManager.TicksGame, ["atomic"] = false };
+            if (objectsRequested)
+            {
+            string pageId = Guid.NewGuid().ToString("N"); cachedPageId = pageId;
             WorldResultPaging.PutInitial(result,rows2,(int?)args["limit"]??20,pageId,()=>{
                 foreach(var key in pages.Where(p=>p.Value.Expires<DateTime.UtcNow).Select(p=>p.Key).ToArray())pages.Remove(key);
                 if(result.ToString(Formatting.None).Length+rows2.Sum(r=>r.ToString(Formatting.None).Length)>=4000000)return false;
@@ -209,6 +222,7 @@ internal static class WorldObservation
                 pages[pageId]=new Page{Load=session.LoadEpoch,Signature=signature,Data=(JObject)result.DeepClone(),Rows=rows2,Expires=DateTime.UtcNow.AddMinutes(2)};
                 return true;
             });
+            }
         }
         private void PutPage(List<JObject> rows, int offset, int limit, string id) => WorldResultPaging.Put(result,rows,offset,limit,pages.ContainsKey(id)?id:null);
         private static void Copy(JObject from,JObject to){foreach(var p in from.Properties())to[p.Name]=p.Value.DeepClone();}

@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using GraphQL;
 using Newtonsoft.Json.Linq;
 namespace Neko.RimWorld;
@@ -18,6 +19,20 @@ internal static class WorldContractTests
         Bad("inspect_state", "{'targets':[{'id':'a'}],'exact_lookup':1}");
         Good("inspect_route","{'actor':{'id':'pawn'},'to':{'id':'bed'},'start':{'x':0,'z':0}}");
         Bad("inspect_state", "{'targets':[{'id':'a'}],'sections':['spatial']}");
+        // v2.3 on-demand object detail: boolean only, survey/route only, default true.
+        if (WorldObservationContract.Version != "world_observation.v2.3") throw new Exception("Unexpected world observation contract version: " + WorldObservationContract.Version);
+        var catalogTools = (JArray)WorldObservationContract.Catalog()["tools"]!;
+        foreach (var name in new[] { "survey_space", "inspect_route" })
+        {
+            var props = (JObject)((JObject)catalogTools.Single(t => (string?)t["name"] == name)["parameters"]!)["properties"]!;
+            if ((string?)props["objects"]?["type"] != "boolean" || (bool?)props["objects"]?["default"] != true) throw new Exception(name + " must advertise objects:boolean default true");
+        }
+        var stateProps = (JObject)((JObject)catalogTools.Single(t => (string?)t["name"] == "inspect_state")["parameters"]!)["properties"]!;
+        if (stateProps["objects"] != null) throw new Exception("inspect_state targets must not gain an objects flag");
+        Good("survey_space", "{'region':{'map':'current'},'objects':false}");
+        Good("inspect_route", "{'actor':{'id':'pawn'},'to':{'id':'bed'},'objects':false}");
+        Bad("survey_space", "{'region':{'map':'current'},'objects':'false'}");
+        Bad("inspect_state", "{'targets':[{'id':'a'}],'objects':false}");
         foreach (var facet in new[] { "door", "trap", "explosive", "condition", "turret" })
             if (!SpatialStatePolicy.Includes(facet)) throw new Exception("Spatial hazard/passage facet omitted: " + facet);
         foreach (var facet in new[] { "pawn", "work", "reservations", "production", "storage", "containment" })

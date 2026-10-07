@@ -111,7 +111,21 @@ internal static class WorldPresentation
 
     internal static void Work(JObject value)
     {
-        value["work_types_meaning"] = "disabled is the current native work-type disabled state, not its cause or assigned priority; priority 0 means not assigned for autonomous work. Neither is a complete manual-job eligibility check.";
+        value["work_types_meaning"] = "disabled is the current native work-type disabled state, not its cause or assigned priority; priority 0 means not assigned for autonomous work. This array uses definition enumeration order, not work scheduling order. Native normal scheduling sorts assigned priority first (1 before 4), then natural_priority descending for equal assigned priorities. Actual available Jobs and emergency work can affect execution. Neither is a complete manual-job eligibility check.";
+    }
+
+    internal static void Bill(JObject value)
+    {
+        var mode = (string?)value["repeat_mode"];
+        // Native bills retain both numbers when changing repeat modes. Their
+        // presence is not evidence that both policies are currently active.
+        value["repeat_policy"] = new JObject {
+            ["mode"] = mode,
+            ["remaining_iterations"] = mode == "RepeatCount" ? value["repeat_count"]?.DeepClone() : null,
+            ["target_products"] = mode == "TargetCount" ? value["target_count"]?.DeepClone() : null,
+            ["unlimited"] = mode == "Forever" ? (JToken)true : mode is "RepeatCount" or "TargetCount" ? (JToken)false : JValue.CreateNull(),
+            ["meaning"] = "Only this mode's quantity applies. RepeatCount zero means no remaining iterations; TargetCount is desired product stock, not remaining iterations. This policy does not establish a runnable Job."
+        };
     }
 
     internal static void Reservations(JObject value, JToken target, bool cell = false)

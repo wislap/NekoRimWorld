@@ -91,14 +91,57 @@ internal sealed class WorldStateReader
     internal JObject ReadSpatial(Thing t, Pawn? actor, Pawn? user, bool details)
         => Read(t, actor, user, Array.Empty<string>(), details, new[] { "spatial" });
 
-    internal JObject Read(Thing t, Pawn? actor, Pawn? user, IEnumerable<string> stats, bool details, string[]? sections = null, int? detailLimit = null)
+    internal IEnumerable<int> ReadPhases(Thing t,Pawn? actor,Pawn? user,IEnumerable<string> stats,bool details,string[]? sections,int? detailLimit,Action<JObject> publish,string[]? selectedFacets=null)
+    {
+        bool all=sections==null || sections.Contains("state");
+        var names=new List<string>();
+        if(all)names.AddRange(new[]{"condition","reservations","containment"});
+        if(t is Pawn) { if(all && selectedFacets==null || sections?.Any(s=>s is "health" or "skills" or "gear")==true)names.Add("pawn");if(all && selectedFacets==null || sections?.Contains("work")==true)names.Add("work"); }
+        if(all) {
+            if(t is Building_Door)names.Add("door");if(t is IBillGiver)names.Add("production");if(t is Plant)names.Add("plant");
+            if(t is Building_Turret)names.Add("turret");if(t is Building_Trap)names.Add("trap");if(t is ISlotGroupParent)names.Add("storage");
+            if(t is Frame || t is Blueprint)names.Add("construction");if(t is Building_Bed)names.Add("bed");
+            if(t is ThingWithComps tc)foreach(var comp in tc.AllComps) {
+                var name=comp is CompPowerTrader?"power":comp is CompRefuelable?"fuel":comp is CompPowerBattery?"battery":comp is CompTempControl?"temperature_control":
+                    comp is CompChangeableProjectile?"ammunition":comp is CompBreakdownable?"breakdown":comp is CompFlickable?"switch":comp is CompRottable?"rot":
+                    comp is CompMannable?"manning":comp is CompExplosive?"explosive":null;
+                if(name!=null)names.Add(name);
+            }
+        }
+        var requestedStats=stats.ToArray();if(requestedStats.Length>0)names.Add("stats");
+        var started=Find.TickManager.TicksGame;var watch=System.Diagnostics.Stopwatch.StartNew();JObject? result=null;
+        var phases = WorldObservationContract.SelectStatePhases(names.Distinct().ToArray(), selectedFacets);
+        foreach(var name in phases) {
+            context?.RestartSlice();
+            var readSections = selectedFacets!=null && (name is "pawn" or "work" or "stats") ? sections?.Where(s=>s!="state").ToArray() ?? new[]{"identity"} : sections;
+            var part=Read(t,actor,user,name=="stats"?requestedStats:Array.Empty<string>(),details,readSections,detailLimit,name);
+            if(result==null)result=part;
+            else foreach(var facet in ((JObject)part["facets"]!).Properties())result["facets"]![facet.Name]=facet.Value.DeepClone();
+            foreach(var facet in ((JObject)part["facets"]!).Properties())result["facets"]![facet.Name]!["sample_tick"]=Find.TickManager.TicksGame;
+            yield return 0;
+        }
+        result??=Read(t,actor,user,Array.Empty<string>(),details,new[]{"identity"},detailLimit,"identity");
+        if(selectedFacets!=null) {
+            foreach(var name in selectedFacets.Where(name=>!names.Contains(name))) result["facets"]![name]=new JObject {
+                ["status"]="not_applicable",["reason"]="facet_not_registered_for_target",["sample_tick"]=Find.TickManager.TicksGame };
+            result["requested_sections"]=sections==null?new JArray("state"):new JArray(sections);
+            result["coverage"]!["selected_state_facets"]=new JArray(selectedFacets);
+            result["coverage"]!["all_state_facets_requested"]=false;
+        }
+        result["coverage"]!["registered_facets_read_successfully"]=!((JObject)result["facets"]!).Properties().Any(p=>(string?)p.Value["status"] is "partial" or "unavailable" or "unsupported");
+        result["coverage"]!["meaning"]="Requested facets read in separate game-thread phases; per-facet sample_tick, not an atomic snapshot.";
+        result["started_tick"]=started;result["finished_tick"]=Find.TickManager.TicksGame;result["read_ms"]=watch.Elapsed.TotalMilliseconds;
+        publish(result);
+    }
+
+    internal JObject Read(Thing t, Pawn? actor, Pawn? user, IEnumerable<string> stats, bool details, string[]? sections = null, int? detailLimit = null,string? onlyFacet=null)
     {
         var watch = System.Diagnostics.Stopwatch.StartNew(); var facets = new JObject(); var unsupported = new JArray(); var result = new JObject { ["target"] = sections == null || sections.Contains("spatial") ? Identity(t) : ObjectIdentity(t), ["facets"] = facets, ["unsupported_components"] = unsupported, ["sample_tick"] = Find.TickManager.TicksGame };
         bool All = sections == null || sections.Contains("state");
         bool spatial = sections?.Contains("spatial") == true;
         bool Wants(string section) => All || sections!.Contains(section);
         bool Facet(string name) => spatial ? SpatialStatePolicy.Includes(name) : All || name == "stats" || name == "pawn" && (Wants("health") || Wants("skills") || Wants("gear")) || name == "work" && Wants("work");
-        void Add(string name, Func<JObject> read) { if (!Facet(name)) return; try { context?.Check(); var value = read(); if (value["status"] == null) value["status"] = "observed"; facets[name] = value; } catch (Exception e) when (ReadContext.Recoverable(e)) { facets[name] = new JObject { ["status"] = (e as ExecutionError)?.Code == "unsupported_mod_override" ? "unsupported" : "unavailable", ["reason"] = (e as ExecutionError)?.Code ?? e.GetType().Name }; } }
+        void Add(string name, Func<JObject> read) { if (!Facet(name) || onlyFacet!=null && onlyFacet!=name) return; try { context?.Check(); var value = read(); if (value["status"] == null) value["status"] = "observed"; facets[name] = value; } catch (Exception e) when (ReadContext.Recoverable(e)) { facets[name] = new JObject { ["status"] = (e as ExecutionError)?.Code == "unsupported_mod_override" ? "unsupported" : "unavailable", ["reason"] = (e as ExecutionError)?.Code ?? e.GetType().Name }; } }
         Add("condition", () => {
             var forbiddable = t.TryGetComp<CompForbiddable>();
             var value = new JObject { ["stack_count"] = t.stackCount, ["hit_points"] = t.def.useHitPoints ? (JToken)t.HitPoints : JValue.CreateNull(), ["max_hit_points"] = t.def.useHitPoints ? (JToken)t.MaxHitPoints : JValue.CreateNull(), ["burning"] = t.IsBurning(), ["quality"] = t.TryGetQuality(out var q) ? q.ToString() : null,
@@ -152,7 +195,14 @@ internal sealed class WorldStateReader
         var requested = stats.Distinct(StringComparer.Ordinal).ToArray();
         if (requested.Length > 0) Add("stats", () => ReadStats(t, requested));
         if (facets["stats"] is JObject statsFacet && statsFacet["values"] is JArray) WorldPresentation.Stats(statsFacet);
+        if (facets["production"]?["bills"] is JArray billRows)
+            foreach (var bill in billRows.OfType<JObject>()) WorldPresentation.Bill(bill);
         if (facets["work"] is JObject work && work["work_types"] is JArray) {
+            if (work["work_types"] is JArray types)
+                foreach (var type in types.OfType<JObject>()) {
+                    var definition = DefDatabase<WorkTypeDef>.GetNamed((string)type["definition"]!);
+                    type["natural_priority"] = definition.naturalPriority;
+                }
             WorldPresentation.Work(work);
             work["medical_care_context"] = new JObject { ["pawn_id"] = t.GetUniqueLoadID(), ["role"] = "care_received", ["native_source"] = "Pawn.playerSettings.medCare", ["meaning"] = "Medicine policy for this pawn when receiving treatment, not how this pawn treats others. Treatment medicine selection uses the recipient's setting." };
             WorldPresentation.NullField(work, "medical_care", "not_applicable", "player_settings_absent");

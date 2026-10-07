@@ -144,6 +144,12 @@ internal sealed class PublicQuery
     private string RootType(string name) => name is "things" ? "Thing" : name is "pawns" or "spawned_free_colonists" ? "Pawn" : PublicFields.ValueType(roots[name]).Name;
     internal QueryOutcome Execute(JObject input, IGameData source, SessionDescriptor session, double budget, string schemaId)
     {
+        QueryOutcome outcome=null!;
+        foreach(var step in ExecuteSteps(input,source,session,budget,schemaId,value=>outcome=value)) { }
+        return outcome;
+    }
+    internal IEnumerable<int> ExecuteSteps(JObject input, IGameData source, SessionDescriptor session, double budget, string schemaId, Action<QueryOutcome> publish,Action<ReadContext>? contextReady=null)
+    {
         var direct = input["from"] != null && input["requests"] == null;
         if (direct) input = new JObject { ["requests"] = new JArray(input.DeepClone()) };
         Keys(input,"requests");
@@ -189,10 +195,11 @@ internal sealed class PublicQuery
             var failed=QueryOutcome.Failure(validationErrors[0].Code,message);
             failed.Issues=validationErrors.ToArray();
             failed.Execution=new JObject { ["validation"]=new JObject { ["executed"]=false,["valid_request_indices"]=validIndices,["errors"]=validationErrors.Count } };
-            return failed;
+            publish(failed); yield break;
         }
         // Validate the whole batch before touching game state.
         var state = new ReadContext(source,session,budget) { Conditions = conditions }; var run = new Run(state); var results = new JArray();
+        contextReady?.Invoke(state);
         foreach (var plan in plans)
         {
             var path = "/results/" + results.Count;
@@ -202,8 +209,9 @@ internal sealed class PublicQuery
                 if (match == null && plan.FullyPushed) throw ReadContext.Error("filter_unavailable","Definition membership is unknown.");
                 return match != false;
             };
-            var result = Collection(plan.Select, () => ReadRoot(plan.Root,plan.Args,source,state,filter,plan.ExactIds), run,path,
-                plan.Root == "things" ? () => ThingsScanLimitMessage(plan.Args) : (Func<string>?)null);
+            JObject result = null!;
+            foreach(var step in CollectionSteps(plan.Select, () => ReadRoot(plan.Root,plan.Args,source,state,filter,plan.ExactIds), run,path, value=>result=value,
+                plan.Root == "things" ? () => ThingsScanLimitMessage(plan.Args) : (Func<string>?)null)) yield return step;
             result["from"] = plan.Root;
             result["scope"] = new JObject { ["args"] = JObject.FromObject(plan.Args.ToDictionary(p => PublicFields.Name(p.Key),p => p.Value)), ["description"] = (roots[plan.Root].Description ?? RootDescription(plan.Root)) + " The resolved args and requested where below define this reading; completeness is per aggregate/collection." };
             result["scope"]!["argument_semantics"] = new JObject((roots[plan.Root].Arguments?.ToArray() ?? Array.Empty<QueryArgument>())
@@ -213,13 +221,13 @@ internal sealed class PublicQuery
             results.Add(result);
         }
         var data = new JObject { ["results"] = results, ["relation_semantics"] = JObject.FromObject(run.RelationSemantics), ["sample"] = new JObject { ["load_epoch"] = session.LoadEpoch,["game_tick"] = session.GameTick,["sequence"] = session.SnapshotSequence } };
-        if (data.ToString(Formatting.None).Length > 80000) return QueryOutcome.Failure("query_result_too_large","Request fewer fields or displayed rows.");
+        if (data.ToString(Formatting.None).Length > 80000) { publish(QueryOutcome.Failure("query_result_too_large","Request fewer fields or displayed rows.")); yield break; }
         // Descriptions of the values just returned, so an answer can cite them instead of
         // retyping them. Adds no game read; bounded separately from the result size.
         var evidence = ResultEvidence.PublicQuery(data);
         if (data.ToString(Formatting.None).Length + evidence.ToString(Formatting.None).Length > 120000)
-            return QueryOutcome.Failure("query_result_too_large","Request fewer fields or displayed rows; no truncated evidence is returned.");
-        return new QueryOutcome { Status = run.Issues.Count == 0 ? "ok" : "partial", Data = data, Issues = run.Issues.Take(256).ToArray(), Execution = new JObject { ["schema_id"] = schemaId,["contract"] = Version,["requests"] = input["requests"]!.DeepClone(),["phases"] = run.Phases,["evidence"] = evidence } };
+            { publish(QueryOutcome.Failure("query_result_too_large","Request fewer fields or displayed rows; no truncated evidence is returned.")); yield break; }
+        publish(new QueryOutcome { Status = run.Issues.Count == 0 ? "ok" : "partial", Data = data, Issues = run.Issues.Take(256).ToArray(), Execution = new JObject { ["schema_id"] = schemaId,["contract"] = Version,["requests"] = input["requests"]!.DeepClone(),["phases"] = run.Phases,["evidence"] = evidence } });
     }
     private static (JObject? Condition,bool Exact) DefinitionCondition(JObject source,string definitionField)
     {
@@ -513,30 +521,71 @@ internal sealed class PublicQuery
     }
     private JObject Collection(Selection plan,Func<IEnumerable<object>> read,Run run,string path,Func<string>? scanLimitMessage = null)
     {
+        JObject result=null!;
+        foreach(var step in CollectionSteps(plan,read,run,path,value=>result=value,scanLimitMessage)) { }
+        return result;
+    }
+    private IEnumerable<int> ScanSteps(Selection plan,Func<IEnumerable<object>> read,Run run,string path,List<object> values,HashSet<string> identities,Action<bool> complete,Func<string>? scanLimitMessage)
+    {
+        IEnumerator<object>? iterator=null; bool scan=true; int scanned=0;
+        try { iterator=read().GetEnumerator(); }
+        catch(Exception error) when(ReadContext.Recoverable(error)) { scan=false;run.Fail(error as ExecutionError ?? ReadContext.Error("field_unavailable","Collection read failed."),path); }
+        try {
+            while(scan) {
+                bool more=false; object? value=null;
+                try {
+                    run.Context.Check(); more=iterator!.MoveNext();
+                    if(more) {
+                        value=iterator.Current;
+                        if(++scanned>8192)throw ReadContext.Error("query_scan_limit",scanLimitMessage?.Invoke()??CollectionScanLimitMessage);
+                        var id=value is GameEntity e?"entity:"+e.Id:value is GameNode n && n.Kind is "Thing" or "ThingReference"?n.Kind+":"+n.Owner.Id+":"+n.Key:null;
+                        if(id==null || identities.Add(id)) {
+                            var match=plan.Predicate?.Invoke(value,run.Context) ?? (plan.Predicate==null?(bool?)true:null);
+                            if(match==null)throw ReadContext.Error("filter_unavailable","Candidate membership is unknown, not false.");
+                            if(match.Value)values.Add(value);
+                        }
+                    }
+                } catch(Exception error) when(ReadContext.Recoverable(error)) { scan=false;run.Fail(error as ExecutionError ?? ReadContext.Error("field_unavailable","Collection read failed."),path); }
+                if(!more)break;
+                if((scanned&15)==0)yield return 0;
+            }
+        } finally { iterator?.Dispose(); }
+        complete(scan);
+    }
+    private IEnumerable<int> CollectionSteps(Selection plan,Func<IEnumerable<object>> read,Run run,string path,Action<JObject> publish,Func<string>? scanLimitMessage = null)
+    {
         var started = run.Context.ElapsedMilliseconds;
         var values = new List<object>(); var identities = new HashSet<string>(StringComparer.Ordinal); var scan = true;
-        try {
-            var scanned = 0;
-            foreach (var value in read()) {
-                run.Context.Check(); if (++scanned > 8192) throw ReadContext.Error("query_scan_limit",scanLimitMessage?.Invoke() ?? CollectionScanLimitMessage);
-                var id = value is GameEntity e ? "entity:" + e.Id : value is GameNode n && n.Kind is "Thing" or "ThingReference" ? n.Kind + ":" + n.Owner.Id + ":" + n.Key : null;
-                if (id != null && !identities.Add(id)) continue;
-                if (plan.Predicate != null) {
-                    var match = plan.Predicate(value,run.Context);
-                    if (match == null) throw ReadContext.Error("filter_unavailable","Candidate membership is unknown, not false.");
-                    if (!match.Value) continue;
-                }
-                values.Add(value);
-            }
-        } catch (ExecutionError error) { scan = false; run.Fail(error,path); }
-        catch (Exception error) when (ReadContext.Recoverable(error)) { scan = false; run.Fail(ReadContext.Error("field_unavailable","Collection read failed."),path); }
+        foreach(var step in ScanSteps(plan,read,run,path,values,identities,value=>scan=value,scanLimitMessage)) yield return step;
         var result = new JObject { ["scan_complete"] = scan,["matched_count"] = scan ? new JValue(values.Count) : JValue.CreateNull(),["known_matches"] = values.Count };
         var scannedAt = run.Context.ElapsedMilliseconds;
+        yield return 0;
         var before = run.Issues.Count;
-        if (plan.Measures.Count > 0) result["aggregates"] = Measures(plan,values,scan,run,path);
+        if(plan.Measures.Count>0) {
+            JObject aggregate=null!;
+            foreach(var step in MeasureSteps(plan,values,scan,run,path,value=>aggregate=value))yield return step;
+            result["aggregates"]=aggregate;
+        }
         var measuredAt = run.Context.ElapsedMilliseconds;
         var rows = new JArray(); bool ordered = true;
-        try {
+        using(var projecting=OutputSteps(plan,values,scan,run,path,rows,result).GetEnumerator()) {
+            while(true) {
+                bool more=false;
+                try { more=projecting.MoveNext(); }
+                catch(ExecutionError error) { ordered=false;run.Fail(error,path);result["page"]=Page(values.Count,rows.Count,plan,false); }
+                if(!more)break;
+                yield return projecting.Current;
+            }
+        }
+        // A zero-sized aggregate display is intentional, not a page awaiting retrieval.
+        if (plan.Measures.Count > 0 && plan.Limit == 0) result.Remove("page");
+        else result["rows"] = rows;
+        result["fields_complete"] = run.Issues.Count == before && ordered;
+        if (path.Count(c => c == '/') == 2) run.Phases.Add(new JObject { ["path"] = path,["scan_ms"] = scannedAt-started,["aggregate_ms"] = measuredAt-scannedAt,["output_ms"] = run.Context.ElapsedMilliseconds-measuredAt,["known_matches"] = values.Count,["returned"] = rows.Count });
+        publish(result);
+    }
+    private IEnumerable<int> OutputSteps(Selection plan,List<object> values,bool scan,Run run,string path,JArray rows,JObject result)
+    {
             if (plan.GroupBy.Length > 0)
             {
                 var groups = new Dictionary<JToken,(JObject Key,List<object> Values,string Signature)>(new JTokenEqualityComparer());
@@ -549,8 +598,14 @@ internal sealed class PublicQuery
                         groups.Add(keyValues,group); members.Add(group.Signature,group.Values);
                     }
                     group.Values.Add(value);
+                    yield return 0;
                 }
-                var groupRows = groups.Values.OrderBy(g => g.Signature,StringComparer.Ordinal).Select((group,index) => new JObject { ["key"] = group.Key,["aggregates"] = Measures(plan,group.Values,scan,run,path + "/groups/" + index) }).ToList();
+                var groupRows = new List<JObject>();
+                foreach(var group in groups.Values.OrderBy(g=>g.Signature,StringComparer.Ordinal)) {
+                    JObject aggregate=null!;
+                    foreach(var step in MeasureSteps(plan,group.Values,scan,run,path+"/groups/"+groupRows.Count,value=>aggregate=value))yield return step;
+                    groupRows.Add(new JObject { ["key"]=group.Key,["aggregates"]=aggregate });
+                }
                 if (plan.Order.Count > 0) groupRows.Sort((a,b) => {
                     foreach (var order in plan.Order) {
                         var left = a["key"]![order.Path] ?? a["aggregates"]![order.Path]!["value"]!;
@@ -561,7 +616,7 @@ internal sealed class PublicQuery
                 });
                 foreach (var row in groupRows.Skip(plan.Offset).Take(plan.Limit)) {
                     row["values"] = GroupValues(plan,members[row["key"]!.ToString(Formatting.None)],scan,run,path + "/rows/" + rows.Count + "/values");
-                    rows.Add(row);
+                    rows.Add(row);yield return 0;
                 }
                 result["page"] = Page(groups.Count,rows.Count,plan,scan);
             }
@@ -570,20 +625,15 @@ internal sealed class PublicQuery
                 IEnumerable<object> output = values;
                 if (plan.Order.Count > 0)
                 {
-                    var keyed = values.Select((v,i) => (Value:v,Index:i,Keys:plan.Order.Select(o => PathValue(plan.Type,v,o.Path,run)).ToArray())).ToList();
+                    var keyed=new List<(object Value,int Index,JToken[] Keys)>();
+                    foreach(var value in values) { keyed.Add((value,keyed.Count,plan.Order.Select(o=>PathValue(plan.Type,value,o.Path,run)).ToArray()));yield return 0; }
                     keyed.Sort((a,b) => { for (var i=0;i<plan.Order.Count;i++) { var cmp = Comparer<JToken>.Create(Compare).Compare(a.Keys[i],b.Keys[i]); if (cmp != 0) return plan.Order[i].Desc ? -cmp : cmp; } return a.Index.CompareTo(b.Index); });
                     output = keyed.Select(v => v.Value);
                 }
-                foreach (var value in output.Skip(plan.Offset).Take(plan.Limit)) rows.Add(Project(plan,value,run,path + "/rows/" + rows.Count));
+                foreach (var value in output.Skip(plan.Offset).Take(plan.Limit)) { rows.Add(Project(plan,value,run,path + "/rows/" + rows.Count));yield return 0; }
                 result["page"] = Page(values.Count,rows.Count,plan,scan);
             }
-        } catch (ExecutionError error) { ordered = false; run.Fail(error,path); result["page"] = Page(values.Count,rows.Count,plan,false); }
-        // A zero-sized aggregate display is intentional, not a page awaiting retrieval.
-        if (plan.Measures.Count > 0 && plan.Limit == 0) result.Remove("page");
-        else result["rows"] = rows;
-        result["fields_complete"] = run.Issues.Count == before && ordered;
-        if (path.Count(c => c == '/') == 2) run.Phases.Add(new JObject { ["path"] = path,["scan_ms"] = scannedAt-started,["aggregate_ms"] = measuredAt-scannedAt,["output_ms"] = run.Context.ElapsedMilliseconds-measuredAt,["known_matches"] = values.Count,["returned"] = rows.Count });
-        return result;
+
     }
     private static int Compare(JToken a,JToken b)
     {
@@ -593,14 +643,30 @@ internal sealed class PublicQuery
     }
     private JObject Measures(Selection plan,List<object> values,bool scan,Run run,string path)
     {
+        JObject result=null!;
+        foreach(var step in MeasureSteps(plan,values,scan,run,path,value=>result=value)) { }
+        return result;
+    }
+    private IEnumerable<int> MeasureSteps(Selection plan,List<object> values,bool scan,Run run,string path,Action<JObject> publish)
+    {
         var measures = new JObject();
         foreach (var measure in plan.Measures)
         {
             var complete = scan; JToken value = JValue.CreateNull();
+            List<JToken>? projected=null; ExecutionError? projectionError=null;
+            if(measure.Op!="count") {
+                projected=new List<JToken>();
+                foreach(var item in values) {
+                    try { projected.Add(PathValue(plan.Type,item,measure.Path!,run)); }
+                    catch(ExecutionError error) { projectionError=error;break; }
+                    yield return 0;
+                }
+            }
             try {
+                if(projectionError!=null)throw projectionError;
                 if (measure.Op == "count") value = new JValue(values.Count);
                 else {
-                    var numbers = values.Select(v => PathValue(plan.Type,v,measure.Path!,run)).ToList();
+                    var numbers = projected!;
                     if (numbers.Any(v => v.Type is not (JTokenType.Integer or JTokenType.Float))) throw ReadContext.Error("aggregate_unavailable","Measure contains null or nonnumeric values: " + measure.Path);
                     if (measure.Op == "sum") value = new JValue(numbers.Sum(v => (decimal)v));
                     else if (numbers.Count > 0) value = measure.Op == "min" ? new JValue(numbers.Min(v => (decimal)v)) : new JValue(numbers.Max(v => (decimal)v));
@@ -610,7 +676,7 @@ internal sealed class PublicQuery
             if (!complete && measure.Op is "sum" or "count" && value.Type != JTokenType.Null) row["known_value"] = value;
             measures[measure.Name] = row;
         }
-        return measures;
+        publish(measures);
     }
     private JObject Project(Selection plan,object value,Run run,string path)
     {

@@ -13,4 +13,7 @@ internal sealed class QueryOutcome
     public string? Message { get; set; }
     public static QueryOutcome Failure(string code, string message, string status = ProtocolStatuses.Failed) =>
         new() { Status = status, ErrorCode = code, Message = message };
+    public static QueryOutcome Partial(JObject data, string code, string message) =>
+        new() { Status = ProtocolStatuses.Partial, Data = data,
+            Issues = new[] { new QueryIssue { Code = code, Message = message, Path = new JArray() } } };
 }

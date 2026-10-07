@@ -113,11 +113,16 @@ internal static class WorldObservation
                         }
                     }
                     if (resolutionError != null) { rows.Add(new JObject { ["requested_target"] = target.DeepClone(), ["status"] = "unavailable", ["reason"] = (resolutionError as ExecutionError)?.Code, ["message"] = resolutionError.Message, ["resolution"] = result["resolution"]?.DeepClone() }); result.Remove("resolution"); result["status"] = "partial"; continue; }
-                    map = resolved!.Map; if (actorRef != null && actorRef.Map != map || userRef != null && userRef.Map != map) throw ReadContext.Error("invalid_arguments", "Contexts and target must be on the same map"); if (!readers.TryGetValue(map, out var reader)) readers[map] = reader = new WorldStateReader(map, context); if (resolved.Thing != null) rows.Add(reader.Read(resolved.Thing, actor, user, (args["stats"] as JArray)?.Values<string>().Select(s => s!) ?? Array.Empty<string>(), details, (args["sections"] as JArray)?.Values<string>().Select(s => s!).ToArray(), (int?)args["detail_limit"])); else {
+                    map = resolved!.Map; if (actorRef != null && actorRef.Map != map || userRef != null && userRef.Map != map) throw ReadContext.Error("invalid_arguments", "Contexts and target must be on the same map"); if (!readers.TryGetValue(map, out var reader)) readers[map] = reader = new WorldStateReader(map, context); if (resolved.Thing != null) foreach(var phase in reader.ReadPhases(resolved.Thing,actor,user,(args["stats"] as JArray)?.Values<string>().Select(s=>s!)??Array.Empty<string>(),details,(args["sections"] as JArray)?.Values<string>().Select(s=>s!).ToArray(),(int?)args["detail_limit"],row=>rows.Add(row),(args["facets"] as JArray)?.Values<string>().Select(s=>s!).ToArray()))yield return phase; else {
                         var cellRow = new JObject { ["target"] = WorldStateReader.Cell(map, resolved.Cell), ["sample_tick"] = Find.TickManager.TicksGame };
                         if (args["sections"] == null || ((JArray)args["sections"]!).Values<string>().Contains("state")) {
-                            cellRow["environment"] = WorldEnvironmentReader.CellState(map, resolved.Cell, actor);
-                            cellRow["reservations"] = reader.CellReservations(resolved.Cell);
+                            var facets = (args["facets"] as JArray)?.Values<string>().Select(s=>s!).ToArray();
+                            if(facets==null || facets.Contains("environment")) cellRow["environment"] = WorldEnvironmentReader.CellState(map, resolved.Cell, actor);
+                            if(facets==null || facets.Contains("reservations")) cellRow["reservations"] = reader.CellReservations(resolved.Cell);
+                            if(facets!=null) {
+                                cellRow["state_facet_selection"]=new JArray(facets);
+                                cellRow["not_applicable_facets"]=new JArray(facets.Where(f=>f is not ("environment" or "reservations")));
+                            }
                         }
                         rows.Add(cellRow);
                     } yield return 0;

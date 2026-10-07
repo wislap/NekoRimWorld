@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using GraphQL;
 using Newtonsoft.Json.Linq;
 namespace Neko.RimWorld;
 internal static class WorldPresentationTests
@@ -7,6 +8,13 @@ internal static class WorldPresentationTests
     internal static void Run()
     {
         void Require(bool ok, string reason) { if (!ok) throw new Exception(reason); }
+        var phases = WorldObservationContract.SelectStatePhases(new[]{"condition","reservations","containment","bed","pawn","stats"}, new[]{"bed","reservations"});
+        Require(string.Join(",",phases)=="reservations,bed,pawn,stats", "Physical selection lost requested independent sections or read unrelated state");
+        WorldObservationContract.Validate("inspect_state", JObject.Parse("{'targets':[{'kind':'thing','id':'bed'}],'sections':['state'],'facets':['bed','reservations']}"));
+        foreach(var invalid in new[]{"{'targets':[{'id':'bed'}],'sections':['health'],'facets':['bed']}","{'targets':[{'id':'bed'}],'facets':['bed','bed']}","{'targets':[{'id':'bed'}],'facets':['invented']}"}) {
+            bool refused=false;try{WorldObservationContract.Validate("inspect_state",JObject.Parse(invalid));}catch(ExecutionError){refused=true;}
+            Require(refused,"Invalid facet contract accepted");
+        }
         var filter = JObject.Parse("{'capabilities':['medicine']}");
         var counts = JObject.Parse("{'records':1,'capabilities':[{'capability':'sleeping_place','records':0}],'scan_complete':false}");
         WorldPresentation.ObjectScope(counts, filter);
@@ -69,6 +77,17 @@ internal static class WorldPresentationTests
         var partialTable = JObject.Parse("{'skills':[1,2],'skills_total':7,'skills_complete':false}");
         WorldPresentation.LimitRows(partialTable, 1, "skills");
         Require((bool?)partialTable["skills_complete"] == false && (int?)partialTable["skills_total"] == 7, "Existing failed table marked complete");
+        var bill = JObject.Parse("{'repeat_mode':'RepeatCount','repeat_count':0,'target_count':10,'suspended':false}");
+        WorldPresentation.Bill(bill);
+        Require((int?)bill["repeat_policy"]?["remaining_iterations"] == 0 && bill["repeat_policy"]!["target_products"]!.Type == JTokenType.Null, "Completed repeat bill became ten pending products");
+        Require((int?)bill["target_count"] == 10 && (int?)bill["repeat_count"] == 0, "Original native bill fields changed");
+        bill["repeat_mode"] = "TargetCount"; WorldPresentation.Bill(bill);
+        Require((int?)bill["repeat_policy"]?["target_products"] == 10 && bill["repeat_policy"]!["remaining_iterations"]!.Type == JTokenType.Null, "Stock target became iteration count");
+        bill["repeat_mode"] = "Forever"; WorldPresentation.Bill(bill);
+        Require((bool?)bill["repeat_policy"]?["unlimited"] == true && bill["repeat_policy"]!["target_products"]!.Type == JTokenType.Null, "Unlimited bill retained an active stock target");
+        var medicalBill = JObject.Parse("{'repeat_mode':null,'repeat_count':null,'target_count':null}");
+        WorldPresentation.Bill(medicalBill);
+        Require(medicalBill["repeat_policy"]!["unlimited"]!.Type == JTokenType.Null, "Non-production bill acquired a repetition policy");
         Console.WriteLine("World presentation tests passed: scoped counts, target direction, unknowns, preserved facts, idempotence and page fitting.");
     }
 }

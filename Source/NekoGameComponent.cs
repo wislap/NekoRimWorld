@@ -64,8 +64,14 @@ public sealed class NekoGameComponent : GameComponent
 
         if (spatial != null) {
             if (spatial.Advance()) {
-                Publish(runtime, spatialRequest!, spatialSession!, spatial.Outcome!);
-                spatial.Dispose(); spatial = null; spatialRequest = null; spatialSession = null;
+                var completed = spatial;
+                var request = spatialRequest!;
+                var sample = spatialSession!;
+                // Completion owns no queue slot during delivery. Even an
+                // unexpected publication error cannot replay it every frame.
+                spatial = null; spatialRequest = null; spatialSession = null;
+                try { Publish(runtime, request, sample, completed.Outcome!); }
+                finally { completed.Dispose(); }
             }
             return;
         }
@@ -86,6 +92,7 @@ public sealed class NekoGameComponent : GameComponent
         spatial?.Dispose(); spatial = null; spatialRequest = null; spatialSession = null;
         WorldObservation.Clear();
         VerseKnowledge.StartOnce();
+        GameImplementation.PrepareBehaviorReads();
         NormalizeOrCreateColonyId();
 
         loadEpoch = Guid.NewGuid().ToString("N");
@@ -138,8 +145,11 @@ public sealed class NekoGameComponent : GameComponent
 
         var next = checked(snapshotSequence + 1);
         var sampledSession = new SessionDescriptor(colonyId, loadEpoch, session.GameTick, next);
-        if (request.Payload.Operation == "spatial_query" || Array.IndexOf(WorldObservationContract.Operations, request.Payload.Operation) >= 0) {
-            spatial = request.Payload.Operation == "spatial_query" ? new SpatialQuery.Operation(request.Payload.Arguments!, sampledSession) : new WorldObservation.Operation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession);
+        if (request.Payload.Operation == "query" || request.Payload.Operation == "spatial_query" || Array.IndexOf(WorldObservationContract.Operations, request.Payload.Operation) >= 0 || Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0) {
+            spatial = request.Payload.Operation == "query" ? QueryExecutor.BeginPublicQuery(request.Payload.Arguments!,sampledSession)
+                : request.Payload.Operation == "spatial_query" ? new SpatialQuery.Operation(request.Payload.Arguments!, sampledSession)
+                : Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0 ? new NativeBehaviorOperation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession)
+                : new WorldObservation.Operation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession);
             spatialRequest = request; spatialSession = sampledSession;
             return;
         }
@@ -161,16 +171,7 @@ public sealed class NekoGameComponent : GameComponent
         var next = sampledSession.SnapshotSequence;
         snapshotSequence = next;
         runtime.TouchSession(loadEpoch, sampledSession.GameTick, next);
-        var response = ProtocolEnvelope.CreateQueryResult(request, request.ConnectionEpoch, 0,
-            sampledSession, outcome.Status, outcome.Data, outcome.Issues, outcome.ErrorCode, outcome.Message, outcome.Execution);
-        // Validate the whole output before queuing it. Never silently crop business data.
-        try { ProtocolCodec.Serialize(response); }
-        catch (ProtocolException exception)
-        {
-            response = ProtocolEnvelope.CreateQueryResult(request, request.ConnectionEpoch, 0,
-                sampledSession, ProtocolStatuses.Failed, errorCode: exception.ErrorCode,
-                message: "The query result exceeded transport limits or contained invalid data.");
-        }
+        var response = QueryResultDelivery.Build(request, sampledSession, outcome);
         runtime.EnqueueControl(response);
     }
 

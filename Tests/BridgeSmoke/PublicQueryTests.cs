@@ -9,6 +9,7 @@ internal static class PublicQueryTests
 {
     public static void Run()
     {
+        RunCooperative();
         var engine = new GameQueryEngine(1000);
         var data = new Data();
         var session = new SessionDescriptor(new string('2',32), new string('3',32),100,7);
@@ -394,9 +395,36 @@ internal static class PublicQueryTests
         Console.WriteLine("Public query evidence tests passed: description version, node kinds, " +
             "path resolvability, reading units/bounds and the advertised per-surface contract.");
     }
+    private static void RunCooperative()
+    {
+        var engine=new GameQueryEngine(12);
+        var input=JObject.Parse("{'from':'things','aggregate':{'units':{'op':'sum','field':'stack_count'}},'limit':0}");
+        var source=new Data { LargeThings=600,DelayReadMilliseconds=1 };
+        var session=new SessionDescriptor(new string('a',32),new string('b',32),10,1);
+        using(var read=engine.BeginPublicQuery(input,source,session,()=>true,()=>20)) {
+            int frames=0;
+            while(!read.Advance()) { frames++;System.Threading.Thread.Yield(); }
+            var outcome=read.Outcome!;
+            if(outcome.Status!="ok" || (long?)outcome.Data?["results"]?[0]?["aggregates"]?["units"]?["value"]!=75000 || frames<2)
+                throw new Exception("Cooperative aggregate lost exact units: "+outcome.Status+"/"+outcome.ErrorCode+"/"+outcome.Message+" "+outcome.Data);
+            if ((bool?)outcome.Data?["sample"]?["atomic"] != false ||
+                outcome.Execution?["evidence"]?["nodes"]?["/sample/atomic"] == null ||
+                (long?)outcome.Data?["sample"]?["started_tick"] != 10 ||
+                (long?)outcome.Data?["sample"]?["finished_tick"] != 20)
+                throw new Exception("Cooperative observation interval lost its evidence descriptions");
+        }
+        bool current=true;
+        using(var read=engine.BeginPublicQuery(input,new Data { LargeThings=600,DelayReadMilliseconds=1 },session,()=>current,()=>20)) {
+            read.Advance();current=false;read.Advance();
+            if(read.Outcome?.ErrorCode!="world_changed")throw new Exception("Cross-world continuation was accepted");
+        }
+        Console.WriteLine("Cooperative query tests passed: delayed sum, multiple frames and world invalidation.");
+    }
+
     private sealed class Data : IGameData, IQueryData
     {
         public int Reads;
+        public int DelayReadMilliseconds;
         public int LargeThings;
         public bool LargeContents,LargePawns,NativeContents;
         public string EnumerationError="query_scan_limit";
@@ -419,6 +447,10 @@ internal static class PublicQueryTests
         public object? ColonistField(GameEntity e,string field) => null;
         public object? NodeField(GameNode n,string field,IReadOnlyDictionary<string,object?> args)
         {
+            if(DelayReadMilliseconds>0) {
+                var delay=System.Diagnostics.Stopwatch.StartNew();
+                while(delay.Elapsed.TotalMilliseconds<DelayReadMilliseconds)System.Threading.Thread.SpinWait(64);
+            }
             Reads++;
             if (field == "stackCount" && FailQuantity) throw ReadContext.Error("field_unavailable","Unavailable quantity");
             if (n.Kind == "ThingOwner" && field=="items") { var rows=Enumerable.Range(0,8193).Select(i=>Thing("inside"+i)); return NativeContents ? (object)rows : rows.Select(n=>(object)n); }

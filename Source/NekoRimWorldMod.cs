@@ -16,6 +16,7 @@ public sealed class NekoRimWorldMod : Mod
         "query.execute.v2",
         "resource.evidence.v1",
         "spatial_query.v1",
+        "native_behavior.v1",
     };
 
     private readonly NekoRimWorldSettings settings;

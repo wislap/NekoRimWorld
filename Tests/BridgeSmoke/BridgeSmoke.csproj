@@ -18,6 +18,7 @@
     <Compile Include="../../Source/SpatialRouteSummary.cs" Link="SpatialRouteSummary.cs" />
     <Compile Include="../../Source/SpatialContract.cs" Link="SpatialContract.cs" />
     <Compile Include="../../Source/WorldObservationContract.cs" Link="WorldObservationContract.cs" />
+    <Compile Include="../../Source/ActionInspectionContract.cs" Link="ActionInspectionContract.cs" />
     <Compile Include="../../Source/KnowledgeSnapshot.cs;../../Source/KnowledgeFields.cs;../../Source/KnowledgeStreamingPublisher.cs" Link="%(Filename)%(Extension)" />
     <None Include="../fixtures/native-enums.json" Link="native-enums.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../../Source/NativeEnumScalar.cs;../../Source/SelectionInput.cs;../../Source/PublicFields.cs;../../Source/PublicQuery.cs" Link="%(Filename)%(Extension)" />
@@ -28,6 +29,8 @@
     <Compile Include="..\..\Source\PawnSchema.cs" Link="PawnSchema.cs" />
     <Compile Include="..\..\Source\QueryArguments.cs" Link="QueryArguments.cs" />
     <Compile Include="..\..\Source\QueryExecution.cs" Link="QueryExecution.cs" />
+    <Compile Include="../../Source/QueryResultDelivery.cs" Link="QueryResultDelivery.cs" />
+    <Compile Include="../../Source/CooperativeQuery.cs;../../Source/ReadMethodDependencies.cs" Link="%(Filename)%(Extension)" />
     <Compile Include="..\..\Source\GameData.cs" Link="GameData.cs" />
     <Compile Include="..\..\Source\GameQueryEngine.cs" Link="GameQueryEngine.cs" />
     <Compile Include="..\..\Source\TemplateCatalog.cs" Link="TemplateCatalog.cs" />

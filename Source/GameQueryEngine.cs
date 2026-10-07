@@ -181,13 +181,16 @@ internal sealed class GameQueryEngine
         catch (GraphQLParser.Exceptions.GraphQLSyntaxErrorException) { return QueryOutcome.Failure("invalid_query", "Invalid GraphQL syntax."); }
     }
 
+    internal IFrameQueryOperation BeginPublicQuery(JObject arguments,IGameData source,SessionDescriptor session,Func<bool> current,Func<long> tick)
+        =>new CooperativeQuery(publicQuery,arguments,source,session,readBudgetMs,catalog["schema_id"]!.ToString(),current,tick);
+
     private static string TypeName(IGraphType type) => type switch { NonNullGraphType n => TypeName(n.ResolvedType!) + "!", ListGraphType l => "[" + TypeName(l.ResolvedType!) + "]", _ => type.Name };
     private static JArray DescribeArguments(QueryArguments? arguments) => arguments == null ? new JArray() : new JArray(arguments.Select(a => new JObject { ["name"] = a.Name, ["type"] = TypeName(a.ResolvedType!), ["description"] = a.Description, ["default"] = a.DefaultValue == null ? JValue.CreateNull() : JToken.FromObject(a.DefaultValue), ["limits"] = a.Metadata.TryGetValue("json_limits", out var limits) && limits is JObject obj ? obj.DeepClone() : new JObject() }));
 
     private static Schema BuildSchema()
     {
         var game = new ObjectGraphType { Name = "Game", Description = "Active game's directly observed state." };
-        DataField(game, "paused", new BooleanGraphType(), "Whether the game is paused.");
+        DataField(game, "paused", new BooleanGraphType(), "Simulation ticks are paused. The player can still inspect, place plans and issue orders while paused; pause does not disable consultation or establish Pawn task incapability. Recommendations can be planned now and run when simulation resumes.");
         DataField(game, "currentMapId", new IdGraphType(), "Current viewed map; null if none.");
         var map = new ObjectGraphType { Name = "Map", Description = "An active, loaded map." };
         DataField(map, "id", new NonNullGraphType(new IdGraphType()), "Stable map ID within the save.");

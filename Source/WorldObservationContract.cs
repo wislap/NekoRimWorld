@@ -13,6 +13,9 @@ internal static class WorldObservationContract
 {
     internal const string Version = "world_observation.v2.3";
     internal static readonly string[] StateSections = { "identity", "health", "skills", "gear", "work", "state" };
+    internal static readonly string[] StateFacets = { "condition", "reservations", "containment", "bed", "door", "production", "plant", "turret", "trap", "storage", "construction", "power", "fuel", "battery", "temperature_control", "ammunition", "breakdown", "switch", "rot", "manning", "explosive", "environment" };
+    internal static string[] SelectStatePhases(string[] available, string[]? selected)
+        => selected == null ? available : available.Where(name => name is "pawn" or "work" or "stats" || selected.Contains(name)).ToArray();
     internal static readonly string[] Operations = { "survey_space", "inspect_route", "inspect_state" };
     internal static readonly string[] Capabilities = { "pawn", "building", "item", "plant", "medicine", "sleeping_place", "openable", "powered", "refuelable", "storage", "production", "bill_giver", "hazard" };
     internal static JObject CapabilityMeanings() => new() {
@@ -85,6 +88,7 @@ internal static class WorldObservationContract
         state["detail_limit"] = Int(1, 100, 20);
         state["include_fogged"] = new JObject { ["type"] = "boolean", ["default"] = false, ["description"] = "Explicit visibility policy for object-state reads; default excludes hidden targets." };
         state["sections"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["maxItems"] = 6, ["items"] = new JObject { ["type"] = "string", ["enum"] = new JArray(StateSections) }, ["description"] = "Selected current-state sections; omitted means all native facets. Selection does not claim omitted facets absent." };
+        state["facets"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["maxItems"] = StateFacets.Length, ["uniqueItems"] = true, ["items"] = new JObject { ["type"] = "string", ["enum"] = new JArray(StateFacets) }, ["description"] = "Select physical state facets before reading. Requires state section; omitted retains the full state. Pawn health/skills/work/gear remain independently selected sections. Unselected facets are not observed; environment here is cell state only." };
         state["stats"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["maxItems"] = 16, ["items"] = Text(), ["description"] = "Exact StatDef names, evaluated by the game. No formula reconstruction." };
         JObject Tool(string name, string description, JObject props, params string[] required) => new() { ["name"] = name, ["operation"] = name, ["description"] = description, ["parameters"] = new JObject { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = props, ["required"] = new JArray(required) } };
         return new JObject
@@ -113,6 +117,12 @@ internal static class WorldObservationContract
         if (args["include_fogged"] != null && args["include_fogged"]!.Type != JTokenType.Boolean) Fail("include_fogged must be boolean");
         if (args["objects"] != null && args["objects"]!.Type != JTokenType.Boolean) Fail("objects must be boolean");
         if (args["sections"] != null) { Strings(args["sections"], StateSections.Length, "sections"); if (((JArray)args["sections"]!).Any(s => !StateSections.Contains(s.ToString()))) Fail("Unknown state section"); }
+        if (args["facets"] != null) {
+            Strings(args["facets"], StateFacets.Length, "facets");
+            var facets = (JArray)args["facets"]!;
+            if (facets.Any(s => !StateFacets.Contains(s.ToString())) || facets.Select(s => s.ToString()).Distinct().Count() != facets.Count) Fail("Unknown or duplicate state facet");
+            if (args["sections"] is JArray chosen && !chosen.Values<string>().Contains("state")) Fail("facets requires state section");
+        }
         if (args["stats"] != null) Strings(args["stats"], 16, "stats");
         if (args["select"] != null) { if (args["select"] is not JObject s) { Fail("select must be object"); return; } Keys(s, "definitions", "capabilities"); foreach (var k in new[] { "definitions", "capabilities" }) if (s[k] != null) Strings(s[k], k == "definitions" ? 32 : Capabilities.Length, k); if (s["capabilities"] is JArray cs && cs.Any(c => !Capabilities.Contains(c.ToString()))) Fail("Unknown capability"); }
         if (args["region"] != null)

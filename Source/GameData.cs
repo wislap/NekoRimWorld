@@ -57,6 +57,7 @@ internal sealed class ReadContext
     private readonly int threadId = Thread.CurrentThread.ManagedThreadId;
     private readonly double budgetMilliseconds;
     private Stopwatch? clock;
+    private Stopwatch? lifetime;
     private List<GameEntity>? maps;
     private List<GameEntity>? colonists;
     private readonly Dictionary<object, object?> values = new();
@@ -72,7 +73,7 @@ internal sealed class ReadContext
     public ReadContext(IGameData source, SessionDescriptor session, double budgetMilliseconds)
     { this.source = source; Session = session; this.budgetMilliseconds = budgetMilliseconds; }
     public SessionDescriptor Session { get; }
-    internal double ElapsedMilliseconds => clock?.Elapsed.TotalMilliseconds ?? 0;
+    internal double ElapsedMilliseconds => lifetime?.Elapsed.TotalMilliseconds ?? 0;
     public SelectionConditions? Conditions { get; set; }
     public Dictionary<string, JObject> ResolvedFields { get; } = new();
     public void TraceField(IResolveFieldContext context)
@@ -112,12 +113,14 @@ internal sealed class ReadContext
     {
         if (Thread.CurrentThread.ManagedThreadId != threadId) throw Error("wrong_thread", "Spatial slice must remain on the game thread.");
         clock = Stopwatch.StartNew();
+        lifetime ??= Stopwatch.StartNew();
     }
     public void Check()
     {
         if (Thread.CurrentThread.ManagedThreadId != threadId)
             throw Error("wrong_thread", "Game reads must remain on the calling game thread.");
         clock ??= Stopwatch.StartNew();
+        lifetime ??= Stopwatch.StartNew();
         if (clock.Elapsed.TotalMilliseconds >= budgetMilliseconds)
             throw Error("deadline_exceeded", "The game read deadline was reached; narrow the query.");
     }

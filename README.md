@@ -88,6 +88,34 @@ The companion bench tracks model comparisons and limitations. Sources require
 rebuild and game restart to activate; this integration did not replace the
 user's installed assemblies.
 
+## Native behavior observations
+
+The runtime query catalog additionally advertises `native_behavior.v1` and
+`game_implementation.v1`. `inspect_actions` examines one spawned actor and
+explicit targets or nearby visible spawned items for equip/wear/ingest player
+orders. It follows the inspected provider's branch order using native predicates.
+It does not construct GUI menu options: those depend on Unity's GUI event and
+are unsuitable for a background read. No action callback, ordered job,
+reservation or forbidden-state change is executed.
+
+`inspect_threats` exposes visible hostile attack targets, native active-threat
+classification, dormancy and current jobs, plus optional current-cell attack
+checks for subjects. Hostility, activation, attack eligibility, actual attacks
+and future safety remain distinct. Existing world-observation contracts are
+unchanged. New behavior calls share the game-thread frame operation and bounded
+read lifetime.
+
+`GameImplementation` records the original assembly hash/module identity and
+Harmony patches on the inspected types. The eligibility adapter is enabled only
+for its audited binary and unpatched inspected behavior. Unreviewed overrides
+return unknown/unavailable instead of a guessed permission. This does not claim
+support for every Mod behavior or complete job execution prediction.
+
+The plugin can prepare a local version-bound source index and inspect associated
+implementation references. Source preparation and reference reading are separate
+from live state observations. Game assets and decompiled sources are not shipped
+in this repository.
+
 ## Identity
 
 - RimWorld package ID: `neko.rimworld.bridge`
@@ -391,6 +419,16 @@ search when map is absent, with context and cell current-map defaults unchanged.
 Sections gate reads before facet evaluation; reservation snapshots are initialized
 only when requested. Pawn body parts, real skills, work assignments and native
 StatDefs preserve totals, bounds and unknowns.
+
+The same v2.3 catalog now advertises optional `inspect_state.facets` for named
+physical/device facets such as `bed`, `reservations`, `door`, and `condition`.
+It requires the `state` section when sections are explicit and filters native
+phases before their getters execute. Health/skills/gear/work still use their
+own sections. Omitted facets preserve the existing full-state behavior.
+Selected scope is recorded; a facet unsupported by the target is explicitly
+`not_applicable`, while failed or unavailable reads retain their failure state.
+Cell requests apply supported environment/reservation facets and identify other
+requested facets as inapplicable. This adds no native operation.
 
 The `things` root accepts native `capabilities`, shared with world observation and
 applied before paging/counting. The scalar capability field is explicit-selection

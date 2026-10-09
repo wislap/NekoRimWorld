@@ -16,10 +16,12 @@ internal static class QueryExecutor
             while (!read.Advance()) { }
             return read.Outcome!;
         }
+        if (operation == SituationContract.Operation) return SituationObservation.Execute(arguments, session);
         var outcome = Array.IndexOf(WorldObservationContract.Operations, operation) >= 0 ? WorldObservation.Execute(operation, arguments, session) : operation == "spatial_query"
             ? SpatialQuery.Execute(arguments, session) : Engine.Value.Execute(operation, arguments, new VerseGameData(), session);
         if (operation == "query_catalog" && outcome.Data != null) {
             outcome.Data["native_behavior"] = ActionInspectionContract.Catalog();
+            outcome.Data["situation"] = SituationContract.Catalog();
             outcome.Data["game_implementation"] = GameImplementation.Describe();
         }
         return outcome;

@@ -34,8 +34,19 @@ internal sealed partial class ObjectReadEngine
     // envelope replaces are re-encoded. Compact JSON size is 2 + members + separators.
     private static readonly string[] EnvelopeMembers={"sample","status","delivery","execution","page","coverage"};
     private int ProbeSize(JObject body,int bodySize,ReadTraversal work,Run run,int start,int steps,string token) {
+        // The envelope members only change by replacement (TrackedMerge never edits them in place),
+        // so unchanged references mean an unchanged probe; verify mode re-measures every probe.
+        var references=work.ProbeReferences;var same=work.ProbeToken==token;
+        for(var i=0;i<EnvelopeMembers.Length;i++) {
+            var current=body.TryGetValue(EnvelopeMembers[i],out var value)?value:null;
+            if(!ReferenceEquals(references[i],current)) { references[i]=current;same=false; }
+        }
+        var sample=work.Projection["sample"];
+        if(!ReferenceEquals(references[EnvelopeMembers.Length],sample)) { references[EnvelopeMembers.Length]=sample;same=false; }
+        if(same && !ObjectReadProfile.VerifySizes)return bodySize+work.ProbeDelta;
+        work.ProbeToken=token;
         var shell=new JObject();
-        foreach(var name in EnvelopeMembers)if(body.TryGetValue(name,out var value))shell[name]=value!.DeepClone();
+        foreach(var name in EnvelopeMembers)if(body.TryGetValue(name,out var member))shell[name]=member!.DeepClone();
         // A probe envelope only varies with these members, the projection sample and the token.
         var key=shell.ToString(Formatting.None)+"\u0000"+work.Projection["sample"]!.ToString(Formatting.None)+"\u0000"+token;
         if(key!=work.ProbeKey) {

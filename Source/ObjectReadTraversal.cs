@@ -26,7 +26,7 @@ internal sealed partial class ObjectReadEngine
         internal readonly HashSet<string> SeenRules=new(StringComparer.Ordinal),SeenIssues=new(StringComparer.Ordinal);
         internal readonly Dictionary<string,ExplanationSource> ExplanationSources=new(StringComparer.Ordinal);
         internal bool HadIssues;
-        internal string? ProbeKey;internal int ProbeDelta;
+        internal string? ProbeKey,ProbeToken;internal int ProbeDelta;internal readonly JToken?[] ProbeReferences=new JToken?[7];
     }
     private sealed class TextDelivery { internal JToken Value=null!,Original=null!;internal string Id=Guid.NewGuid().ToString("N"),Name="";internal int Offset;internal JObject Template=null!,Destination=null!; }
     private sealed class ExplanationSource { internal Snapshot Source=null!;internal JObject Node=null!;internal object[] Path=Array.Empty<object>();internal int ExplainedIssueCount; }
@@ -51,36 +51,52 @@ internal sealed partial class ObjectReadEngine
         var deliveredTexts=new HashSet<string>(StringComparer.Ordinal);
         // Pending atoms merge in place; the tracked compact size makes the budget probe O(atom), and a refused atom is undone exactly.
         var tracked=new ObjectReadPages.TrackedMerge(output);
-        bool Drain() {
-            while(work.PendingDelivery.Count>0) {
-                var drainStarted=ObjectReadProfile.Start();
-                string? before=null;JObject? shadow=null;
-                if(ObjectReadProfile.VerifySizes) { before=output.ToString(Formatting.None);shadow=(JObject)output.DeepClone();ObjectReadPages.Merge(shadow,work.PendingDelivery.Peek()); }
-                tracked.Apply(output,work.PendingDelivery.Peek());
-                if(shadow!=null && shadow.ToString(Formatting.None)!=output.ToString(Formatting.None))throw new InvalidOperationException("Tracked merge diverged from Merge.");ObjectReadProfile.Stop(ObjectReadProfile.Part.Merge,drainStarted);
-                var measureStarted=ObjectReadProfile.Start();var probeSize=ProbeSize(output,tracked.Size,work,run,start,steps,nextToken);ObjectReadProfile.Stop(ObjectReadProfile.Part.Measure,measureStarted);
-                if(ObjectReadProfile.VerifySizes) {
-                    var actual=DeliverySize(DeliveryEnvelope(output,work,run,start,steps,false,nextToken,true));
-                    if(actual!=probeSize || DeliverySize(output)!=tracked.Size)throw new InvalidOperationException("Tracked delivery size diverged: "+probeSize+" vs "+actual+", body "+tracked.Size+" vs "+DeliverySize(output));
-                }
-                ObjectReadProfile.Stop(ObjectReadProfile.Part.Drain,drainStarted);
-                if(ObjectReadProfile.Enabled)ObjectReadProfile.MeasuredBytes+=probeSize;
-                if(probeSize>DeliveryBytes) {
-                    tracked.Rollback();
-                    if(before!=null && before!=output.ToString(Formatting.None))throw new InvalidOperationException("Tracked merge rollback did not restore the delivery.");
-                    if(work.LeafOffset==start)throw ReadContext.Error("projection_block_too_large","One delivery atom and its required scope exceed the window.");
-                    paused=true;return false;
-                }
-                tracked.Commit();var accepted=work.PendingDelivery.Dequeue();work.LeafOffset++;
-                foreach(var value in accepted.Descendants().OfType<JObject>())
-                    if(value["value_snapshot_id"]?.Type==JTokenType.String)deliveredTexts.Add((string)value["value_snapshot_id"]!);
+        var texts=new List<string>();
+        JObject Materialize(object[] path,JToken? replacement) {
+            var branched=ObjectReadProfile.Start();var atom=ObjectReadPages.Branch(work.Projection,path,replacement);ObjectReadProfile.Stop(ObjectReadProfile.Part.Branch,branched);
+            return atom;
+        }
+        // Offers the queue head (queued) or a projection branch merged without materializing it.
+        // A refused branch is materialized onto the queue, exactly where Emit used to enqueue it.
+        bool Offer(JObject? queued,object[] path,JToken? replacement) {
+            var drainStarted=ObjectReadProfile.Start();var fromQueue=queued!=null;
+            string? before=null;JObject? shadow=null;List<string>? expected=null;
+            if(ObjectReadProfile.VerifySizes) {
+                var atom=queued??ObjectReadPages.Branch(work.Projection,path,replacement);
+                before=output.ToString(Formatting.None);shadow=(JObject)output.DeepClone();ObjectReadPages.Merge(shadow,atom);
+                expected=new List<string>();ObjectReadPages.Texts(atom,expected);
             }
+            if(queued==null && !tracked.ApplyBranch(output,work.Projection,path,replacement,texts))queued=Materialize(path,replacement);
+            if(queued!=null)tracked.Apply(output,queued,texts);
+            if(shadow!=null && (shadow.ToString(Formatting.None)!=output.ToString(Formatting.None) || !new HashSet<string>(deliveredTexts.Concat(expected!),StringComparer.Ordinal).SetEquals(deliveredTexts.Concat(texts))))
+                throw new InvalidOperationException("Tracked merge diverged from Merge.");
+            ObjectReadProfile.Stop(ObjectReadProfile.Part.Merge,drainStarted);
+            var measureStarted=ObjectReadProfile.Start();var probeSize=ProbeSize(output,tracked.Size,work,run,start,steps,nextToken);ObjectReadProfile.Stop(ObjectReadProfile.Part.Measure,measureStarted);
+            if(ObjectReadProfile.VerifySizes) {
+                var actual=DeliverySize(DeliveryEnvelope(output,work,run,start,steps,false,nextToken,true));
+                if(actual!=probeSize || DeliverySize(output)!=tracked.Size)throw new InvalidOperationException("Tracked delivery size diverged: "+probeSize+" vs "+actual+", body "+tracked.Size+" vs "+DeliverySize(output));
+            }
+            ObjectReadProfile.Stop(ObjectReadProfile.Part.Drain,drainStarted);
+            if(ObjectReadProfile.Enabled)ObjectReadProfile.MeasuredBytes+=probeSize;
+            if(probeSize>DeliveryBytes) {
+                tracked.Rollback();
+                if(before!=null && before!=output.ToString(Formatting.None))throw new InvalidOperationException("Tracked merge rollback did not restore the delivery.");
+                if(!fromQueue)work.PendingDelivery.Enqueue(queued??Materialize(path,replacement));
+                if(work.LeafOffset==start)throw ReadContext.Error("projection_block_too_large","One delivery atom and its required scope exceed the window.");
+                paused=true;return false;
+            }
+            tracked.Commit();if(fromQueue)work.PendingDelivery.Dequeue();work.LeafOffset++;
+            foreach(var id in texts)deliveredTexts.Add(id);
+            return true;
+        }
+        bool Drain() {
+            while(work.PendingDelivery.Count>0)if(!Offer(work.PendingDelivery.Peek(),Array.Empty<object>(),null))return false;
             return true;
         }
         bool Emit(object[] path,JToken? replacement=null) {
             var explained=ObjectReadProfile.Start();QueueExplanations(work,run);ObjectReadProfile.Stop(ObjectReadProfile.Part.Explanations,explained);
-            var branched=ObjectReadProfile.Start();var atom=ObjectReadPages.Branch(work.Projection,path,replacement);ObjectReadProfile.Stop(ObjectReadProfile.Part.Branch,branched);
-            work.PendingDelivery.Enqueue(atom);return Drain();
+            if(!Drain()) { work.PendingDelivery.Enqueue(Materialize(path,replacement));return false; }
+            return Offer(null,path,replacement);
         }
         Drain();
         while(!paused && (work.Frames.Count>0 || work.DeferredSources.Count>0 || work.TextValues.Count>0) && steps++<TraversalSteps) {

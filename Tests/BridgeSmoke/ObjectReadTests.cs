@@ -9,6 +9,10 @@ internal static class ObjectReadTests
 {
     internal static void Run(string? capturePath=null)
     {
+        ObjectReadProfile.VerifySizes=true;try { RunChecked(capturePath); } finally { ObjectReadProfile.VerifySizes=false; }
+    }
+    private static void RunChecked(string? capturePath)
+    {
         var engine=new GameQueryEngine(1000);var source=new MutableData();
         var session=new SessionDescriptor(new string('2',32),new string('3',32),1,1);
         var captured=new JArray();
@@ -273,10 +277,11 @@ internal static class ObjectReadTests
         Console.WriteLine("Object-read mutable/selected/lossless tests passed.");
     }
     private static void Require(bool condition,string message,QueryOutcome outcome) { if(!condition)throw new InvalidOperationException(message+" "+outcome.ErrorCode+" "+outcome.Message+" "+outcome.Data); }
-    private sealed class MutableData : IGameData,IQueryData,IThingData,IObjectQueryData
+    internal sealed class MutableData : IGameData,IQueryData,IThingData,IObjectQueryData
     {
-        internal List<GameEntity> Pawns=Enumerable.Range(0,137).Select(i=>new GameEntity("pawn"+i,"map1",new object())).ToList();
-        internal readonly object[] TraitIdentities=Enumerable.Range(0,137).Select(_=>new object()).ToArray();internal readonly HashSet<int> RemovedTraits=new();
+        internal readonly int Children;internal List<GameEntity> Pawns;internal readonly object[] TraitIdentities;
+        internal MutableData(int pawns=137,int children=137) { Children=children;Pawns=Enumerable.Range(0,pawns).Select(i=>new GameEntity("pawn"+i,"map1",new object())).ToList();TraitIdentities=Enumerable.Range(0,children).Select(_=>new object()).ToArray(); }
+        internal readonly HashSet<int> RemovedTraits=new();
         internal int ValueReads,PartReads,TraitReads,StatReads,InventoryReads,RoleLookups;internal bool FailName,TraitsReversed,NullNames,ReturnThing,LastRoleHeldOnly,DuplicateTraitKeys;internal string? LongName,LastActor;internal string CurrentMap="map1",NamePrefix="",TraitDescription="";
         internal Action? OnClockRead,OnAlertRead;internal string FailNameMessage="name unavailable";internal bool LargeCapabilities,LongCapability;
         internal static string LongCapabilityText=>string.Concat(Enumerable.Repeat("文\"\n👾",18000));
@@ -314,13 +319,13 @@ internal static class ObjectReadTests
             if(node.Kind=="Thing" && field=="Spawned")return false;
             if(node.Kind=="Thing" && field=="capabilities")return LongCapability?Enumerable.Range(0,LargeCapabilities?8000:1).Select(i=>i==0?LongCapabilityText:"capability"+i):LargeCapabilities?Enumerable.Range(0,8000).Select(i=>"capability"+i):new[]{"fuel","bill_giver"};
             if(node.Kind=="Thing" && field=="id")return node.Key;
-            if(node.Kind=="ObjectGear" && field=="inventory")return Enumerable.Range(0,137).Select(i=>new GameNode("Thing",node.Owner.Id+"-item"+i,new GameEntity(node.Owner.Id+"-item"+i,"map1",i),i));
+            if(node.Kind=="ObjectGear" && field=="inventory")return Enumerable.Range(0,Children).Select(i=>new GameNode("Thing",node.Owner.Id+"-item"+i,new GameEntity(node.Owner.Id+"-item"+i,"map1",i),i));
             if(node.Kind=="Thing" && field=="stackCount") { InventoryReads++;return 1; }
-            if(node.Kind=="Profile" && field=="traits")return (TraitsReversed?Enumerable.Range(0,137).Reverse():Enumerable.Range(0,137)).Where(i=>!RemovedTraits.Contains(i)).Select(i=>new GameNode("Trait",node.Key+"/trait"+(DuplicateTraitKeys?"same":i.ToString()),node.Owner,i,TraitIdentities[i]));
+            if(node.Kind=="Profile" && field=="traits")return (TraitsReversed?Enumerable.Range(0,Children).Reverse():Enumerable.Range(0,Children)).Where(i=>!RemovedTraits.Contains(i)).Select(i=>new GameNode("Trait",node.Key+"/trait"+(DuplicateTraitKeys?"same":i.ToString()),node.Owner,i,TraitIdentities[i]));
             if(node.Kind=="Trait") { TraitReads++;return field=="defName"?"Trait"+node.Handle:field=="degree"?node.Handle:field=="description"?TraitDescription:field=="suppressed"?(int)node.Handle!%2!=0:null; }
-            if(node.Kind=="Pawn" && field=="stats")return (arguments.TryGetValue("defNames",out var selected)?(IEnumerable<object?>)selected!:Enumerable.Range(0,137).Select(i=>(object?)("Stat"+i))).Select(n=>new GameNode("Stat",node.Key+"/"+n,node.Owner,n));
+            if(node.Kind=="Pawn" && field=="stats")return (arguments.TryGetValue("defNames",out var selected)?(IEnumerable<object?>)selected!:Enumerable.Range(0,Children).Select(i=>(object?)("Stat"+i))).Select(n=>new GameNode("Stat",node.Key+"/"+n,node.Owner,n));
             if(node.Kind=="Stat") { if(field=="defName")return node.Handle;if(field=="value") { StatReads++;return 4d; } }
-            if(node.Kind=="Health" && field=="bodyParts")return Enumerable.Range(0,137).Select(i=>new GameNode("BodyPart",node.Owner.Id+"/part"+i,node.Owner,i));
+            if(node.Kind=="Health" && field=="bodyParts")return Enumerable.Range(0,Children).Select(i=>new GameNode("BodyPart",node.Owner.Id+"/part"+i,node.Owner,i));
             if(node.Kind=="BodyPart") { PartReads++;return field=="index"?node.Handle:field=="health"?10d:null; }
             if(node.Kind=="Pawn" && field=="id")return node.Owner.Id;
             return null;

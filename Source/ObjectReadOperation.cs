@@ -19,7 +19,7 @@ internal sealed class ObjectReadOperation : IFrameQueryOperation
         if(Outcome!=null)return true;
         try {
             if(!current())throw ReadContext.Error("world_changed","Loaded world changed during object read.");
-            context?.RestartSlice();var slice=Stopwatch.StartNew();
+            context?.RestartSlice();var slice=Stopwatch.StartNew();if(ObjectReadProfile.Enabled)ObjectReadProfile.Frames++;
             // Exceptional process protection, never normal business pagination.
             if(lifetime.Elapsed.TotalSeconds>8)throw ReadContext.Error("query_lifetime_exceeded","Object read exceeded its cooperative lifetime; no completeness is asserted.");
             do { if(steps==null || !steps.MoveNext()) { Outcome??=QueryOutcome.Failure("object_read_failed","Object read produced no outcome.");Dispose();return true; } }

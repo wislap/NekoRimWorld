@@ -327,6 +327,9 @@ internal sealed partial class ObjectReadEngine
         return raw==null?Array.Empty<object>():raw is IEnumerable sequence && raw is not string?sequence.Cast<object>():new[]{raw};
     }
     private object? Find(Locator locator,Run run) {
+        var profiled=ObjectReadProfile.Start();try { return FindCore(locator,run); } finally { ObjectReadProfile.Stop(ObjectReadProfile.Part.Find,profiled); }
+    }
+    private object? FindCore(Locator locator,Run run) {
         var tick=run.Tick();
         if(run.LookupTick!=tick || run.LookupFrame!=run.Context.ObjectFrameVersion) {
             if(run.LookupTick>=0)run.Context.ResetObjectReadCache();
@@ -336,14 +339,15 @@ internal sealed partial class ObjectReadEngine
         if(run.Lookups.TryGetValue(cacheKey,out var cached))return cached;
         var sourceKey=LookupKey(locator);
         if(!run.LookupSources.TryGetValue(sourceKey,out var source)) {
+            var rebuildStarted=ObjectReadProfile.Start();if(ObjectReadProfile.Enabled)ObjectReadProfile.Rebuilds++;
             source=new Dictionary<string,object>(StringComparer.Ordinal);
             var identities=new Dictionary<object,object>(new IdentityComparer());
             foreach(var value in ResolveCollection(locator,run)) {
-                run.CandidateReads++;var nativeKey=Key(value);source[nativeKey]=source.ContainsKey(nativeKey)?null!:value;
+                run.CandidateReads++;if(ObjectReadProfile.Enabled)ObjectReadProfile.RebuildMembers++;var nativeKey=Key(value);source[nativeKey]=source.ContainsKey(nativeKey)?null!:value;
                 if(Identity(value) is object identity)identities[identity]=value;
             }
             run.LookupSources[sourceKey]=source;
-            run.LookupIdentities[sourceKey]=identities;
+            run.LookupIdentities[sourceKey]=identities;ObjectReadProfile.Stop(ObjectReadProfile.Part.FindRebuild,rebuildStarted);
         }
         Member? captured=null;
         if(locator.SourceId.Length>0 && run.Lease.SourceIds.TryGetValue(locator.SourceId,out var snapshot))snapshot.MemberIndex.TryGetValue(locator.Key,out captured);

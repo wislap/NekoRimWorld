@@ -26,6 +26,7 @@ internal sealed partial class ObjectReadEngine
         internal readonly HashSet<string> SeenRules=new(StringComparer.Ordinal),SeenIssues=new(StringComparer.Ordinal);
         internal readonly Dictionary<string,ExplanationSource> ExplanationSources=new(StringComparer.Ordinal);
         internal bool HadIssues;
+        internal string? ProbeKey;internal int ProbeDelta;
     }
     private sealed class TextDelivery { internal JToken Value=null!,Original=null!;internal string Id=Guid.NewGuid().ToString("N"),Name="";internal int Offset;internal JObject Template=null!,Destination=null!; }
     private sealed class ExplanationSource { internal Snapshot Source=null!;internal JObject Node=null!;internal object[] Path=Array.Empty<object>();internal int ExplainedIssueCount; }
@@ -48,22 +49,38 @@ internal sealed partial class ObjectReadEngine
         var output=new JObject { ["version"]=ObjectReadContract.Version,["scope"]=PublishedScope(run.Root.Locator.Scope),["rows"]=new JArray(),["issues"]=new JArray(),["semantic_rules"]=new JObject() };
         var start=work.LeafOffset;var steps=0;var paused=false;var nextToken=Guid.NewGuid().ToString("N");
         var deliveredTexts=new HashSet<string>(StringComparer.Ordinal);
+        // Pending atoms merge in place; the tracked compact size makes the budget probe O(atom), and a refused atom is undone exactly.
+        var tracked=new ObjectReadPages.TrackedMerge(output);
         bool Drain() {
             while(work.PendingDelivery.Count>0) {
-                var candidate=(JObject)output.DeepClone();ObjectReadPages.Merge(candidate,work.PendingDelivery.Peek());
-                if(DeliverySize(DeliveryEnvelope(candidate,work,run,start,steps,false,nextToken,true))>DeliveryBytes) {
+                var drainStarted=ObjectReadProfile.Start();
+                string? before=null;JObject? shadow=null;
+                if(ObjectReadProfile.VerifySizes) { before=output.ToString(Formatting.None);shadow=(JObject)output.DeepClone();ObjectReadPages.Merge(shadow,work.PendingDelivery.Peek()); }
+                tracked.Apply(output,work.PendingDelivery.Peek());
+                if(shadow!=null && shadow.ToString(Formatting.None)!=output.ToString(Formatting.None))throw new InvalidOperationException("Tracked merge diverged from Merge.");ObjectReadProfile.Stop(ObjectReadProfile.Part.Merge,drainStarted);
+                var measureStarted=ObjectReadProfile.Start();var probeSize=ProbeSize(output,tracked.Size,work,run,start,steps,nextToken);ObjectReadProfile.Stop(ObjectReadProfile.Part.Measure,measureStarted);
+                if(ObjectReadProfile.VerifySizes) {
+                    var actual=DeliverySize(DeliveryEnvelope(output,work,run,start,steps,false,nextToken,true));
+                    if(actual!=probeSize || DeliverySize(output)!=tracked.Size)throw new InvalidOperationException("Tracked delivery size diverged: "+probeSize+" vs "+actual+", body "+tracked.Size+" vs "+DeliverySize(output));
+                }
+                ObjectReadProfile.Stop(ObjectReadProfile.Part.Drain,drainStarted);
+                if(ObjectReadProfile.Enabled)ObjectReadProfile.MeasuredBytes+=probeSize;
+                if(probeSize>DeliveryBytes) {
+                    tracked.Rollback();
+                    if(before!=null && before!=output.ToString(Formatting.None))throw new InvalidOperationException("Tracked merge rollback did not restore the delivery.");
                     if(work.LeafOffset==start)throw ReadContext.Error("projection_block_too_large","One delivery atom and its required scope exceed the window.");
                     paused=true;return false;
                 }
-                output=candidate;var accepted=work.PendingDelivery.Dequeue();work.LeafOffset++;
+                tracked.Commit();var accepted=work.PendingDelivery.Dequeue();work.LeafOffset++;
                 foreach(var value in accepted.Descendants().OfType<JObject>())
                     if(value["value_snapshot_id"]?.Type==JTokenType.String)deliveredTexts.Add((string)value["value_snapshot_id"]!);
             }
             return true;
         }
         bool Emit(object[] path,JToken? replacement=null) {
-            QueueExplanations(work,run);
-            work.PendingDelivery.Enqueue(ObjectReadPages.Branch(work.Projection,path,replacement));return Drain();
+            var explained=ObjectReadProfile.Start();QueueExplanations(work,run);ObjectReadProfile.Stop(ObjectReadProfile.Part.Explanations,explained);
+            var branched=ObjectReadProfile.Start();var atom=ObjectReadPages.Branch(work.Projection,path,replacement);ObjectReadProfile.Stop(ObjectReadProfile.Part.Branch,branched);
+            work.PendingDelivery.Enqueue(atom);return Drain();
         }
         Drain();
         while(!paused && (work.Frames.Count>0 || work.DeferredSources.Count>0 || work.TextValues.Count>0) && steps++<TraversalSteps) {
@@ -81,7 +98,7 @@ internal sealed partial class ObjectReadEngine
                     work.PendingDelivery.Enqueue(branch);Drain();yield return 0;continue;
                 }
             }
-            run.Context.Check();var frame=work.Frames.Peek();
+            run.Context.Check();var frame=work.Frames.Peek();if(ObjectReadProfile.Enabled)ObjectReadProfile.Steps++;
             if(frame.Member==null) {
                 if(!frame.Opened) { frame.Opened=true;SourceMetadata(frame,run,false,work);Emit(frame.Path,MetadataOnly(frame.Node));yield return 0;continue; }
                 if(frame.Index>=frame.Source.Members.Count || frame.Returned>=frame.Size) {
@@ -112,8 +129,8 @@ internal sealed partial class ObjectReadEngine
                     try {
                         var native=Find(MemberLocator(frame.Source,frame.Member),run)??throw ReadContext.Error("source_changed","Captured member or ancestor is no longer available.");
                         var field=registry.Field(frame.Source.Type,column);run.GetterReads++;
-                        var started=run.Tick();run.Context.BeginSelectedGetter();
-                        cached[column]=ColumnValue(registry.Read(frame.Source.Type,native,field,registry.Arguments(field,null,column),run.Context),field);Rule(run,frame.Source.Type,column,field);
+                        var started=run.Tick();run.Context.BeginSelectedGetter();var getterStarted=ObjectReadProfile.Start();
+                        cached[column]=ColumnValue(registry.Read(frame.Source.Type,native,field,registry.Arguments(field,null,column),run.Context),field);ObjectReadProfile.Stop(ObjectReadProfile.Part.Getter,getterStarted);Rule(run,frame.Source.Type,column,field);
                         var sample=run.Context.LastValueSample??(started,run.Tick());
                         frame.Member.Row!["field_samples"]??=new JObject();frame.Member.Row!["field_samples"]![column]=new JObject { ["started_tick"]=sample.Item1,["finished_tick"]=sample.Item2,["atomic"]=false };
                         AddColumnBinding(frame.Member.Row!,column,field,native,run);
@@ -160,6 +177,7 @@ internal sealed partial class ObjectReadEngine
             frame.Member.State="observed";frame.Node["sample"]=frame.Member.Row!["sample"]!.DeepClone();work.Frames.Pop();
             Emit(frame.Path,RowHeader(frame.Node));yield return 0;
         }
+        var finalizeStarted=ObjectReadProfile.Start();
         var complete=work.Frames.Count==0 && work.DeferredSources.Count==0 && work.TextValues.Count==0 && work.PendingDelivery.Count==0;
         if(complete && !work.Finalized) {
             work.Finalized=true;
@@ -180,6 +198,7 @@ internal sealed partial class ObjectReadEngine
         }
         if(resumed!=null)resumed.CachedResult=(JObject)output.DeepClone();
         var encoded=output.ToString(Formatting.None);if(DeliverySize(output)>DeliveryBytes)throw ReadContext.Error("object_read_failed","Delivery exceeded its measured structural maximum.");
+        ObjectReadProfile.Stop(ObjectReadProfile.Part.Finalize,finalizeStarted);if(ObjectReadProfile.Enabled)ObjectReadProfile.Deliveries++;
         if(JsonDepth(output)>24)publish(PacketPage(encoded,0,(JObject)output["scope"]!,run,(string)output["status"]!));
         else publish(new QueryOutcome { Status=(string)output["status"]!,Data=output,Issues=EnvelopeIssues((string)output["status"]!) });
     }
@@ -189,6 +208,9 @@ internal sealed partial class ObjectReadEngine
     private static JObject MetadataOnly(JObject node)=>new(node.Properties().Where(p=>p.Name!="rows").Select(p=>new JProperty(p.Name,p.Value.DeepClone()))) { ["rows"]=new JArray() };
     private static JObject CompleteEmpty()=>new() { ["source_complete"]=true,["predicate_complete"]=true,["fields_complete"]=true,["display_complete"]=true,["returned_count"]=0 };
     private void SourceMetadata(ReadFrame frame,Run run,bool finished,ReadTraversal work,bool refresh=false) {
+        var profiled=ObjectReadProfile.Start();try { SourceMetadataCore(frame,run,finished,work,refresh); } finally { ObjectReadProfile.Stop(ObjectReadProfile.Part.Metadata,profiled); }
+    }
+    private void SourceMetadataCore(ReadFrame frame,Run run,bool finished,ReadTraversal work,bool refresh) {
         var source=frame.Source;var node=frame.Node;var more=frame.Index<source.Members.Count;
         var started=(long?)node["sample"]?["started_tick"]??source.CapturedTick;
         var end=refresh?Math.Max(frame.FinishedTick,LatestSample(node)):run.Tick();

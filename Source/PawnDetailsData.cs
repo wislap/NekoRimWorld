@@ -13,7 +13,7 @@ namespace Neko.RimWorld;
 /// </summary>
 internal static class PawnDetailsData
 {
-    public static object? Read(GameNode node, string field, IReadOnlyDictionary<string, object?> args)
+    public static object? Read(GameNode node, string field, IReadOnlyDictionary<string, object?> args, bool objectRead = false)
     {
         var pawn = (Pawn)node.Owner.Handle;
         if (pawn.Destroyed) throw ReadContext.Error("object_unavailable", "The pawn no longer exists.");
@@ -35,8 +35,11 @@ internal static class PawnDetailsData
                     "isPrisonerOfColony" => pawn.IsPrisonerOfColony,
                     "isSlaveOfColony" => pawn.IsSlaveOfColony,
                     "guestStatus" => pawn.GuestStatus?.ToString(),
-                    "stats" => Stats(node, args),
+                    "spawned" => pawn.Spawned, "destroyed" => pawn.Destroyed,
+                    "stats" => Stats(node, args, objectRead),
                     "statDefinitions" => StatDefinitions(node, args),
+                    "needs" => pawn.needs == null ? null : Needs(node, pawn, VisibleOnly(args)),
+                    "skills" => pawn.skills == null ? null : Skills(node, pawn),
                     _ => Unknown(node, field),
                 };
             case "Status":
@@ -48,7 +51,7 @@ internal static class PawnDetailsData
                     "mentalState" => pawn.MentalStateDef?.defName,
                     "currentJob" => pawn.CurJob == null ? null : Child(node, "Job", pawn.CurJob.GetUniqueLoadID(), pawn.CurJob),
                     "position" => !pawn.Spawned ? null : Child(node, "Position", "position", pawn),
-                    "needs" => pawn.needs == null ? null : Needs(node, pawn),
+                    "needs" => pawn.needs == null ? null : Needs(node, pawn,objectRead?false:VisibleOnly(args)),
                     _ => Unknown(node, field),
                 };
             case "Position":
@@ -60,7 +63,7 @@ internal static class PawnDetailsData
                 var job = (Job)node.Handle!;
                 return field switch {
                     "id" => job.GetUniqueLoadID(), "defName" => job.def?.defName,
-                    "report" => pawn.GetJobReport(), "targets" => JobTargets(node, job),
+                    "report" => objectRead && !ReferenceEquals(pawn.CurJob,job)?throw ReadContext.Error("source_changed","Captured Job is no longer current; no other Job's report is substituted."):pawn.GetJobReport(), "targets" => JobTargets(node, job),
                     _ => Unknown(node, field),
                 };
             case "JobTarget":
@@ -78,7 +81,7 @@ internal static class PawnDetailsData
                 return field switch {
                     "defName" => need.def.defName, "label" => need.LabelCap.ToString(),
                     "level" => Number(need.CurLevel), "maxLevel" => Number(need.MaxLevel),
-                    "percentage" => Number(need.CurLevelPercentage), _ => Unknown(node, field),
+                    "percentage" => Number(need.CurLevelPercentage), "visible" => need.ShowOnNeedList, _ => Unknown(node, field),
                 };
             case "Mood":
                 var mood = pawn.needs?.mood;
@@ -106,6 +109,7 @@ internal static class PawnDetailsData
                     "stageIndex" => group.Representative.CurStageIndex,
                     "moodOffset" => Number(group.Handler.MoodOffsetOfGroup(group.Representative)),
                     "memberCount" => group.Members.Count,
+                    "visible" => group.Representative.VisibleInNeedsTab,
                     "members" => Thoughts(node, group.Members, false),
                     _ => Unknown(node, field),
                 };
@@ -119,6 +123,7 @@ internal static class PawnDetailsData
                     "kind" => memory != null ? "memory" : thought is Thought_Situational ? "situational" : "other",
                     "otherPawnId" => memory?.otherPawn?.GetUniqueLoadID(),
                     "ageTicks" => memory?.age, "durationTicks" => memory?.DurationTicks,
+                    "visible" => thought.VisibleInNeedsTab,
                     _ => Unknown(node, field),
                 };
             case "Health":
@@ -127,14 +132,17 @@ internal static class PawnDetailsData
                     "summary" => Child(node, "HealthSummary", "summary", pawn.health),
                     "capacities" => Capacities(node, pawn),
                     "conditions" => Conditions(node, pawn, VisibleOnly(args)),
-                    "bodyParts" => BodyParts(node, pawn), _ => Unknown(node, field),
+                    "bodyParts" => BodyParts(node, pawn),
+                    "damagedPresentParts" => pawn.health.hediffSet.GetNotMissingParts().Where(p => pawn.health.hediffSet.GetPartHealth(p) < p.def.GetMaxHealth(pawn)).Select(p => PartNode(node, p)),
+                    "missingParts" => pawn.health.hediffSet.GetMissingPartsCommonAncestors().Where(h => h.Part != null).Select(h => PartNode(node, h.Part!)),
+                    _ => Unknown(node, field),
                 };
             case "HealthSummary":
                 return field switch {
                     "healthPercent" => Number(pawn.health?.summaryHealth?.SummaryHealthPercent),
                     "pain" => Number(pawn.health?.hediffSet?.PainTotal),
                     "bleedRate" => Number(pawn.health?.hediffSet?.BleedRateTotal),
-                    "downed" => pawn.Downed, "inPainShock" => pawn.health?.InPainShock,
+                    "dead" => pawn.Dead, "downed" => pawn.Downed, "inPainShock" => pawn.health?.InPainShock,
                     _ => Unknown(node, field),
                 };
             case "Capacity":
@@ -162,7 +170,10 @@ internal static class PawnDetailsData
                     "label" => Text(part.LabelCap), "index" => part.Index,
                     "parentKey" => part.parent == null ? null : PartKey(node, part.parent),
                     "health" => Number(pawn.health?.hediffSet?.GetPartHealth(part)),
-                    "maxHealth" => Number(part.def.GetMaxHealth(pawn)), _ => Unknown(node, field),
+                    "maxHealth" => Number(part.def.GetMaxHealth(pawn)),
+                    "isMissing" => pawn.health.hediffSet.PartIsMissing(part),
+                    "isDamaged" => !pawn.health.hediffSet.PartIsMissing(part) && pawn.health.hediffSet.GetPartHealth(part) < part.def.GetMaxHealth(pawn),
+                    _ => Unknown(node, field),
                 };
             case "Tending":
                 var tending = (HediffComp_TendDuration)node.Handle!;
@@ -241,7 +252,8 @@ internal static class PawnDetailsData
     }
 
     private static GameNode Child(GameNode parent, string kind, string key, object handle) =>
-        new(kind, parent.Key + "/" + key, parent.Owner, handle);
+        new(kind, parent.Key + "/" + key, parent.Owner, handle,
+            kind is "Trait" or "Thought" ? handle : kind=="ThoughtGroup" ? ((ThoughtGroupSource)handle).Representative : null);
     private static GameNode? Optional(GameNode parent, string kind, string key, object? handle) =>
         handle == null ? null : Child(parent, kind, key, handle);
     private static object Unknown(GameNode node, string field) =>
@@ -257,10 +269,10 @@ internal static class PawnDetailsData
     private static bool VisibleOnly(IReadOnlyDictionary<string, object?> args) =>
         !args.TryGetValue("visibleOnly", out var value) || value == null || (bool)value;
 
-    private static IEnumerable<GameNode> Needs(GameNode parent, Pawn pawn)
+    private static IEnumerable<GameNode> Needs(GameNode parent, Pawn pawn, bool visibleOnly = true)
     {
         foreach (var need in pawn.needs.AllNeeds)
-            if (need != null && need.ShowOnNeedList) yield return Child(parent, "Need", need.def.defName, need);
+            if (need != null && (!visibleOnly || need.ShowOnNeedList)) yield return Child(parent, "Need", need.def.defName, need);
     }
     private static IEnumerable<GameNode> JobTargets(GameNode parent, Job job)
     {
@@ -326,8 +338,14 @@ internal static class PawnDetailsData
     {
         foreach (var skill in pawn.skills.skills) yield return Child(parent, "Skill", skill.def.defName, skill);
     }
-    private static IEnumerable<GameNode> Stats(GameNode parent, IReadOnlyDictionary<string, object?> args)
+    private static IEnumerable<GameNode> Stats(GameNode parent, IReadOnlyDictionary<string, object?> args, bool objectRead)
     {
+        if(objectRead) {
+            var exactNames=args.TryGetValue("defNames",out var selected) && selected is IEnumerable<string> requested?new HashSet<string>(requested,StringComparer.Ordinal):null;
+            foreach(var def in DefDatabase<StatDef>.AllDefsListForReading)
+                if(exactNames==null || exactNames.Contains(def.defName))yield return Child(parent,"Stat",def.defName,new StatSource((Pawn)parent.Owner.Handle,def));
+            yield break;
+        }
         if (!args.TryGetValue("defNames", out var supplied) || supplied is not IEnumerable<object> names)
             throw ReadContext.Error("invalid_arguments", "stats requires explicit defNames.");
         foreach (var name in names)

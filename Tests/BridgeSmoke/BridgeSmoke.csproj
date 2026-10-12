@@ -32,6 +32,12 @@
     <Compile Include="..\..\Source\QueryExecution.cs" Link="QueryExecution.cs" />
     <Compile Include="../../Source/QueryResultDelivery.cs" Link="QueryResultDelivery.cs" />
     <Compile Include="../../Source/CooperativeQuery.cs;../../Source/ReadMethodDependencies.cs" Link="%(Filename)%(Extension)" />
+    <Compile Include="../../Source/ObjectReadContract.cs;../../Source/ObjectReadEngine.cs;../../Source/ObjectReadTraversal.cs;../../Source/ObjectReadOperation.cs" Link="%(Filename)%(Extension)" />
+    <Compile Include="../../Source/ObjectReadPages.cs" Link="ObjectReadPages.cs" />
+    <Compile Include="../../Source/ObjectReadDelivery.cs" Link="ObjectReadDelivery.cs" />
+    <Compile Include="../../Source/ObjectReadPredicates.cs" Link="ObjectReadPredicates.cs" />
+    <Compile Include="../../Source/ObjectReadSemantics.cs;../../Source/SituationFactsSchema.cs" Link="%(Filename)%(Extension)" />
+    <Compile Include="../../Source/ObjectFactsSchema.cs" Link="ObjectFactsSchema.cs" />
     <Compile Include="..\..\Source\GameData.cs" Link="GameData.cs" />
     <Compile Include="..\..\Source\GameQueryEngine.cs" Link="GameQueryEngine.cs" />
     <Compile Include="..\..\Source\TemplateCatalog.cs" Link="TemplateCatalog.cs" />

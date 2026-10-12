@@ -54,6 +54,7 @@ public sealed class NekoGameComponent : GameComponent
         }
 
         VerseKnowledge.Update();
+        QueryExecutor.ExpireObjectReads();
 
         var runtime = NekoRimWorldMod.Runtime;
         var tickManager = Find.TickManager;
@@ -90,6 +91,7 @@ public sealed class NekoGameComponent : GameComponent
     private void StartSession(string source)
     {
         spatial?.Dispose(); spatial = null; spatialRequest = null; spatialSession = null;
+        QueryExecutor.ClearObjectReads();
         WorldObservation.Clear();
         VerseKnowledge.StartOnce();
         GameImplementation.PrepareBehaviorReads();
@@ -145,8 +147,9 @@ public sealed class NekoGameComponent : GameComponent
 
         var next = checked(snapshotSequence + 1);
         var sampledSession = new SessionDescriptor(colonyId, loadEpoch, session.GameTick, next);
-        if (request.Payload.Operation == "query" || request.Payload.Operation == "spatial_query" || Array.IndexOf(WorldObservationContract.Operations, request.Payload.Operation) >= 0 || Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0) {
-            spatial = request.Payload.Operation == "query" ? QueryExecutor.BeginPublicQuery(request.Payload.Arguments!,sampledSession)
+        if (request.Payload.Operation == "query" || request.Payload.Operation == "read_objects" || request.Payload.Operation == "spatial_query" || Array.IndexOf(WorldObservationContract.Operations, request.Payload.Operation) >= 0 || Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0) {
+            spatial = request.Payload.Operation == "read_objects" ? QueryExecutor.BeginObjectRead(request.Payload.Arguments!, sampledSession)
+                : request.Payload.Operation == "query" ? QueryExecutor.BeginPublicQuery(request.Payload.Arguments!,sampledSession)
                 : request.Payload.Operation == "spatial_query" ? new SpatialQuery.Operation(request.Payload.Arguments!, sampledSession)
                 : Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0 ? new NativeBehaviorOperation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession)
                 : new WorldObservation.Operation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession);

@@ -13,10 +13,12 @@ internal static class Program
 {
     private const string Token = "0123456789abcdef0123456789abcdef";
 
-    public static int Main()
+    public static int Main(string[] args)
     {
         try
         {
+            if(Array.IndexOf(args,"--object-read-catalog")>=0) { Console.WriteLine(new GameQueryEngine().Execute("query_catalog",new JObject(),null!,new SessionDescriptor(new string('2',32),new string('3',32),1,1)).Data);return 0; }
+            if(Array.IndexOf(args,"--object-read")>=0) { var capture=Array.IndexOf(args,"--object-read-capture");ObjectReadTests.Run(capture>=0?args[capture+1]:null);return 0; }
             SpatialContractTests.Run();
             SpatialRouteTests.Run();
             KnowledgeTests.Run();
@@ -35,6 +37,7 @@ internal static class Program
             ThingQueryTests.Run();
             PublicQueryTests.Run();
             PublicQueryTests.RunEvidence();
+            ObjectReadTests.Run();
             ResourceReportTests.Run();
             ProtocolRoundTrip();
             AuthenticationMatchesCrossLanguageVector();

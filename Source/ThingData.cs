@@ -151,6 +151,10 @@ internal static class ThingData
 
     private static IEnumerable<Thing> Descendants(IThingHolder holder, ReadContext context, HashSet<IThingHolder> visited, HashSet<Thing> seen, int depth)
     {
+        if (context.ObjectReadMode) {
+            foreach (var item in ObjectDescendants(holder, context, visited, seen)) yield return item;
+            yield break;
+        }
         context.Check();
         if (!visited.Add(holder)) yield break;
         if (depth > 24 || visited.Count > 16384) throw ReadContext.Error("holder_scan_limit", "Holder lookup exceeded its scan limit; narrow the map.");
@@ -164,6 +168,23 @@ internal static class ThingData
         foreach (var child in children)
             if (child != null) foreach (var thing in Descendants(child, context, visited, seen, depth + 1)) yield return thing;
     }
+    private static IEnumerable<Thing> ObjectDescendants(IThingHolder first, ReadContext context, HashSet<IThingHolder> visited, HashSet<Thing> seen)
+    {
+        GameImplementation.RequireKnownBinary();
+        var pending = new Stack<IThingHolder>(); pending.Push(first);
+        while (pending.Count > 0) {
+            context.Check(); var holder = pending.Pop();
+            if (!visited.Add(holder)) continue;
+            WorldNativeAccess.RequireNative(holder, "GetDirectlyHeldThings", "GetChildHolders");
+            var own = holder.GetDirectlyHeldThings();
+            if (own != null) foreach (var thing in own) {
+                context.Check();
+                if (!thing.Destroyed && seen.Add(thing)) yield return thing;
+            }
+            var children = new List<IThingHolder>(); holder.GetChildHolders(children);
+            for (var index = children.Count - 1; index >= 0; index--) if (children[index] != null) pending.Push(children[index]);
+        }
+    }
     private static bool Match(string? search, params string?[] values) => search == null || values.Any(value => value?.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0);
 
     /// <summary>最近的持有者 Pawn，沿容器链向上查找；仅沿真实持有关系，不做所有权推断。</summary>
@@ -172,6 +193,18 @@ internal static class ThingData
         var holder = thing.ParentHolder;
         for (var depth = 0; holder != null && depth < 32; depth++)
         {
+            if (holder is Pawn pawn) return pawn;
+            holder = holder.ParentHolder;
+        }
+        return null;
+    }
+    private static Pawn? ObjectHeldByPawn(Thing thing, ReadContext context)
+    {
+        var seen = new HashSet<IThingHolder>(new IdentityComparer<IThingHolder>());
+        var holder = thing.ParentHolder;
+        while (holder != null) {
+            context.Check();
+            if (!seen.Add(holder)) throw ReadContext.Error("containment_cycle", "Holder chain contains a cycle.");
             if (holder is Pawn pawn) return pawn;
             holder = holder.ParentHolder;
         }
@@ -194,6 +227,8 @@ internal static class ThingData
         if (node.Kind is "Thing" or "ThingReference")
         {
             var t = (Thing)h;
+            if (field is "health" or "profile" or "mood" or "status" or "skills" or "needs")
+                return t is Pawn ? PawnDetailsData.Read(new GameNode("Pawn", node.Key, node.Owner, t), field, args,context.ObjectReadMode) : null;
             return field switch
             {
                 "capabilities" => ThingCapabilities.For(t).ToArray(),
@@ -213,11 +248,11 @@ internal static class ThingData
                 // 这是**事实合成**，不是推断："这件东西在谁手里、那个人属于哪个派系"
                 // 每一环都是原生事实；实测里“库存里的黄金是我的物资”就是因为缺少这一环
                 // 而只能靠模型猜（Thing.Faction 对散落物与建筑恒为 null）。
-                "HeldBy" => HeldByPawn(t) is Pawn holder ? Node(holder, "ThingReference") : null,
-                "HeldByFaction" => HeldByPawn(t) is Pawn owner ? Wrap(node, "Faction", field, owner.Faction) : null,
-                "GetDirectlyHeldThings" => t is IThingHolder holder ? Wrap(node, "ThingOwner", field, holder.GetDirectlyHeldThings()) : null,
+                "HeldBy" => (context.ObjectReadMode ? ObjectHeldByPawn(t, context) : HeldByPawn(t)) is Pawn holder ? Node(holder, "ThingReference") : null,
+                "HeldByFaction" => (context.ObjectReadMode ? ObjectHeldByPawn(t, context) : HeldByPawn(t)) is Pawn owner ? Wrap(node, "Faction", field, owner.Faction) : null,
+                "GetDirectlyHeldThings" => t is IThingHolder holder ? Wrap(node, "ThingOwner", field, DirectContents(holder,context)) : null,
                 "AllComps" => t is ThingWithComps wc ? Components(node, wc) : null,
-                "stats" => Stats(node, t, args), _ => Unknown(node, field),
+                "stats" => Stats(node, t, args,context.ObjectReadMode), _ => Unknown(node, field),
             };
         }
         if (node.Kind == "Faction")
@@ -291,8 +326,14 @@ internal static class ThingData
             yield return Wrap(parent, kind, "comps/" + i, comp)!;
         }
     }
-    private static IEnumerable<GameNode> Stats(GameNode parent, Thing t, IReadOnlyDictionary<string, object?> args)
+    private static IEnumerable<GameNode> Stats(GameNode parent, Thing t, IReadOnlyDictionary<string, object?> args,bool objectRead)
     {
+        if(objectRead) {
+            var selected=Strings(args,"defNames");var exact=selected==null?null:new HashSet<string>(selected,StringComparer.Ordinal);
+            foreach(var stat in DefDatabase<StatDef>.AllDefsListForReading)
+                if(exact==null || exact.Contains(stat.defName))yield return Wrap(parent,"NativeStat","stat/"+stat.defName,stat)!;
+            yield break;
+        }
         var names = Strings(args, "defNames");
         if (names == null || names.Length < 1 || names.Length > 16) throw ReadContext.Error("invalid_arguments", "stats requires 1..16 explicit definition names.");
         foreach (var name in names)
@@ -300,6 +341,10 @@ internal static class ThingData
             var stat = DefDatabase<StatDef>.GetNamedSilentFail(name) ?? throw ReadContext.Error("unknown_stat", "Unknown StatDef: " + name);
             yield return Wrap(parent, "NativeStat", "stat/" + name, stat)!;
         }
+    }
+    private static ThingOwner? DirectContents(IThingHolder holder,ReadContext context) {
+        if(context.ObjectReadMode)WorldNativeAccess.RequireNative(holder,"GetDirectlyHeldThings");
+        return holder.GetDirectlyHeldThings();
     }
     private sealed class IdentityComparer<T> : IEqualityComparer<T> where T : class
     {

@@ -42,14 +42,14 @@ internal static class PawnSchema
         Scalars(status, "b:downed b:drafted b:dead b:inMentalState s:mentalState");
         Scalars(position, "i:x i:y i:z s:mapId"); Scalars(job, "s:id s:defName s:report");
         Scalars(target, "e:slot:Verse.AI.TargetIndex s:kind s:thingId s:mapId i:x i:y i:z");
-        Scalars(need, "s:defName s:label f:level f:maxLevel f:percentage");
+        Scalars(need, "s:defName s:label f:level f:maxLevel f:percentage b:visible");
         Scalars(mood, "f:level f:instant"); Scalars(thresholds, "f:minor f:major f:extreme");
-        Scalars(group, "s:defName s:label i:stageIndex f:moodOffset i:memberCount");
-        Scalars(thought, "s:ref s:referenceScope s:defName s:label s:description i:stageIndex f:moodOffset s:kind s:otherPawnId i:ageTicks i:durationTicks");
-        Scalars(summary, "f:healthPercent f:pain f:bleedRate b:downed b:inPainShock");
+        Scalars(group, "s:defName s:label i:stageIndex f:moodOffset i:memberCount b:visible");
+        Scalars(thought, "s:ref s:referenceScope s:defName s:label s:description i:stageIndex f:moodOffset s:kind s:otherPawnId i:ageTicks i:durationTicks b:visible");
+        Scalars(summary, "f:healthPercent f:pain f:bleedRate b:dead b:downed b:inPainShock");
         Scalars(capacity, "s:defName s:label f:level");
         Scalars(condition, "s:id s:defName s:label s:description f:severity s:severityLabel b:visible");
-        Scalars(part, "s:key s:defName s:label i:index s:parentKey f:health f:maxHealth");
+        Scalars(part, "s:key s:defName s:label i:index s:parentKey f:health f:maxHealth b:isMissing b:isDamaged");
         Scalars(tending, "b:isTended f:quality i:ticksLeft"); Scalars(immunity, "f:level b:fullyImmune");
         Scalars(profile, "e:gender:Verse.Gender s:raceDefName s:kindDefName");
         Scalars(statDefinition, "s:defName s:label s:description");
@@ -78,12 +78,21 @@ internal static class PawnSchema
         Collection(mood, "thoughtGroups", group, VisibleArguments()); Collection(mood, "memories", thought, VisibleArguments());
         Collection(group, "members", thought);
         Child(health, "summary", summary); Collection(health, "capacities", capacity);
+        Collection(health, "damagedPresentParts", part);
+        Collection(health, "missingParts", part);
         Collection(health, "conditions", condition, VisibleArguments()); Collection(health, "bodyParts", part);
         Child(condition, "part", part); Child(condition, "tending", tending); Child(condition, "immunity", immunity);
+        condition.GetField("tending")!.Metadata["object_null_status"]="not_applicable";
+        condition.GetField("immunity")!.Metadata["object_null_status"]="not_applicable";
         Child(profile, "age", age); Collection(profile, "backstories", backstory);
         Collection(profile, "traits", trait); Collection(profile, "skills", skill);
+        profile.GetField("traits")!.Metadata["object_capture"] = "values";
+        mood.GetField("thoughtGroups")!.Metadata["object_capture"] = "values";
+        mood.GetField("memories")!.Metadata["object_capture"] = "values";
+        group.GetField("members")!.Metadata["object_capture"] = "values";
+        health.GetField("bodyParts")!.Metadata["object_capture"] = "immutable";
         var pawn = new ObjectGraphType { Name = "Pawn", Description = "Native Verse.Pawn instance, including humans, animals, mechanoids and other Pawn kinds; Pawn does not mean human or colonist. The selected root determines the population; id joins the same instance." };
-        Scalars(pawn, "b:isFreeColonist b:isColonist b:isPrisonerOfColony b:isSlaveOfColony e:guestStatus:RimWorld.GuestStatus");
+        Scalars(pawn, "b:spawned b:destroyed b:isFreeColonist b:isColonist b:isPrisonerOfColony b:isSlaveOfColony e:guestStatus:RimWorld.GuestStatus");
         pawn.GetField("isFreeColonist")!.Description = "Native Pawn.IsFreeColonist: this pawn is a free member of the player faction. This is the native membership test, not an inference from kind, name or carried items.";
         pawn.GetField("isColonist")!.Description = "Native Pawn.IsColonist: player-faction colonist. Distinct from IsFreeColonist (a colonist can be a slave or prisoner).";
         pawn.GetField("isPrisonerOfColony")!.Description = "Native Pawn.IsPrisonerOfColony.";
@@ -118,6 +127,18 @@ internal static class PawnSchema
         Collection(pawn, "stats", stat, new QueryArguments(GameArguments.Create("defNames",
             new NonNullGraphType(new ListGraphType(new NonNullGraphType(new StringGraphType()))),
             "Explicit StatDef names, 1..16. No automatic relevance selection.", new JObject { ["minItems"] = 1, ["maxItems"] = 16 })), 16);
+        Collection(pawn, "needs", need, VisibleArguments());
+        Collection(pawn, "skills", skill);
+        native.ObjectFacts.Attach(pawn);
+        // A Pawn is also a Thing. Preserve direct Thing addressing without eager Pawn expansion.
+        foreach (var name in new[] { "health", "profile", "mood", "status", "skills", "needs" }) {
+            var original = pawn.GetField(name)!;
+            var shared = Add(native.Thing, name, original.ResolvedType!, c => State(c).ReadNode((GameNode)c.Source!, name, Arguments(c)), original.Arguments == null ? null : new QueryArguments(original.Arguments.ToArray()));
+            foreach (var metadata in original.Metadata) shared.Metadata[metadata.Key] = metadata.Value;
+            shared.Metadata["node_member"] = true;
+            shared.Metadata["object_null_status"] = "not_applicable";
+            shared.Description = "Pawn facts when this Thing is a Pawn; otherwise not applicable. Only selected fields are read.";
+        }
         return pawn;
     }
     private static GameNode PawnNode(GameEntity entity) => new("Pawn", "pawn", entity, entity.Handle);

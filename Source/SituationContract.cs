@@ -14,12 +14,16 @@ internal static class SituationContract
         ["version"] = Version,
         ["operation"] = Operation,
         ["event_window_ticks"] = EventWindowTicks,
+        ["capabilities"] = new JArray("alerts_cached", "event_identity", "quest_state"),
         ["parameters"] = new JObject {
             ["type"] = "object", ["additionalProperties"] = false,
             ["properties"] = new JObject { ["map"] = WorldObservationContract.Text() }
         },
-        ["description"] = "Current situation digest in native units: clock, one entry per active GameCondition, one entry per hostile Lord with visible members, and archived letters plus threat messages of the last game day. Identity only (labels, defs, ticks, subject IDs); read details with object/state reads. Dismissing a letter in the UI does not remove it from the archive."
+        ["description"] = "Current situation digest in native units: clock, active GameConditions, hostile Lords with visible members, cached game UI alerts, and archived letters plus threat messages of the last game day. Directly linked pending/ongoing Quest events remain beyond that window while archived. Stable native IDs and explicit relations support consolidation; a shared target or Quest alone does not establish the same issue. Cached alerts are global, not selected-map complete. Read details with object/state reads."
     };
+
+    internal static bool RetainEvent(int now, int created, string? questState) =>
+        now - created <= EventWindowTicks || questState is "NotYetAccepted" or "Ongoing";
 
     internal static void Validate(JObject arguments)
     {

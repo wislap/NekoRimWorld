@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using GraphQL;
 using Newtonsoft.Json.Linq;
 using RimWorld;
@@ -25,19 +26,21 @@ internal static class SituationObservation
             result["clock"] = Clock(map);
             result["conditions"] = Conditions(map);
             ReadThreatGroups(map, result);
-            result["events"] = Events();
+            result["events"] = Events(result);
+            ReadAlerts(result);
         } catch (ExecutionError error) when (error.Code is "invalid_arguments" or "object_unavailable" or "unsupported_game_implementation") {
             return QueryOutcome.Failure(error.Code!, error.Message);
         }
         result["scope"] = new JObject {
             ["conditions"] = "Active GameConditions of the selected map and of the world; one entry per condition.",
             ["threat_groups"] = "One entry per Lord whose faction is hostile to the player and that has visible spawned members on the selected map. Fogged members are not listed. Hostile pawns outside a Lord, such as manhunter animals, are not threat groups; use inspect_threats for current hostile targets.",
-            ["events"] = "Game archive entries created within the last " + SituationContract.EventWindowTicks + " ticks: every letter, and messages of threat types only. The game culls old unpinned archive entries; culled entries are unavailable, not absent.",
+            ["events"] = "Game archive entries created within the last " + SituationContract.EventWindowTicks + " ticks: every letter, and messages of threat types only. Older entries remain only with a direct NotYetAccepted/Ongoing Quest reference. Native Quest state is not an inferred incident resolution. The game culls old unpinned archive entries; culled entries are unavailable, not absent.",
+            ["alerts"] = "Global game UI active-alert cache (all maps/caravans as defined by each alert), not a selected-map scan or a fresh evaluation. Cache updates are staggered across frames; no report, explanation, culprit computation or refresh is invoked. A unique direct QuestPart cached-alert reference may attach its visible Quest; shared labels/targets are not relations. Missing alerts do not establish absence of problems. No stable native alert ID or start time exists in this cache.",
             ["subjects"] = "Humanlike pawns are listed by ID. Other things are grouped by definition with a count; a group of one carries its ID. Cells and world objects are listed directly."
         };
         var finished = Find.TickManager.TicksGame;
         session.GameTick = finished;
-        var partial = result["threat_groups_unavailable"] != null;
+        var partial = result["threat_groups_unavailable"] != null || result["alerts_unavailable"] != null || result["quest_state_unavailable"] != null;
         result["status"] = partial ? "partial" : "ok";
         result["read_only"] = true;
         result["sample"] = new JObject { ["load_epoch"] = session.LoadEpoch, ["started_tick"] = started, ["finished_tick"] = finished, ["same_tick"] = started == finished, ["atomic"] = false };
@@ -70,6 +73,7 @@ internal static class SituationObservation
             foreach (var condition in manager.ActiveConditions) {
                 if (condition?.def == null) continue;
                 rows.Add(new JObject {
+                    ["id"] = condition.GetUniqueLoadID(),
                     ["def"] = condition.def.defName,
                     ["label"] = Text(condition.LabelCap),
                     ["scope"] = scope,
@@ -100,6 +104,7 @@ internal static class SituationObservation
                 .Concat(lord.ownedBuildings.Where(b => b != null && b.Spawned && b.Map == map && !b.Fogged())).ToList();
             if (visible.Count == 0) continue;
             rows.Add(new JObject {
+                ["id"] = lord.GetUniqueLoadID(),
                 ["lord"] = lord.GetUniqueLoadID(),
                 ["faction"] = new JObject { ["id"] = lord.faction.GetUniqueLoadID(), ["name"] = lord.faction.Name, ["def"] = lord.faction.def?.defName },
                 ["lord_job"] = lord.LordJob?.GetType().Name,
@@ -110,7 +115,7 @@ internal static class SituationObservation
         result["threat_groups"] = rows;
     }
 
-    private static JArray Events()
+    private static JArray Events(JObject result)
     {
         var archive = Find.Archive;
         var now = Find.TickManager.TicksGame;
@@ -118,17 +123,107 @@ internal static class SituationObservation
         foreach (var entry in archive.ArchivablesListForReading) {
             if (entry == null) continue;
             var tick = entry.CreatedTicksGame;
-            if (now - tick > SituationContract.EventWindowTicks) continue;
             string kind, def;
             if (entry is Letter letter) { kind = "letter"; def = letter.def?.defName ?? "unknown"; }
             else if (entry is Message message && (message.def == MessageTypeDefOf.ThreatBig || message.def == MessageTypeDefOf.ThreatSmall)) { kind = "message"; def = message.def.defName; }
             else continue;
-            rows.Add(new JObject {
+            var quest = entry is ChoiceLetter choice ? choice.quest : (entry as Message)?.quest;
+            var questInfo = quest != null ? VisibleQuest(quest, result) : null;
+            if (!SituationContract.RetainEvent(now, tick, (string?)questInfo?["state"])) continue;
+            var row = new JObject {
+                ["id"] = ((ILoadReferenceable)entry).GetUniqueLoadID(),
                 ["kind"] = kind, ["def"] = def, ["label"] = Text(entry.ArchivedLabel), ["tick"] = tick,
                 ["pinned"] = archive.IsPinned(entry), ["subjects"] = Targets(entry.LookTargets),
-            });
+            };
+            if (questInfo != null) row["quest"] = questInfo;
+            rows.Add(row);
         }
         return rows;
+    }
+
+    // Field reads intentionally bypass arbitrary Mod getters/GetReport. The audited
+    // Alert.Recalculate caches only active/label, not a generic culprit report.
+    private static void ReadAlerts(JObject result)
+    {
+        const BindingFlags fields = BindingFlags.Instance | BindingFlags.NonPublic;
+        var readout = Find.Alerts;
+        var activeField = typeof(AlertsReadout).GetField("activeAlerts", fields);
+        var cachedActive = typeof(Alert).GetField("cachedActive", fields);
+        var cachedLabel = typeof(Alert).GetField("cachedLabel", fields);
+        var priority = typeof(Alert).GetField("defaultPriority", fields);
+        var partAlert = typeof(QuestPartActivable).GetField("cachedAlert", fields);
+        if (readout == null || activeField == null || cachedActive == null || cachedLabel == null || priority == null) {
+            result["alerts"] = null;
+            result["alerts_unavailable"] = new JObject { ["reason"] = "alert_cache_unavailable" };
+            return;
+        }
+        if (Math.Max(Find.TickManager.TicksGame, Find.TutorialState.endTick) < 600) {
+            result["alerts"] = null;
+            result["alerts_unavailable"] = new JObject { ["reason"] = "alert_cache_start_delay", ["message"] = "The game has not reached the alert cache update threshold (600 ticks)." };
+            return;
+        }
+        if (Find.Storyteller.def.disableAlerts) {
+            result["alerts"] = null;
+            result["alerts_unavailable"] = new JObject { ["reason"] = "alerts_disabled_by_storyteller" };
+            return;
+        }
+        if (activeField.GetValue(readout) is not List<Alert> active) {
+            result["alerts"] = null;
+            result["alerts_unavailable"] = new JObject { ["reason"] = "alert_cache_unavailable" };
+            return;
+        }
+        var rows = new JArray();
+        foreach (var alert in active) {
+            if (alert == null || !(bool)cachedActive.GetValue(alert)) continue;
+            var row = new JObject {
+                ["type"] = alert.GetType().FullName,
+                ["label"] = Text((string?)cachedLabel.GetValue(alert)),
+                ["active"] = true,
+            };
+            // Vanilla inherits this field-only getter; arbitrary overrides are
+            // not invoked and their default field must not masquerade as priority.
+            if (alert.GetType().GetProperty(nameof(Alert.Priority))?.GetMethod?.DeclaringType == typeof(Alert))
+                row["priority"] = priority.GetValue(alert).ToString();
+            else row["priority_unavailable"] = "overridden_priority_not_evaluated";
+            var quest = OwningQuest(alert, partAlert);
+            var questInfo = quest != null ? VisibleQuest(quest, result) : null;
+            if (questInfo != null) row["quest"] = questInfo;
+            rows.Add(row);
+        }
+        result["alerts"] = rows;
+    }
+
+    private static Quest? OwningQuest(Alert alert, FieldInfo? partAlert)
+    {
+        if (partAlert == null || Find.QuestManager == null) return null;
+        Quest? owner = null;
+        foreach (var quest in Find.QuestManager.QuestsListForReading) {
+            foreach (var part in quest.PartsListForReading) {
+                // Never invoke QuestPartActivable.CachedAlert: its getter
+                // computes reports and may create/replace the cached Alert.
+                if (part is not QuestPartActivable || !ReferenceEquals(partAlert.GetValue(part), alert)) continue;
+                if (owner != null && !ReferenceEquals(owner, quest)) return null;
+                owner = quest;
+            }
+        }
+        return owner;
+    }
+
+    private static JObject? VisibleQuest(Quest quest, JObject result)
+    {
+        if (quest.hidden || quest.hiddenInUI) return null;
+        // Use native state and existing dependency/patch guards; never recreate
+        // expiry/outcome rules. A failure stays explicit for the whole read.
+        if (result["quest_state_unavailable"] == null) {
+            try { GameImplementation.RequireInspected((typeof(Quest), "get_State")); }
+            catch (ExecutionError error) {
+                result["quest_state_unavailable"] = new JObject { ["reason"] = error.Code, ["message"] = error.Message };
+            }
+        }
+        var row = new JObject { ["id"] = quest.GetUniqueLoadID(), ["state"] = null };
+        if (result["quest_state_unavailable"] is JObject unavailable) row["state_unavailable"] = unavailable.DeepClone();
+        else row["state"] = quest.State.ToString();
+        return row;
     }
 
     private static JArray Targets(LookTargets? targets)

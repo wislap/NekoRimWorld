@@ -26,6 +26,14 @@ internal static class SituationContractTests
         var properties = ((JObject)catalog["parameters"]!["properties"]!).Properties().Select(p => p.Name).ToArray();
         if (!properties.SequenceEqual(new[] { "map" }))
             throw new Exception("Situation must not expose caps, windows or filters as arguments");
-        Console.WriteLine("Situation contract tests passed: map-only arguments, no caps, one-day window.");
+        if (!((JArray)catalog["capabilities"]!).Values<string>().SequenceEqual(new[] { "alerts_cached", "event_identity", "quest_state" }))
+            throw new Exception("Situation additive capabilities must describe alerts, event identity and native Quest state");
+        foreach (var state in new[] { "NotYetAccepted", "Ongoing" })
+            if (!SituationContract.RetainEvent(180001, 1, state)) throw new Exception("Pending/ongoing Quest event was aged out: " + state);
+        foreach (var state in new string?[] { null, "EndedSuccess", "EndedFailed", "EndedOfferExpired", "EndedInvalid", "EndedUnknownOutcome", "unknown" }) {
+            if (SituationContract.RetainEvent(60002, 1, state)) throw new Exception("Finished/unlinked old event retained: " + state);
+            if (!SituationContract.RetainEvent(60001, 1, state)) throw new Exception("Recent event at inclusive window boundary omitted: " + state);
+        }
+        Console.WriteLine("Situation contract tests passed: map-only arguments, additive capabilities, one-day boundary and native pending/ongoing Quest retention.");
     }
 }

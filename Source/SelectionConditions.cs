@@ -316,7 +316,7 @@ internal sealed class SelectionConditions
             context.Check(); var entry = pending.Dequeue();
             var identity = entry.Value is GameNode n ? n.Handle ?? n : entry.Value;
             if (!seen.Add(identity)) continue;
-            if (++nodes > MaxNodes || entry.Depth > MaxDepth) throw ReadContext.Error("filter_limit", "Transitive relation exceeds condition limits.");
+            if ((++nodes > MaxNodes || entry.Depth > MaxDepth) && !context.ObjectReadMode) throw ReadContext.Error("filter_limit", "Transitive relation exceeds condition limits.");
             if (includeSelf || entry.Depth > 0) yield return entry.Value;
             var next = ReadField(owner, field, entry.Value, arguments, context);
             if (next == null) continue;
@@ -326,7 +326,7 @@ internal sealed class SelectionConditions
     }
     private static bool? Quantify(IEnumerable values, Predicate predicate, string mode, ReadContext context)
     {
-        IEnumerable<bool?> Results() { var count = 0; foreach (var value in values) { context.Check(); if (++count > 8192) throw ReadContext.Error("filter_limit", "Predicate collection exceeds 8192 elements."); yield return Evaluate(predicate, value, context); } }
+        IEnumerable<bool?> Results() { var count = 0; foreach (var value in values) { context.Check(); if (++count > 8192 && !context.ObjectReadMode) throw ReadContext.Error("filter_limit", "Predicate collection exceeds 8192 elements."); yield return Evaluate(predicate, value, context); } }
         var result = Combine(Results(), mode == "every");
         return mode == "none" ? !result : result;
     }

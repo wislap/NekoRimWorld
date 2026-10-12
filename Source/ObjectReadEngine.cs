@@ -312,7 +312,13 @@ internal sealed partial class ObjectReadEngine
         if(locator.Root=="situation")return new[]{run.Context.NativeRoot("situation",args)!};
         throw ReadContext.Error("unknown_target","Unsupported source.");
     }
-    private static string Key(object value)=>value is GameEntity entity?entity.Id:value is GameNode node?node.Key:"game";
+    // GameNode.Key is unique only within its owner (every pawn's health is "pawn/health"). Member identity,
+    // child-source keys, lookups and public anchors derive from this key, so it must be owner-qualified.
+    private static string Key(object value)=>value is GameEntity entity?entity.Id:value is GameNode node?OwnedKey(node):"game";
+    private static string OwnedKey(GameNode node) {
+        var owner=node.Owner.Id;
+        return node.Key==owner || node.Key.StartsWith(owner+"/",StringComparison.Ordinal)?node.Key:owner+"/"+node.Key;
+    }
     private static object? Identity(object value)=>value is GameNode node?node.RecordIdentity:null;
     private IEnumerable<object> ResolveCollection(Locator locator,Run run) {
         if(locator.Parent==null)return ReadRoot(locator,run);

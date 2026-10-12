@@ -73,6 +73,37 @@ internal static class ObjectReadTests
         var inventoryCount=((JArray)allInventory["rows"]![0]!["readings"]![0]!["rows"]![0]!["readings"]![0]!["rows"]!).Count;
         Require(inventoryCount==137 && source.InventoryReads==137,"Inventory beyond100 was lost or unselected columns were read.",inventoryResult);
 
+        // Native child keys are owner-local ("pawn/health/summary" for every pawn). Several pawns in one
+        // read must still keep their own nested facts, and the anchor must say whose fact it is.
+        var people=Input("[{field:'health',children:[{field:'summary',columns:['pain']}]},{field:'profile',children:[{field:'skills',columns:['def_name','level']}]}]","people");
+        people["target"]!["where"]=JObject.Parse("{id:{in:['pawn0','pawn1','pawn2']}}");
+        foreach(var attempt in new[]{"fresh","same-lease"}) {
+            var peopleResult=Read(people);var everyone=new JObject();
+            while(true) {
+                Require(peopleResult.Status=="ok","Multi-pawn nested read failed ("+attempt+").",peopleResult);
+                ObjectReadPages.Merge(everyone,peopleResult.Data!);
+                if((bool?)peopleResult.Data?["delivery"]?["end_of_projection"]==true)break;
+                peopleResult=Follow(peopleResult,"people");
+            }
+            var pawnRows=(JArray)everyone["rows"]!;Require(pawnRows.Count==3,"Multi-pawn read lost roots ("+attempt+").",peopleResult);
+            foreach(var row in pawnRows) {
+                var id=(string)row["anchor"]!["id"]!;var index=int.Parse(id.Substring("pawn".Length));
+                var summary=row["readings"]![0]!["rows"]![0]!["readings"]![0]!["rows"]![0]!;
+                Require(Math.Abs((double)summary["values"]!["pain"]!-index*0.1)<1e-9,"Health summary of "+id+" came from another pawn ("+attempt+").",peopleResult);
+                Require(((string)summary["anchor"]!["id"]!).StartsWith(id+"/",StringComparison.Ordinal),"Nested anchor does not identify its owner "+id+" ("+attempt+").",peopleResult);
+                var skills=(JArray)row["readings"]![1]!["rows"]![0]!["readings"]![0]!["rows"]!;
+                Require(skills.Count==2 && skills.All(s=>(int)s["values"]!["level"]! == MutableData.SkillLevel(index,(string)s["values"]!["def_name"]!)),"Skills of "+id+" came from another pawn ("+attempt+").",peopleResult);
+            }
+        }
+        var carried=Input("[{field:'gear',children:[{field:'inventory',columns:['stack_count'],page:{size:2}}]}]","people-gear");
+        carried["target"]!["where"]=JObject.Parse("{id:{in:['pawn0','pawn1']}}");
+        var carriedResult=Read(carried);Require(carriedResult.Status=="ok","Multi-pawn inventory read failed.",carriedResult);
+        foreach(var row in (JArray)carriedResult.Data!["rows"]!) {
+            var id=(string)row["anchor"]!["id"]!;
+            var items=(JArray)row["readings"]![0]!["rows"]![0]!["readings"]![0]!["rows"]!;
+            Require(items.Count>0 && items.All(i=>((string)i["anchor"]!["id"]!).StartsWith(id+"-item",StringComparison.Ordinal)),"Inventory of "+id+" came from another pawn.",carriedResult);
+        }
+
         source.TraitReads=0;
         var traits=Input("[{field:'profile',children:[{field:'traits',columns:['def_name','degree'],page:{size:20}}]}]","traits");traits["target"]!["where"]=JObject.Parse("{id:{eq:'pawn0'}}");
         var traitResult=Read(traits);Require(traitResult.Status=="ok" && source.TraitReads==40,"ID-less source eagerly expanded selected values beyond this page.",traitResult);
@@ -267,9 +298,15 @@ internal static class ObjectReadTests
             if(node.Kind=="ObjectSituation" && field=="clock")return new GameNode("ObjectSituationClock",node.Key+"/clock",node.Owner,new object());
             if(node.Kind=="ObjectSituation" && field=="alerts") { OnAlertRead?.Invoke();return UnavailableAlerts(); }
             if(node.Kind=="ObjectSituationClock" && field=="paused") { OnClockRead?.Invoke();return true; }
-            if(node.Kind=="Pawn" && field=="health")return new GameNode("Health",node.Owner.Id+"/health",node.Owner,new object());
-            if(node.Kind=="Pawn" && field=="profile")return new GameNode("Profile",node.Owner.Id+"/profile",node.Owner,new object());
-            if(node.Kind=="Pawn" && field=="gear")return new GameNode("ObjectGear",node.Owner.Id+"/gear",node.Owner,new object());
+            // Child keys follow the native Child(): parent.Key+"/"+key, where every Pawn node is "pawn".
+            // They are unique only within their owner, exactly like the game implementation.
+            if(node.Kind=="Pawn" && field=="health")return new GameNode("Health",node.Key+"/health",node.Owner,new object());
+            if(node.Kind=="Pawn" && field=="profile")return new GameNode("Profile",node.Key+"/profile",node.Owner,new object());
+            if(node.Kind=="Pawn" && field=="gear")return new GameNode("ObjectGear",node.Key+"/gear",node.Owner,new object());
+            if(node.Kind=="Health" && field=="summary")return new GameNode("HealthSummary",node.Key+"/summary",node.Owner,new object());
+            if(node.Kind=="HealthSummary" && field=="pain")return OwnerIndex(node)*0.1;
+            if(node.Kind=="Profile" && field=="skills")return new[]{"Medicine","Cooking"}.Select(n=>new GameNode("Skill",node.Key+"/"+n,node.Owner,n));
+            if(node.Kind=="Skill") { if(field=="defName")return node.Handle;if(field=="level")return SkillLevel(OwnerIndex(node),(string)node.Handle!); }
             if(node.Kind=="Thing" && field=="state")return new GameNode("ObjectState",node.Key+"/state",node.Owner,node.Handle);
             if(node.Kind=="ObjectState" && field=="condition")return new GameNode("ObjectCondition",node.Key+"/condition",node.Owner,node.Handle);
             if(node.Kind=="ObjectState" && field=="containment")return new GameNode("ObjectContainment",node.Key+"/containment",node.Owner,node.Handle);
@@ -277,17 +314,19 @@ internal static class ObjectReadTests
             if(node.Kind=="Thing" && field=="Spawned")return false;
             if(node.Kind=="Thing" && field=="capabilities")return LongCapability?Enumerable.Range(0,LargeCapabilities?8000:1).Select(i=>i==0?LongCapabilityText:"capability"+i):LargeCapabilities?Enumerable.Range(0,8000).Select(i=>"capability"+i):new[]{"fuel","bill_giver"};
             if(node.Kind=="Thing" && field=="id")return node.Key;
-            if(node.Kind=="ObjectGear" && field=="inventory")return Enumerable.Range(0,137).Select(i=>new GameNode("Thing","item"+i,new GameEntity("item"+i,"map1",i),i));
+            if(node.Kind=="ObjectGear" && field=="inventory")return Enumerable.Range(0,137).Select(i=>new GameNode("Thing",node.Owner.Id+"-item"+i,new GameEntity(node.Owner.Id+"-item"+i,"map1",i),i));
             if(node.Kind=="Thing" && field=="stackCount") { InventoryReads++;return 1; }
-            if(node.Kind=="Profile" && field=="traits")return (TraitsReversed?Enumerable.Range(0,137).Reverse():Enumerable.Range(0,137)).Where(i=>!RemovedTraits.Contains(i)).Select(i=>new GameNode("Trait",node.Owner.Id+"/trait"+(DuplicateTraitKeys?"same":i.ToString()),node.Owner,i,TraitIdentities[i]));
+            if(node.Kind=="Profile" && field=="traits")return (TraitsReversed?Enumerable.Range(0,137).Reverse():Enumerable.Range(0,137)).Where(i=>!RemovedTraits.Contains(i)).Select(i=>new GameNode("Trait",node.Key+"/trait"+(DuplicateTraitKeys?"same":i.ToString()),node.Owner,i,TraitIdentities[i]));
             if(node.Kind=="Trait") { TraitReads++;return field=="defName"?"Trait"+node.Handle:field=="degree"?node.Handle:field=="description"?TraitDescription:field=="suppressed"?(int)node.Handle!%2!=0:null; }
-            if(node.Kind=="Pawn" && field=="stats")return (arguments.TryGetValue("defNames",out var selected)?(IEnumerable<object?>)selected!:Enumerable.Range(0,137).Select(i=>(object?)("Stat"+i))).Select(n=>new GameNode("Stat",node.Owner.Id+"/stat"+n,node.Owner,n));
+            if(node.Kind=="Pawn" && field=="stats")return (arguments.TryGetValue("defNames",out var selected)?(IEnumerable<object?>)selected!:Enumerable.Range(0,137).Select(i=>(object?)("Stat"+i))).Select(n=>new GameNode("Stat",node.Key+"/"+n,node.Owner,n));
             if(node.Kind=="Stat") { if(field=="defName")return node.Handle;if(field=="value") { StatReads++;return 4d; } }
             if(node.Kind=="Health" && field=="bodyParts")return Enumerable.Range(0,137).Select(i=>new GameNode("BodyPart",node.Owner.Id+"/part"+i,node.Owner,i));
             if(node.Kind=="BodyPart") { PartReads++;return field=="index"?node.Handle:field=="health"?10d:null; }
             if(node.Kind=="Pawn" && field=="id")return node.Owner.Id;
             return null;
         }
+        private static int OwnerIndex(GameNode node)=>int.Parse(node.Owner.Id.Substring("pawn".Length));
+        internal static int SkillLevel(int pawn,string skill)=>pawn+(skill=="Medicine"?10:0);
         private static IEnumerable<GameNode> UnavailableAlerts() { if(DateTime.UtcNow.Ticks>0)throw ReadContext.Error("alert_cache_unavailable","Native alert cache not ready.");yield break; }
     }
 }

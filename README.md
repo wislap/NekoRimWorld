@@ -68,7 +68,7 @@ null descriptions no longer assert every issue-free null is "not applicable";
 field semantics, issue paths, complete zero matches and undisplayed pages remain
 separate. These are registry-description corrections, not field renames or new
 query behavior. Full-Agent results and remaining limitations are recorded in the
-bench's `planning/SEMANTIC-CONSISTENCY.md`.
+the archived `rimworld-bench-archive/docs-20261013/bench/planning/SEMANTIC-CONSISTENCY.md`.
 
 Public aggregate queries with `limit:0` now omit `rows` and `page`, including
 nested collections. Aggregates, effective scope, scan completeness and issues
@@ -407,7 +407,7 @@ Formatting happens before native page fitting and output-size checks. No Pawn
 health/work lists are pruned and no model-facing entity dictionary is introduced.
 
 The separately evaluated output-policy rewrite was not promoted. Benchmark
-results and limitations are documented in rimworld-bench/planning/V221-REDO.md.
+results and limitations are documented in the archived rimworld-bench-archive/docs-20261013/bench/planning/V221-REDO.md.
 
 ### V2.3 object-reader support
 

@@ -10,7 +10,7 @@
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "${workspaceFolder}/../../scripts/Build-RimWorldMod.ps1"
+        "${workspaceFolder}/../rimworld-scripts/Build-RimWorldMod.ps1"
       ],
       "group": {
         "kind": "build",
@@ -27,7 +27,7 @@
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "${workspaceFolder}/../../scripts/Test-RimWorldDevEnv.ps1"
+        "${workspaceFolder}/../rimworld-scripts/Test-RimWorldDevEnv.ps1"
       ],
       "problemMatcher": []
     },
@@ -40,7 +40,7 @@
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "${workspaceFolder}/../../scripts/Start-RimWorldDev.ps1"
+        "${workspaceFolder}/../rimworld-scripts/Start-RimWorldDev.ps1"
       ],
       "problemMatcher": []
     }

@@ -22,6 +22,9 @@
 Read-only development bridge between RimWorld and N.E.K.O. This build provides
 an authenticated loopback protocol, save/load session identity, and a bounded
 resource-evidence query with scoped quantities, item identity, overlap and completeness.
-Native exact queries remain available. It does not execute gameplay actions or automate the colony.
+Native exact queries remain available. It also answers bounded spatial reads (reachability
+and route summaries), world observation (area survey, routes and object state) and
+read-only checks of player-order conditions and current threats.
+It does not execute gameplay actions or automate the colony.
   </description>
 </ModMetaData>

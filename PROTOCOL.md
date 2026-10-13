@@ -1,19 +1,19 @@
-> **v1.6 additive metadata:** public_query.v2/wire v2 remain unchanged. Root-specific argument schema branches use the executable registry. Each nested collection now includes scope.relation, scope.args and scope.where; relation_semantics provides shared descriptions. Definition-only necessary predicates can be pushed through logical composition before Thing enumeration without dropping unknown branches. Source scan limits and aggregate/display completeness remain separate.
-
-> **public_query.v2:** Pawn inventory/equipment/apparel/carried are direct bounded Thing collections, and Thing.contents reads container contents. Grouped select returns checked shared fields in rows.values; incomplete membership cannot certify shared values. Native GraphQL projections use real bounded slices. Wire v2 is unchanged.
-
-> **v1.4 query contract:** wire v2 envelopes are unchanged. `query_catalog.public_query` advertises `public_query.v1`; `query` takes `{requests:[{from,args?,where?,select?,aggregate?,group_by?,order_by?,limit?,offset?}]}`. `describe_query` takes `{types:[...]}` and returns metadata only. Query results include effective scope, scan/field completeness, fresh-observation paging and measures with explicit units. Legacy `observed_values.v1` applies only to legacy operations.
+> Current: wire v2; catalog contracts public_query.v2, world_observation.v2.3, spatial_query.v1, native_behavior.v1, resource_evidence.v3. Change history is in git and rimworld-bench-archive.
 
 # N.E.K.O RimWorld protocol v2
 
-The executable contract is Source/Protocol.cs and the Python plugin protocol.py.
+The executable contract is Source/Protocol.cs and the plugin's game/protocol.py.
 The complete v2 request/response contract, ownership and extension procedure are
-in [DATA_PATH.md](../../N.E.K.O/plugin/plugins/neko_rimworld/DATA_PATH.md).
+in [DATA_PATH.md](../N.E.K.O/plugin/plugins/neko_rimworld/DATA_PATH.md).
 
 Transport: 4-byte unsigned big-endian length followed by UTF-8 JSON. Loopback
 only. Mod is the client; Python is the listener. Mutual authentication uses
 hello/challenge/authenticate/welcome, HMAC-SHA256, connection epoch and both
-nonces. Authentication domain: neko-rimworld-bridge/v2. Capability: query.execute.v2.
+nonces. Authentication domain: neko-rimworld-bridge/v2. Hello capabilities
+(NekoRimWorldMod.cs): query.execute.v2, resource.evidence.v1, spatial_query.v1,
+native_behavior.v1. The plugin requires query.execute.v2. The capability name
+resource.evidence.v1 is unchanged while the catalog's resource contract is
+resource_evidence.v3.
 
 Session messages, heartbeat, request correlation and strictly increasing
 per-direction sequence numbers are unchanged in purpose. colony_id identifies
@@ -25,8 +25,18 @@ query_result payload: status, optional data object, issues array; non-data
 statuses additionally require error_code and message. Game field meanings are
 owned by query readers; protocol code does not validate a gameplay DTO union.
 
-Current operations: query_catalog, describe_schema, template_query, graphql, resource_report and spatial_query. colony_snapshot
-is removed. query_result may include a generic execution object containing the
+Current operations (NekoGameComponent.cs, VerseQueryExecutor.cs, GameQueryEngine.cs):
+
+- Sent by the plugin: query_catalog, query, describe_query, spatial_query,
+  survey_space, inspect_route, inspect_state, inspect_actions, inspect_threats.
+- template_query: sent only by the plugin's manual probe_game_overview entry.
+- graphql, describe_schema, resource_report: not sent by the plugin; kept for
+  BridgeSmoke tests and the rimworld-bench capture Mod.
+
+colony_snapshot is removed. query_catalog's native_behavior and
+game_implementation entries are added only in VerseQueryExecutor.cs, so hosts
+that call GameQueryEngine directly (the bench frozen engine and capture Mod)
+never include them. query_result may include a generic execution object containing the
 expanded query, variables, schema ID and template-root bindings. See DATA_PATH.md
 for supported fields, limits, pagination and error paths.
 

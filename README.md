@@ -376,7 +376,7 @@ Public queries can push exact top-level id.eq/in into Thing candidate enumeratio
 ## V2.2 observation operations
 
 The catalog exposes survey_space, inspect_route and inspect_state through
-world_observation.v2.2. Reads run on the game thread through the frame-operation
+world_observation.v2.3. Reads run on the game thread through the frame-operation
 pump, share native state/environment projections, and keep scoped completeness
 and sampled tick intervals explicit. Existing spatial_query remains compatible.
 No action or reservation is performed. Detached cursor results expire after two

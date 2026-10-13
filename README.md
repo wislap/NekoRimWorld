@@ -449,33 +449,3 @@ flag — output selection and necessary evidence collection stay separate.
 `inspect_state` targets do not accept the flag. The catalog advertises
 `world_observation.v2.3`; the parameter is additive, so requests without it
 keep the previous complete behavior byte-for-byte.
-
-## Situation board: cached alerts and direct Quest state
-
-`read_situation` keeps its map-only `situation.v1` contract and adds advertised
-`alerts_cached`, `event_identity` and `quest_state` capabilities. GameConditions,
-hostile Lords and archive events carry native IDs. The existing raw sections stay
-available for evidence; the plugin consolidates their model/UI presentation.
-
-Alerts come from the global game UI cache, including cached labels and native
-priority when the Alert inherits the field-only native getter. The reader never
-calls `GetReport`, recomputes culprits, refreshes alerts or reads tooltips. There
-is no native stable alert ID or cached start time. Arbitrary priority overrides
-are not evaluated. Before the game's 600-tick update threshold, when alerts are
-disabled by the storyteller, or when the cache is unavailable, the section is
-explicitly unavailable rather than an empty claim. The staggered cache is not a
-fresh selected-map scan; missing alerts cannot establish absence of problems.
-
-Archive letters/messages with direct Quest references include the Quest's native
-ID and state. A cached Alert instance uniquely referenced by a retained Quest's
-`QuestPartActivable` private cached field receives the same direct Quest link,
-allowing related task events and alerts to be presented together. This reads the
-field only, never the recomputing `CachedAlert` getter. Hidden/hidden-in-UI Quests
-do not expose IDs or state through either route; ambiguous alert ownership is
-not linked. Only directly linked `NotYetAccepted` or `Ongoing` events remain
-beyond the one-day window, and only while still archived. Completed, failed and
-expired Quest states remain distinct. Dependency/patch guard failure is explicit;
-it cannot justify retaining old events or claiming a task has ended. No inferred
-raid/disease lifecycle, title-based association, event database or extra model
-call is introduced. A common target or Quest does not by itself identify the
-same matter across different source sections.

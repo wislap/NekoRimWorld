@@ -13,14 +13,10 @@ internal static class Program
 {
     private const string Token = "0123456789abcdef0123456789abcdef";
 
-    public static int Main(string[] args)
+    public static int Main()
     {
         try
         {
-            if(Array.IndexOf(args,"--object-read-catalog")>=0) { Console.WriteLine(new GameQueryEngine().Execute("query_catalog",new JObject(),null!,new SessionDescriptor(new string('2',32),new string('3',32),1,1)).Data);return 0; }
-            if(Array.IndexOf(args,"--object-read-bench")>=0) { var at=Array.IndexOf(args,"--object-read-bench");var scales=at+1<args.Length && !args[at+1].StartsWith("--")?Array.ConvertAll(args[at+1].Split(','),int.Parse):new[]{25,50,100};ObjectReadProfile.VerifySizes=Array.IndexOf(args,"--verify")>=0;var repeatAt=Array.IndexOf(args,"--repeats");ObjectReadBenchmark.Run(scales,ObjectReadProfile.VerifySizes?1:repeatAt>=0?int.Parse(args[repeatAt+1]):3);return 0; }
-            if(Array.IndexOf(args,"--object-read-diff")>=0) { ObjectReadDiff.Run(args[Array.IndexOf(args,"--object-read-diff")+1]);return 0; }
-            if(Array.IndexOf(args,"--object-read")>=0) { var capture=Array.IndexOf(args,"--object-read-capture");ObjectReadTests.Run(capture>=0?args[capture+1]:null);return 0; }
             SpatialContractTests.Run();
             SpatialRouteTests.Run();
             KnowledgeTests.Run();
@@ -29,7 +25,6 @@ internal static class Program
             KnowledgeStreamingPublisherTests.Run();
             WorldContractTests.Run();
             ActionContractTests.Run();
-            SituationContractTests.Run();
             ReadDependencyTests.Run();
             WorldPresentationTests.Run();
             ObservationSemanticsTests.Run();
@@ -39,7 +34,6 @@ internal static class Program
             ThingQueryTests.Run();
             PublicQueryTests.Run();
             PublicQueryTests.RunEvidence();
-            ObjectReadTests.Run();
             ResourceReportTests.Run();
             ProtocolRoundTrip();
             AuthenticationMatchesCrossLanguageVector();

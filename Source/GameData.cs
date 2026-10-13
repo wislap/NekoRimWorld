@@ -22,15 +22,12 @@ internal sealed class GameEntity
 /// <summary>A query-local source handle. Never serialized or retained across queries.</summary>
 internal sealed class GameNode
 {
-    public GameNode(string kind, string key, GameEntity owner, object? handle, object? recordIdentity = null)
-    { Kind = kind; Key = key; Owner = owner; Handle = handle; RecordIdentity = recordIdentity; }
+    public GameNode(string kind, string key, GameEntity owner, object? handle)
+    { Kind = kind; Key = key; Owner = owner; Handle = handle; }
     public string Kind { get; }
     public string Key { get; }
     public GameEntity Owner { get; }
     public object? Handle { get; }
-    // Only a native record identity, never a temporary query wrapper. The
-    // object reader may weakly pin it, then verifies membership on resumption.
-    public object? RecordIdentity { get; }
 }
 
 internal interface IGameData
@@ -41,12 +38,6 @@ internal interface IGameData
     object? MapField(GameEntity map, string field);
     object? ColonistField(GameEntity pawn, string field);
     object? NodeField(GameNode node, string field, IReadOnlyDictionary<string, object?> arguments);
-}
-
-internal interface IObjectQueryData
-{
-    IEnumerable<GameEntity> QueryObjectPawns(IReadOnlyDictionary<string,object?> args,ReadContext context);
-    IEnumerable<GameEntity> QueryObjectColonists(IReadOnlyDictionary<string,object?> args,ReadContext context);
 }
 
 internal sealed class NodeSlice
@@ -70,7 +61,6 @@ internal sealed class ReadContext
     private List<GameEntity>? maps;
     private List<GameEntity>? colonists;
     private readonly Dictionary<object, object?> values = new();
-    private readonly Dictionary<object,(long Started,long Finished)> valueSamples=new();
     private readonly Dictionary<object,string> argumentKeys = new(new ReferenceComparer());
     private readonly Dictionary<object, int> nativeReferences = new(new ReferenceComparer());
     public string NativeReference(object value)
@@ -83,18 +73,6 @@ internal sealed class ReadContext
     public ReadContext(IGameData source, SessionDescriptor session, double budgetMilliseconds)
     { this.source = source; Session = session; this.budgetMilliseconds = budgetMilliseconds; }
     public SessionDescriptor Session { get; }
-    // The object reader owns collection snapshots and lossless text delivery;
-    // legacy slice/text caps must not silently constrain that separate contract.
-    internal bool ObjectReadMode { get; set; }
-    internal GameEntity? ObjectActor { get; set; }
-    internal GameEntity? ObjectRecipient { get; set; }
-    internal int NativeGetterReads { get; private set; }
-    internal string? ObjectScopeMap { get; set; }
-    internal void ResetObjectReadCache() { if(ObjectReadMode) { values.Clear();valueSamples.Clear(); } }
-    internal int ObjectFrameVersion { get; private set; }
-    internal Func<long>? ObjectTick { get; set; }
-    internal (long Started,long Finished)? LastValueSample { get; private set; }
-    internal void BeginSelectedGetter()=>LastValueSample=null;
     internal double ElapsedMilliseconds => lifetime?.Elapsed.TotalMilliseconds ?? 0;
     public SelectionConditions? Conditions { get; set; }
     public Dictionary<string, JObject> ResolvedFields { get; } = new();
@@ -129,14 +107,13 @@ internal sealed class ReadContext
     {
         var matches = Matcher(type, where);
         var count = 0;
-        foreach (var value in values) { Check(); if (++count > 8192 && !ObjectReadMode) throw Error("node_scan_limit", "Collection exceeds 8192 records."); if (matches(value)) yield return value; }
+        foreach (var value in values) { Check(); if (++count > 8192) throw Error("node_scan_limit", "Collection exceeds 8192 records."); if (matches(value)) yield return value; }
     }
     internal void RestartSlice()
     {
         if (Thread.CurrentThread.ManagedThreadId != threadId) throw Error("wrong_thread", "Spatial slice must remain on the game thread.");
         clock = Stopwatch.StartNew();
         lifetime ??= Stopwatch.StartNew();
-        if(ObjectReadMode)ObjectFrameVersion++;
     }
     public void Check()
     {
@@ -147,7 +124,7 @@ internal sealed class ReadContext
         if (clock.Elapsed.TotalMilliseconds >= budgetMilliseconds)
             throw Error("deadline_exceeded", "The game read deadline was reached; narrow the query.");
     }
-    public List<GameEntity> Maps() => maps ??= ReadList(ObjectReadMode && ObjectScopeMap is not (null or "all" or "all_loaded")?source.Maps().Where(m=>m.Id==ObjectScopeMap):source.Maps(), 32);
+    public List<GameEntity> Maps() => maps ??= ReadList(source.Maps(), 32);
     public List<GameEntity> Colonists() => colonists ??= ReadList(source.Colonists(), 8192);
     private List<GameEntity> ReadList(IEnumerable<GameEntity> input, int limit)
     {
@@ -156,7 +133,7 @@ internal sealed class ReadContext
         foreach (var entity in input)
         {
             Check();
-            if (!ObjectReadMode && result.Count >= limit) throw Error("entity_scan_limit", "The identity scan limit was reached.");
+            if (result.Count >= limit) throw Error("entity_scan_limit", "The identity scan limit was reached.");
             result.Add(entity);
         }
         return result.OrderBy(x => x.Id, StringComparer.Ordinal).ToList();
@@ -186,11 +163,10 @@ internal sealed class ReadContext
             signature = JObject.FromObject(args.OrderBy(x => x.Key,StringComparer.Ordinal).ToDictionary(x => x.Key,x => x.Value)).ToString(Formatting.None);
             argumentKeys[args] = signature;
         }
-        var recordKey=ObjectReadMode && node.RecordIdentity!=null?NativeReference(node.RecordIdentity):node.Key;
-        var key = (node.Owner.Id,node.Kind,recordKey,field,signature);
+        var key = (node.Owner.Id,node.Kind,node.Key,field,signature);
         return Cached(key, () => {
             var value = source is IThingData native ? native.NativeField(node, field, args, this) : source.NodeField(node, field, args);
-            if (!ObjectReadMode && value is IEnumerable<GameNode> sequence)
+            if (value is IEnumerable<GameNode> sequence)
             {
                 var rows = new List<GameNode>();
                 foreach (var child in sequence)
@@ -226,19 +202,16 @@ internal sealed class ReadContext
     private object? Cached(object key, Func<object?> read)
     {
         if (Thread.CurrentThread.ManagedThreadId != threadId) throw Error("wrong_thread", "Invalid game thread.");
-        if (values.TryGetValue(key, out var cached)) { if(ObjectReadMode && valueSamples.TryGetValue(key,out var sample))LastValueSample=sample;return cached; }
+        if (values.TryGetValue(key, out var cached)) return cached;
         Check();
         try
         {
-            var started=ObjectTick?.Invoke()??Session.GameTick;
-            NativeGetterReads++;
             var value = read();
             if (value is float f && (float.IsNaN(f) || float.IsInfinity(f)) || value is double d && (double.IsNaN(d) || double.IsInfinity(d)))
                 throw Error("invalid_number", "The game returned a non-finite value.");
-            if (!ObjectReadMode && value is string text && text.Length > 4096)
+            if (value is string text && text.Length > 4096)
                 throw Error("field_too_large", "The field exceeds its text limit.");
             values[key] = value;
-            if(ObjectReadMode) { var sample=(started,ObjectTick?.Invoke()??Session.GameTick);valueSamples[key]=sample;LastValueSample=sample; }
             return value;
         }
         catch (ExecutionError) { throw; }

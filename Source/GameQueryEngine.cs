@@ -25,7 +25,6 @@ internal sealed class GameQueryEngine
     private readonly TemplateCatalog templates;
     private readonly SelectionConditions conditions;
     private readonly PublicQuery publicQuery;
-    private readonly ObjectReadEngine objectReader;
     private readonly JObject catalog;
     private readonly double readBudgetMs;
     public GameQueryEngine(double readBudgetMs = 12)
@@ -36,7 +35,6 @@ internal sealed class GameQueryEngine
         schema.Initialize();
         conditions = new SelectionConditions(schema);
         publicQuery = new PublicQuery(schema, conditions);
-        objectReader = new ObjectReadEngine(schema, conditions, readBudgetMs);
         templates = new TemplateCatalog(schema);
         var sdl = schema.Print();
         var specification = new JObject {
@@ -58,7 +56,6 @@ internal sealed class GameQueryEngine
         specification["spatial_query"] = SpatialContract.Catalog();
         specification["world_observation"] = WorldObservationContract.Catalog();
         specification["public_query"] = publicQuery.Catalog();
-        specification["object_read"] = objectReader.Catalog();
         specification["schema_id"] = Hash(specification.ToString(Formatting.None));
         catalog = specification;
         // Validate every template against the actual executable schema before advertising it.
@@ -80,8 +77,6 @@ internal sealed class GameQueryEngine
     {
         try
         {
-            if (operation == "read_objects") return objectReader.Execute(arguments,source,session);
-            if (operation == "release_object_reads") return objectReader.Release(arguments,session);
             if (operation == "query") return publicQuery.Execute(arguments, source, session, readBudgetMs, catalog["schema_id"]!.ToString());
             if (operation == "describe_query")
             {
@@ -188,10 +183,6 @@ internal sealed class GameQueryEngine
 
     internal IFrameQueryOperation BeginPublicQuery(JObject arguments,IGameData source,SessionDescriptor session,Func<bool> current,Func<long> tick)
         =>new CooperativeQuery(publicQuery,arguments,source,session,readBudgetMs,catalog["schema_id"]!.ToString(),current,tick);
-    internal IFrameQueryOperation BeginObjectRead(JObject arguments,IGameData source,SessionDescriptor session,Func<bool> current,Func<long> tick)
-        =>objectReader.Begin(arguments,source,session,current,tick);
-    internal void ClearObjectReads()=>objectReader.Clear();
-    internal void ExpireObjectReads()=>objectReader.Expire();
 
     private static string TypeName(IGraphType type) => type switch { NonNullGraphType n => TypeName(n.ResolvedType!) + "!", ListGraphType l => "[" + TypeName(l.ResolvedType!) + "]", _ => type.Name };
     private static JArray DescribeArguments(QueryArguments? arguments) => arguments == null ? new JArray() : new JArray(arguments.Select(a => new JObject { ["name"] = a.Name, ["type"] = TypeName(a.ResolvedType!), ["description"] = a.Description, ["default"] = a.DefaultValue == null ? JValue.CreateNull() : JToken.FromObject(a.DefaultValue), ["limits"] = a.Metadata.TryGetValue("json_limits", out var limits) && limits is JObject obj ? obj.DeepClone() : new JObject() }));
@@ -249,7 +240,6 @@ internal sealed class GameQueryEngine
         native.AddRoots(root);
         var resultSchema = new Schema { Query = root, NameConverter = new GraphQL.Conversion.DefaultNameConverter() };
         foreach (var component in native.ComponentTypes) resultSchema.RegisterType(component);
-        resultSchema.RegisterType(SituationFactsSchema.Create());
         return resultSchema;
     }
     private static QueryArguments ColonistArguments() => new(

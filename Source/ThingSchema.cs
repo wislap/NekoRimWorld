@@ -34,7 +34,6 @@ internal sealed class ThingSchema
     public ObjectGraphType Map { get; } = Type("NativeMap", "Native map reference with explicitly selected storage and resource-counter members.");
     public ObjectGraphType Faction { get; } = Type("Faction", "Native RimWorld.Faction: the faction this Thing or Pawn belongs to. Faction membership is a native fact, not an inference from names, kinds or containers. A null faction means this instance has no faction (for example a wild animal or a loose item), not that the fact is unknown.");
     public List<ObjectGraphType> ComponentTypes { get; } = new();
-    internal ObjectFactsSchema ObjectFacts { get; }
     private readonly ObjectGraphType defPage;
     private readonly ObjectGraphType thingPage;
 
@@ -150,7 +149,6 @@ internal sealed class ThingSchema
         Map.GetField("id")!.ResolvedType = new NonNullGraphType(new IdGraphType());
         foreach (var name in new[] { "name","isCurrent","isPlayerHome","colonistCount","hasVisibleThreat" })
             Map.GetField(name)!.Description = "Game-derived map summary, using the same reader and meaning as Map." + name + ".";
-        ObjectFacts = new ObjectFactsSchema(this);
         thingPage = Page("ThingPage", Thing); defPage = Page("ThingDefPage", Def);
     }
 

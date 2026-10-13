@@ -62,10 +62,6 @@ internal static class GameImplementation
         foreach(var action in ActionInspectionContract.Actions) Prepare(ActionInspection.ReadDependencies(action));
         Prepare(new[] { (typeof(GenHostility),nameof(GenHostility.AnyHostileActiveThreatToPlayer)) });
         Prepare(new[] { (typeof(GenHostility),nameof(GenHostility.IsActiveThreatToPlayer)) });
-        Prepare(new[] { (typeof(Quest), "get_State") });
-        Prepare(new[] { (typeof(FactionUtility), nameof(FactionUtility.HostileTo)) });
-        foreach (var dependency in ObjectFactsData.ReadDependencies)
-            Prepare(new[] { dependency });
     }
     private static JObject PreparationStatus() => new() {
         ["scheduled"] = dependencies.Count,

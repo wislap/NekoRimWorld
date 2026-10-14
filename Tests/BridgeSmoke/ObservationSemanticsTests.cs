@@ -52,7 +52,7 @@ internal static class ObservationSemanticsTests
         var suggestion = DefinitionCandidates.Suggestions(new[] { ("ModStat", (string?)"特殊值"), ("MoveSpeed", (string?)"移动速度") }, "特殊值");
         Require((string?)suggestion["matches"]?[0]?["definition"] == "ModStat", "Stat candidates hardcoded to vanilla or ignored labels");
         var names = WorldObservationContract.Capabilities;
-        Require(names.Contains("production") && names.Contains("bill_giver") && WorldObservationContract.CapabilityMeanings().ToString().Contains("surgery"), "Bill compatibility or meaning lost");
+        Require(!names.Contains("production") && names.Contains("bill_giver") && WorldObservationContract.CapabilityMeanings().ToString().Contains("surgery"), "Retired capability alias remains or real bill-giver meaning lost");
         Console.WriteLine("Observation semantics tests passed: projected attack scopes, missing path indices, null applicability, mixed stats, dynamic exact definition candidates and bill aliases.");
     }
 }

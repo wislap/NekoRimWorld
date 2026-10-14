@@ -32,6 +32,9 @@ internal static class GameArguments
                 throw new ArgumentException(name + " exceeds its text limit.");
             if (constraints["minItems"] != null && value is IEnumerable minimumValues && minimumValues.Cast<object>().Count() < (int)constraints["minItems"]!)
                 throw new ArgumentException(name + " requires at least " + constraints["minItems"] + " items.");
+            if (constraints["items"]?["enum"] is JArray choices && value is IEnumerable choicesValues &&
+                choicesValues.Cast<object>().Any(item => !choices.Any(choice => JToken.DeepEquals(choice, JToken.FromObject(item)))))
+                throw new ArgumentException(name + " contains an unsupported choice.");
             if (constraints["maxItems"] != null && value is IEnumerable values && values.Cast<object>().Count() > (int)constraints["maxItems"]!)
                 throw new ArgumentException(name + " exceeds its list limit.");
         };

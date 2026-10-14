@@ -17,20 +17,59 @@ internal static class WorldObservation
     private static readonly Dictionary<string, Page> pages = new();
     internal static void Clear() => pages.Clear();
     internal static QueryOutcome Execute(string op, JObject args, SessionDescriptor session) { using var work = new Operation(op, args, session); while (!work.Advance()) { } return work.Outcome!; }
-    internal sealed class Operation : IFrameQueryOperation
+    internal sealed class Operation : FrameQueryOperation
     {
         private readonly Game game = Current.Game; private readonly SessionDescriptor session; private readonly ReadContext context;
-        private readonly string op; private readonly JObject args; private readonly IEnumerator<int> work;
-        private readonly Stopwatch lifetime = Stopwatch.StartNew(); private bool disposed;
+        private readonly string op; private readonly JObject args;
         private readonly int startTick = Find.TickManager.TicksGame;
-        public QueryOutcome? Outcome { get; private set; }
         private readonly JObject result = new() { ["status"] = "reading" };
         private string? cachedPageId;
         private Map? map; private WorldEnvironmentReader? environment; private readonly List<(Thing Thing, Map Map, IntVec3 Position)> resolvedVersions = new();
-        internal Operation(string op, JObject args, SessionDescriptor session) { this.op = op; this.args = (JObject)args.DeepClone(); this.session = session; context = new ReadContext(new VerseGameData(), session, 12); work = Run().GetEnumerator(); }
-        public bool Advance() { if (Outcome != null) return true; context.RestartSlice(); var timer = Stopwatch.StartNew(); try { if (map?.Disposed == true) throw ReadContext.Error("object_unavailable", "Map unloaded during read"); if (Current.Game != game) throw ReadContext.Error("world_changed", "Loaded game changed during read"); if (lifetime.Elapsed.TotalSeconds > 8) throw ReadContext.Error("observation_deadline", "Read lifetime exceeded; use a smaller footprint or fewer targets"); do { if (!work.MoveNext()) { Finish(false); return true; } } while (timer.Elapsed.TotalMilliseconds < 2); } catch (Exception e) when (ReadContext.Recoverable(e)) { if (e is ExecutionError error && error.Code is "invalid_arguments" or "object_unavailable" or "world_changed") Outcome = QueryOutcome.Failure(error.Code!, error.Message); else { result["read_error"] = new JObject { ["code"] = (e as ExecutionError)?.Code ?? "observation_unavailable", ["message"] = e.Message }; if (environment != null) result["environment"] = environment.Result(false, new JArray(), false); Finish(true); } Dispose(); } return Outcome != null; }
-        private void Finish(bool partial) { if (Outcome != null) return; partial |= (string?)result["status"] == "partial"; if ((environment?.Changed ?? false) || resolvedVersions.Any(v => v.Thing.Destroyed || v.Thing.MapHeld != v.Map || v.Thing.PositionHeld != v.Position)) { partial = true; WorldPresentation.FinalizeChanges(result, true); } session.GameTick = Find.TickManager.TicksGame; result["status"] = partial ? "partial" : "ok"; result["consistency"] = "Read-only samples over the reported interval; same tick does not guarantee an atomic snapshot of UI or other mod changes."; if (result["sample"] == null) result["sample"] = new JObject { ["load_epoch"] = session.LoadEpoch, ["snapshot_sequence"] = session.SnapshotSequence, ["started_tick"] = startTick, ["finished_tick"] = session.GameTick, ["same_tick"] = startTick == session.GameTick, ["atomic"] = false }; result["delivery_sample"] = new JObject { ["game_tick"] = session.GameTick, ["snapshot_sequence"] = session.SnapshotSequence }; result["read_ms"] = lifetime.Elapsed.TotalMilliseconds; if (cachedPageId != null && pages.TryGetValue(cachedPageId, out var cached)) { cached.Data = (JObject)result.DeepClone(); cached.Data.Remove("objects"); cached.Data.Remove("page"); } if (result.ToString(Formatting.None).Length > 90000) { Outcome = QueryOutcome.Failure("observation_result_too_large", "Select fewer objects or a narrower footprint; no truncated result presented as complete"); } else Outcome = new QueryOutcome { Status = partial ? ProtocolStatuses.Partial : ProtocolStatuses.Ok, Data = result, Issues = partial ? new[] { new QueryIssue { Code = "observation_partial", Message = "Some requested evidence could not be completed; inspect per-facet coverage", Path = new JArray() } } : Array.Empty<QueryIssue>() }; Dispose(); }
-        public void Dispose() { if (disposed) return; disposed = true; work.Dispose(); }
+        internal Operation(string op, JObject args, SessionDescriptor session) { this.op = op; this.args = (JObject)args.DeepClone(); this.session = session; context = new ReadContext(new VerseGameData(), session, 12); InitializeWork(Run().GetEnumerator()); }
+        protected override void RestartReadSlice() => context.RestartSlice();
+        protected override void ValidateFrame()
+        {
+            if (map?.Disposed == true) throw ReadContext.Error("object_unavailable", "Map unloaded during read");
+            if (Current.Game != game) throw ReadContext.Error("world_changed", "Loaded game changed during read");
+            EnsureLifetime(8, "observation_deadline", "Read lifetime exceeded; use a smaller footprint or fewer targets");
+        }
+        protected override void Complete() => Finish(false);
+        protected override void HandleError(Exception e)
+        {
+            if (e is ExecutionError error && error.Code is "invalid_arguments" or "object_unavailable" or "world_changed")
+                Outcome = QueryOutcome.Failure(error.Code!, error.Message);
+            else {
+                result["read_error"] = new JObject { ["code"] = (e as ExecutionError)?.Code ?? "observation_unavailable", ["message"] = e.Message };
+                if (environment != null) result["environment"] = environment.Result(false, new JArray(), false);
+                Finish(true);
+            }
+        }
+        private void Finish(bool partial)
+        {
+            if (Outcome != null) return;
+            partial |= (string?)result["status"] == "partial";
+            if ((environment?.Changed ?? false) || resolvedVersions.Any(v => v.Thing.Destroyed || v.Thing.MapHeld != v.Map || v.Thing.PositionHeld != v.Position)) {
+                partial = true;
+                WorldPresentation.FinalizeChanges(result, true);
+            }
+            session.GameTick = Find.TickManager.TicksGame;
+            result["status"] = partial ? "partial" : "ok";
+            result["consistency"] = "Read-only samples over the reported interval; same tick does not guarantee an atomic snapshot of UI or other mod changes.";
+            if (result["sample"] == null)
+                result["sample"] = new JObject { ["load_epoch"] = session.LoadEpoch, ["snapshot_sequence"] = session.SnapshotSequence, ["started_tick"] = startTick, ["finished_tick"] = session.GameTick, ["same_tick"] = startTick == session.GameTick, ["atomic"] = false };
+            result["delivery_sample"] = new JObject { ["game_tick"] = session.GameTick, ["snapshot_sequence"] = session.SnapshotSequence };
+            result["read_ms"] = ElapsedMilliseconds;
+            if (cachedPageId != null && pages.TryGetValue(cachedPageId, out var cached)) {
+                cached.Data = (JObject)result.DeepClone();
+                cached.Data.Remove("objects");
+                cached.Data.Remove("page");
+            }
+            if (result.ToString(Formatting.None).Length > 90000) {
+                Outcome = QueryOutcome.Failure("observation_result_too_large", "Select fewer objects or a narrower footprint; no truncated result presented as complete");
+            } else
+                Outcome = new QueryOutcome { Status = partial ? ProtocolStatuses.Partial : ProtocolStatuses.Ok, Data = result,
+                    Issues = partial ? new[] { new QueryIssue { Code = "observation_partial", Message = "Some requested evidence could not be completed; inspect per-facet coverage", Path = new JArray() } } : Array.Empty<QueryIssue>() };
+        }
         private sealed class Target { internal Thing? Thing; internal Map Map = null!; internal IntVec3 Cell; internal bool Held; }
         private IEnumerable<int> Resolve(JObject reference, Action<Target> set, bool pawn = false)
         {

@@ -17,6 +17,7 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 2 && args[0] == "--export-native-behavior") { File.WriteAllText(args[1], ActionInspectionContract.Catalog().ToString()); return 0; }
             if (args.Length == 2 && args[0] == "--export-catalog") { QueryEngineTests.ExportCatalog(args[1]); return 0; }
             if (args.Length == 2 && args[0] == "--export-knowledge")
             {
@@ -24,6 +25,7 @@ internal static class Program
                 return 0;
             }
             if (args.Length != 0) throw new ArgumentException("Expected --export-knowledge DIRECTORY or no arguments.");
+            FrameQueryOperationTests.Run();
             SpatialContractTests.Run();
             SpatialRouteTests.Run();
             KnowledgeTests.Run();
@@ -40,7 +42,7 @@ internal static class Program
             NativeEnumTests.Run();
             ThingQueryTests.Run();
             PublicQueryTests.Run();
-            PublicQueryTests.RunEvidence();
+            PublicQueryTests.RunMetadata();
             ProtocolRoundTrip();
             AuthenticationMatchesCrossLanguageVector();
             StrictSchemaRejectsUnexpectedInput();

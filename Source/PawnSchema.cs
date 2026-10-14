@@ -126,7 +126,7 @@ internal static class PawnSchema
         Collection(type,name,element);
         var field = type.GetField(name)!;
         field.Resolver = new FuncFieldResolver<object?>(c => {
-            var state = State(c); state.TraceField(c);
+            var state = State(c);
             var raw = state.ProjectContents(Node(c),path,single);
             if (raw == null) return null;
             var args = Arguments(c);
@@ -185,7 +185,7 @@ internal static class PawnSchema
         Func<IResolveFieldContext, object?> resolver, QueryArguments? args = null)
     {
         var field = new FieldType { Name = name, ResolvedType = graphType, Arguments = args,
-            Resolver = new FuncFieldResolver<object?>(c => { State(c).TraceField(c); return resolver(c); }) };
+            Resolver = new FuncFieldResolver<object?>(resolver) };
         type.AddField(field); return field;
     }
 }

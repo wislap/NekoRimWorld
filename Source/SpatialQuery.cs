@@ -18,14 +18,11 @@ internal static class SpatialQuery
     private const double ReadBudgetMilliseconds = 12;
     private const int MaxCandidates = 16;
 
-    internal sealed class Operation : IFrameQueryOperation
+    internal sealed class Operation : FrameQueryOperation
     {
         private readonly SessionDescriptor session;
         private readonly ReadContext context;
         private readonly JObject result;
-        private readonly IEnumerator<int> work;
-        private readonly System.Diagnostics.Stopwatch lifetime = System.Diagnostics.Stopwatch.StartNew();
-        public QueryOutcome? Outcome { get; private set; }
         internal Operation(JObject args, SessionDescriptor session)
         {
             this.session = session;
@@ -40,20 +37,16 @@ internal static class SpatialQuery
                 ["meaning"] = "Native reachability only. No reservation, work eligibility, scheduling, route length or arrival-time check. The blocking cause is not identified. Policy parameters describe the check, not observed obstacles or an explanation for its outcome."
             };
             result["lookup_consistency"] = "Each reference scans the object membership captured at its lookup start; names sampled over the reported tick interval. Objects created afterwards are outside that lookup. Reachability checks the resolved IDs at the final tick.";
-            work = Run(args).GetEnumerator();
+            InitializeWork(Run(args).GetEnumerator());
         }
-        public bool Advance()
+        protected override void RestartReadSlice() => context.RestartSlice();
+        protected override void ValidateFrame() =>
+            EnsureLifetime(2, "spatial_deadline", "Spatial request exceeded its total lifetime.");
+        protected override bool YieldImmediately(int step) => step == 1;
+        protected override void Complete() { }
+        protected override void HandleError(Exception exception)
         {
-            if (Outcome != null) return true;
-            context.RestartSlice();
-            var slice = System.Diagnostics.Stopwatch.StartNew();
-            try {
-                if (lifetime.Elapsed.TotalSeconds > 2) throw ReadContext.Error("spatial_deadline", "Spatial request exceeded its total lifetime.");
-                do {
-                    if (!work.MoveNext()) { Dispose(); return true; }
-                    if (work.Current == 1) return false;
-                } while (slice.Elapsed.TotalMilliseconds < 2);
-            } catch (ExecutionError error) {
+            if (exception is ExecutionError error) {
                 if (error.Code == "invalid_arguments" || error.Code == "object_unavailable")
                     Outcome = QueryOutcome.Failure(error.Code, error.Message);
                 else {
@@ -62,20 +55,15 @@ internal static class SpatialQuery
                     Outcome = new QueryOutcome { Status = ProtocolStatuses.Partial, Data = result,
                         Issues = new[] { new QueryIssue { Code = error.Code ?? "spatial_unavailable", Message = error.Code == "deadline_exceeded" ? "Spatial work slice exceeded its cooperative budget; repeating identical selectors does not narrow the lookup." : error.Message, Path = new JArray() } } };
                 }
-                Dispose();
-            } catch (Exception error) when (ReadContext.Recoverable(error)) {
+            } else {
                 result["answer"] = "unknown";
                 result["explanation"] = "A native spatial read was unavailable; no reachability conclusion was produced.";
                 Outcome = new QueryOutcome { Status = ProtocolStatuses.Partial, Data = result,
                     Issues = new[] { new QueryIssue { Code = "spatial_unavailable", Message = "Native spatial read failed.", Path = new JArray() } } };
-                Dispose();
             }
-            if (Outcome != null) {
-                session.GameTick = Find.TickManager.TicksGame;
-                result["sample"]!["game_tick"] = session.GameTick;
-                result["lookup_finished_tick"] = session.GameTick;
-            }
-            return Outcome != null;
+            session.GameTick = Find.TickManager.TicksGame;
+            result["sample"]!["game_tick"] = session.GameTick;
+            result["lookup_finished_tick"] = session.GameTick;
         }
         private IEnumerable<int> Run(JObject args)
         {
@@ -111,7 +99,6 @@ internal static class SpatialQuery
             result["sample"]!["game_tick"] = session.GameTick;
             Outcome = Compute(from, to, result, context);
         }
-        public void Dispose() => work.Dispose();
     }
 
     internal static QueryOutcome Execute(JObject arguments, SessionDescriptor session)

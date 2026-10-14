@@ -279,125 +279,44 @@ internal static class PublicQueryTests
     }
     private static void Check(bool pass,string message,QueryOutcome result) { if (!pass) throw new InvalidOperationException(message + ": " + result.Message + result.Data); }
 
-    /// <summary>
-    /// The plugin's presentation layer accepts a fact reference only when the result carries
-    /// an `observed_values.v1` description whose nodes resolve against the returned data.
-    /// Timed against a real `query` outcome, not a hand-built fixture.
-    /// </summary>
-    private static void Evidence()
+    public static void RunMetadata()
     {
-        var engine = new GameQueryEngine(1000);
-        var data = new Data();
-        var session = new SessionDescriptor(new string('2',32), new string('3',32),100,7);
-        var result = engine.Execute("query", JObject.Parse(
-            "{'requests':[{'from':'things','where':{'definition.def_name':{'eq':'Steel'}}," +
-            "'select':['id','definition.def_name','stack_count'],'limit':1," +
-            "'aggregate':{'units':{'op':'sum','field':'stack_count'},'records':{'op':'count'}}}]}"), data, session);
-        Check(result.Status=="ok","Evidence fixture did not execute",result);
-        var evidence = result.Execution?["evidence"] as JObject;
-        if (evidence == null) throw new InvalidOperationException("Public query returned no result description.");
-        if ((string?)evidence["version"] != ResultEvidence.Version)
-            throw new InvalidOperationException("Result description version changed: " + evidence["version"]);
-        var nodes = evidence["nodes"] as JObject;
-        if (nodes == null || nodes.Count == 0) throw new InvalidOperationException("Result description has no nodes.");
-        var payload = (JObject?)result.Data!;
-        var completeMeasures = 0;
-        var readingStates = new List<string>();
-        var allowed = new[] { "object", "collection", "scalar", "reading" };
-        string Resolve(string path)
-        {
-            var current = (JToken?)payload;
-            foreach (var raw in path.TrimStart('/').Split('/'))
-            {
-                if (current == null) return "";
-                var part = raw.Replace("~1","/").Replace("~0","~");
-                if (current is JArray array)
-                {
-                    // A pattern position resolves to the first element; a literal index
-                    // must exist. Indexing a JArray with a string key throws.
-                    if (part == "~2") { if (array.Count == 0) return ""; current = array[0]; }
-                    else if (int.TryParse(part, out var index) && index < array.Count) current = array[index];
-                    else return "";
-                }
-                else if (current is JObject obj && obj.Property(part) != null) current = obj[part];
-                else return "";
-            }
-            return current?.ToString(Newtonsoft.Json.Formatting.None) ?? "";
+        var engine=new GameQueryEngine(1000);
+        var data=new Data();
+        var session=new SessionDescriptor(new string('2',32),new string('3',32),100,7);
+        var input=JObject.Parse("{requests:[{from:'things',where:{'definition.def_name':{eq:'Steel'}},select:['id','definition.def_name','stack_count'],limit:1,aggregate:{units:{op:'sum',field:'stack_count'},records:{op:'count'}}}]}");
+        var result=engine.Execute("query",input,data,session);
+        Check(result.Status=="ok","Current metadata fixture did not execute",result);
+        var execution=result.Execution!;
+        if(execution.Property("evidence")!=null || execution.Property("requests")==null || execution.Property("schema_id")==null ||
+            execution.Property("contract")==null || execution.Property("phases")==null)
+            throw new Exception("Raw query metadata was removed or retired descriptors retained");
+        var observed=result.Data!["results"]![0]!;
+        if((int?)observed["aggregates"]?["units"]?["value"]!=200 || (string?)observed["aggregates"]?["units"]?["unit"]!="stack_units" ||
+            (bool?)observed["aggregates"]?["units"]?["complete"]!=true || observed["scope"]?["where"]==null ||
+            (bool?)observed["page"]?["has_more"]!=true || result.Data!["sample"]==null)
+            throw new Exception("Measurements, units, completeness, scope/window or raw sample were lost");
+        var catalog=engine.Execute("query_catalog",new JObject(),data,session);
+        if(catalog.Data?["public_query"]?["references"]!=null)
+            throw new Exception("Retired public reference contract remains advertised");
+        foreach(var unsupported in new[]{"production","not_a_capability"}) {
+            data.Reads=0;
+            var retiredCapability=engine.Execute("query",new JObject { ["from"]="things",["args"]=new JObject { ["capabilities"]=new JArray(unsupported) },["select"]=new JArray("id") },data,session);
+            if(retiredCapability.Status!="failed" || data.Reads!=0)
+                throw new Exception("Unsupported capability was accepted or caused native reads: "+unsupported);
         }
-        // Every described path must exist in the returned document, or the renderer raises.
-        foreach (var node in nodes.Properties())
-        {
-            if (node.Value is not JObject description) throw new InvalidOperationException("Non-object description at " + node.Name);
-            if (!allowed.Contains((string?)description["kind"]))
-                throw new InvalidOperationException("Unknown node kind at " + node.Name + ": " + description["kind"]);
-            // Export() compacts repeated shapes onto a `~2` pattern position, so a
-            // described node is keyed like "/results/~2/aggregates/units". Materialise
-            // the first array position to check it against the document actually returned.
-            if (!node.Name.Contains("/~2")) continue;
-            var sample = node.Name.Replace("/~2", "/0");
-            if (Resolve(sample).Length == 0)
-                throw new InvalidOperationException("Description names a path the result did not return: " + node.Name);
-            if (description["kind"]?.ToString() != "reading") continue;
-            var reading = description["reading"] as JObject;
-            if (reading == null) throw new InvalidOperationException("Reading has no descriptor: " + node.Name);
-            // The presentation contract requires a literal, non-empty unit string.
-            if (reading["unit"]?.Type != JTokenType.String || string.IsNullOrEmpty((string?)reading["unit"]))
-                throw new InvalidOperationException("Reading unit is missing or not a literal: " + node.Name);
-            if (reading["value"]?.Type != JTokenType.String)
-                throw new InvalidOperationException("Reading has no value path: " + node.Name);
-            var value = Resolve(((string)reading["value"]!).Replace("/~2", "/0"));
-            if (value.Length == 0) throw new InvalidOperationException("Reading value path is absent from the result: " + reading["value"]);
-            // Every named companion path must resolve too.
-            foreach (var key in new[] { "state", "present" })
-            {
-                var pointer = reading[key];
-                if (pointer == null || pointer.Type == JTokenType.Null) continue;
-                var resolved = Resolve(((string)pointer).Replace("/~2", "/0"));
-                if (resolved.Length == 0)
-                    throw new InvalidOperationException(
-                        $"Reading names a {key} path the result did not return: {pointer}");
-            }
-            // Every named companion path must resolve against the returned document.
-            // The semantic half of this contract (a complete measure must NOT name
-            // `known_value`, which it does not carry) is asserted on a real sealed
-            // snapshot by `rimworld-bench/verify_reference_gate.py`, because this
-            // fixture's aggregate completeness does not exercise it.
-            foreach (var key in new[] { "lower", "state", "present" })
-            {
-                var pointer = reading[key];
-                if (pointer == null || pointer.Type == JTokenType.Null) continue;
-                var resolved = Resolve(((string)pointer!).Replace("/~2", "/0"));
-                if (resolved.Length == 0)
-                    throw new InvalidOperationException(
-                        $"Reading names a {key} path the result did not return: {pointer}");
-            }
-            completeMeasures++;
-            readingStates.Add(node.Name);
+        foreach(var supported in WorldObservationContract.Capabilities) {
+            var canonicalCapability=engine.Execute("query",new JObject { ["from"]="things",["args"]=new JObject { ["capabilities"]=new JArray(supported) },["select"]=new JArray("id") },data,session);
+            if(canonicalCapability.Status!="ok" || (string?)canonicalCapability.Data?["results"]?[0]?["scope"]?["args"]?["capabilities"]?[0]!=supported)
+                throw new Exception("Declared capability was removed or silently remapped: "+supported);
         }
-        if (evidence["subjects"] is not JObject subjects || !subjects.Properties().Any())
-            throw new InvalidOperationException("Result description has no subjects.");
-        // Without a complete measure in the fixture this test cannot cover the regression
-        // it exists for (a complete aggregate has no `known_value` to point at).
-        if (completeMeasures == 0)
-            throw new InvalidOperationException(
-                "Evidence fixture has no complete measure; the lower-bound contract is untested. " +
-                "Observed: " + string.Join(", ", readingStates));
-        // The plugin only turns references on when the catalog advertises this surface.
-        var catalog = engine.Execute("query_catalog", new JObject(), data, session);
-        var references = catalog.Data?["public_query"]?["references"] as JObject;
-        if ((string?)references?["version"] != ResultEvidence.Version)
-            throw new InvalidOperationException("public_query does not advertise its result description contract.");
-    }
-
-    public static void RunEvidence()
-    {
-        Evidence();
-        Console.WriteLine("Public query evidence tests passed: description version, node kinds, " +
-            "path resolvability, reading units/bounds and the advertised per-surface contract.");
+        Console.WriteLine("Public query metadata tests passed: raw request/schema/phases, units/completeness/scope/window/sample retained; no reference descriptors.");
     }
     private static void RunCooperative()
     {
-        var engine=new GameQueryEngine(12);
+        // Detached synthetic source: validate lifecycle/content independently of OS
+        // scheduling jitter. Production reads still use their unchanged 12ms budget.
+        var engine=new GameQueryEngine(1000);
         var input=JObject.Parse("{'from':'things','aggregate':{'units':{'op':'sum','field':'stack_count'}},'limit':0}");
         var source=new Data { LargeThings=600,DelayReadMilliseconds=1 };
         var session=new SessionDescriptor(new string('a',32),new string('b',32),10,1);
@@ -408,17 +327,28 @@ internal static class PublicQueryTests
             if(outcome.Status!="ok" || (long?)outcome.Data?["results"]?[0]?["aggregates"]?["units"]?["value"]!=75000 || frames<2)
                 throw new Exception("Cooperative aggregate lost exact units: "+outcome.Status+"/"+outcome.ErrorCode+"/"+outcome.Message+" "+outcome.Data);
             if ((bool?)outcome.Data?["sample"]?["atomic"] != false ||
-                outcome.Execution?["evidence"]?["nodes"]?["/sample/atomic"] == null ||
+                outcome.Execution?.Property("evidence") != null ||
                 (long?)outcome.Data?["sample"]?["started_tick"] != 10 ||
                 (long?)outcome.Data?["sample"]?["finished_tick"] != 20)
-                throw new Exception("Cooperative observation interval lost its evidence descriptions");
+                throw new Exception("Cooperative observation interval/sample changed or descriptors retained");
         }
         bool current=true;
         using(var read=engine.BeginPublicQuery(input,new Data { LargeThings=600,DelayReadMilliseconds=1 },session,()=>current,()=>20)) {
             read.Advance();current=false;read.Advance();
             if(read.Outcome?.ErrorCode!="world_changed")throw new Exception("Cross-world continuation was accepted");
         }
-        Console.WriteLine("Cooperative query tests passed: delayed sum, multiple frames and world invalidation.");
+        var bounded=new GameQueryEngine(0);
+        var unknownSource=new Data { LargeThings=600 };
+        using(var read=bounded.BeginPublicQuery(input,unknownSource,session,()=>true,()=>20)) {
+            while(!read.Advance()) { }
+            var outcome=read.Outcome!;
+            if(outcome.Status!="partial" || !outcome.Issues.Any(i=>i.Code=="deadline_exceeded") ||
+                outcome.Data?["results"]?[0]?["aggregates"]?["units"]?["value"]?.Type!=JTokenType.Null ||
+                (bool?)outcome.Data?["results"]?[0]?["aggregates"]?["units"]?["complete"]!=false ||
+                unknownSource.Reads!=0 || (long?)outcome.Data?["sample"]?["finished_tick"]!=20)
+                throw new Exception("A deterministic exhausted read budget became success/zero, read facts or lost the sample");
+        }
+        Console.WriteLine("Cooperative query tests passed: wide-budget synthetic sum/multiple frames, deterministic exhausted-budget unknowns and world invalidation.");
     }
 
     private sealed class Data : IGameData, IQueryData

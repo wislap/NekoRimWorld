@@ -130,7 +130,7 @@ internal sealed class GameQueryEngine
     private static void Field(ObjectGraphType type, string name, IGraphType graphType,
         Func<IResolveFieldContext, object?> resolve, QueryArguments? arguments = null, string? description = null) =>
         type.AddField(new FieldType { Name = name, Description = description, ResolvedType = graphType,
-            Arguments = arguments, Resolver = new FuncFieldResolver<object?>(c => { State(c).TraceField(c); return resolve(c); }) });
+            Arguments = arguments, Resolver = new FuncFieldResolver<object?>(resolve) });
     private static ReadContext State(IResolveFieldContext c) => (ReadContext)c.UserContext["read"]!;
 
     internal static string Hash(string text)

@@ -92,7 +92,7 @@ The default plugin uses `evaluate_activity` for activity checks and does not
 expose `inspect_space` as a model tool. Native reachability does not establish
 reservation success, work eligibility or arrival time.
 
-A found `route` reports `steps` (grid transitions), `grid_distance` (sum of cardinal
+A found `route` reports `steps` (grid transitions), `path_length` (sum of cardinal
 1 and diagonal sqrt(2) cell widths), `native_cost` (native weighted search cost),
 and start/end map cells. The native GenPath endpoint normalization is applied
 before pathfinding: a Thing's returned endpoint need not be its occupied cell.
@@ -108,10 +108,9 @@ with `route_budget_overrun` and `read_budget_exceeded`, not discarded or retried
 Node reduction remains bounded. This is not a hard frame-time or travel-time
 guarantee, nor a diagnosis of which obstacle caused a negative reachability result.
 
-Path summaries also publish `path_length` with explicit along-path semantics.
-`grid_distance` remains an equal-valued wire compatibility alias. The plugin
-shows one canonical length to the Agent; no path search or distance arithmetic
-changed in this refinement.
+Path summaries publish only `path_length` with explicit along-path semantics.
+The duplicate `grid_distance` field is retired; native path search and length
+arithmetic are unchanged.
 
 ## Exact IDs and spatial positions
 
@@ -193,3 +192,17 @@ flag — output selection and necessary evidence collection stay separate.
 `inspect_state` targets do not accept the flag. The catalog advertises
 `world_observation.v2.3`; the parameter is additive, so requests without it
 keep the previous complete behavior byte-for-byte.
+
+## Current read lifecycle and capabilities
+
+Four frame operations share one iterator-advance, timing and idempotent-release
+implementation. Spatial requests retain a 2-second lifetime and an explicit yield
+before route evaluation; public queries, world observations and behavior inspections
+retain 8-second lifetimes. Each domain owns its world/map checks, completion,
+partial/error outcome and sampling semantics. Native read budgets are unchanged.
+
+The canonical capability is bill_giver (native IBillGiver); the duplicate
+production capability is retired. The production state facet still reads native
+bills and distinguishes manufacturing from surgery; removing the capability alias
+does not remove that facet. Public observations have one raw result structure,
+without a second reference-descriptor tree.

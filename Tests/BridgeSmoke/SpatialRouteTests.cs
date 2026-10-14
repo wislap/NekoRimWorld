@@ -7,11 +7,11 @@ internal static class SpatialRouteTests
     internal static void Run()
     {
         var zero = SpatialRouteSummary.Create(new[]{(4,5)},0,"map1");
-        Require((int)zero["steps"]! == 0 && (double)zero["grid_distance"]!["value"]! == 0,"Same-cell path must have zero transitions");
+        Require((int)zero["steps"]! == 0 && (double)zero["path_length"]!["value"]! == 0,"Same-cell path must have zero transitions");
         var route = SpatialRouteSummary.Create(new[]{(2,1),(1,0),(0,0)},77,"map1");
-        Require(JToken.DeepEquals(route["path_length"]!["value"],route["grid_distance"]!["value"]),"Compatibility length alias changed numeric value");
+        Require(route.Property("grid_distance")==null,"Retired length alias remains in the current wire result");
         Require(route["path_length"]!["meaning"]!.ToString().Contains("not straight-line"),"Path length semantics missing");
-        Require((int)route["steps"]! == 2 && Math.Abs((double)route["grid_distance"]!["value"]!-(1+Math.Sqrt(2)))<1e-9,"Diagonal length or transition count incorrect");
+        Require((int)route["steps"]! == 2 && Math.Abs((double)route["path_length"]!["value"]!-(1+Math.Sqrt(2)))<1e-9,"Diagonal length or transition count incorrect");
         Require((int)route["start"]!["x"]! == 0 && (int)route["end"]!["x"]! == 2,"Native reversed path endpoints swapped");
         Require((float)route["native_cost"]!["value"]! == 77 && route["eta"]==null,"Cost must not become an ETA");
         foreach(var nodes in new[]{Array.Empty<(int,int)>(), new[]{(0,0),(0,0)},new[]{(4,0),(0,0)}}) {

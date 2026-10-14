@@ -3,12 +3,6 @@ using System.Linq;
 using Newtonsoft.Json.Linq;
 namespace Neko.RimWorld;
 
-internal interface IFrameQueryOperation : IDisposable
-{
-    bool Advance();
-    QueryOutcome? Outcome { get; }
-}
-
 internal static class WorldObservationContract
 {
     internal const string Version = "world_observation.v2.3";
@@ -17,10 +11,9 @@ internal static class WorldObservationContract
     internal static string[] SelectStatePhases(string[] available, string[]? selected)
         => selected == null ? available : available.Where(name => name is "pawn" or "work" or "stats" || selected.Contains(name)).ToArray();
     internal static readonly string[] Operations = { "survey_space", "inspect_route", "inspect_state" };
-    internal static readonly string[] Capabilities = { "pawn", "building", "item", "plant", "medicine", "sleeping_place", "openable", "powered", "refuelable", "storage", "production", "bill_giver", "hazard" };
+    internal static readonly string[] Capabilities = { "pawn", "building", "item", "plant", "medicine", "sleeping_place", "openable", "powered", "refuelable", "storage", "bill_giver", "hazard" };
     internal static JObject CapabilityMeanings() => new() {
-        ["bill_giver"] = "Native IBillGiver: an owner of bills, including Pawn surgery orders as well as worktable production. Not proof of manufacturing capability or executable work.",
-        ["production"] = "Compatibility alias of bill_giver (IBillGiver), including Pawn surgery bills. Inspect bill_owner and bill_kind; this is not a manufacturing-only category."
+        ["bill_giver"] = "Native IBillGiver: an owner of bills, including Pawn surgery orders as well as worktable production. Not proof of manufacturing capability or executable work."
     };
     internal static JObject Text() => new() { ["type"] = "string", ["minLength"] = 1, ["maxLength"] = 256 };
     // On-demand object detail selection. Environmental hazard forensics (fire,

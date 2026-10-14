@@ -23,8 +23,6 @@ internal static class SpatialRouteSummary
         return new JObject {
             ["status"] = "found", ["steps"] = reversed.Count - 1,
             ["path_length"] = new JObject { ["value"] = distance, ["unit"] = "map_cell_widths", ["meaning"] = "Sum of segment lengths along the returned path, not straight-line distance between endpoints." },
-            // Compatibility alias for existing wire consumers.
-            ["grid_distance"] = new JObject { ["value"] = distance, ["unit"] = "map_cell_widths" },
             ["native_cost"] = new JObject { ["value"] = cost, ["unit"] = "native_path_cost" },
             ["start"] = Cell(reversed[reversed.Count - 1]), ["end"] = Cell(reversed[0]),
             ["meaning"] = "One path returned by the native pathfinder, not guaranteed shortest. Steps count grid transitions. Path length sums every segment along the returned path (cardinal 1, diagonal sqrt(2) cell widths); it is not straight-line endpoint distance. Cost is the native weighted search cost, not elapsed ticks, seconds or an arrival-time estimate. No movement command was issued."

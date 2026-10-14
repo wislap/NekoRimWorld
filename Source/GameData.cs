@@ -75,19 +75,6 @@ internal sealed class ReadContext
     public SessionDescriptor Session { get; }
     internal double ElapsedMilliseconds => lifetime?.Elapsed.TotalMilliseconds ?? 0;
     public SelectionConditions? Conditions { get; set; }
-    public Dictionary<string, JObject> ResolvedFields { get; } = new();
-    public void TraceField(IResolveFieldContext context)
-    {
-        if (context.ResponsePath == null) return; // Direct condition/capture reads have no response path.
-        var path = ""; foreach (var part in context.ResponsePath) path = ResultEvidence.Path(path, part.ToString()!);
-        if (path.Length == 0) return;
-        var info = new JObject { ["native"] = context.ParentType.Name + "." + context.FieldDefinition.Name };
-        if (context.Arguments?.Count > 0) info["arguments"] = JObject.FromObject(context.Arguments.ToDictionary(p => p.Key, p => p.Value.Value));
-        if (context.Source is NodeSlice slice) info["window"] = new JObject { ["total"] = slice.Total, ["offset"] = slice.Offset, ["returned"] = slice.Returned, ["has_more"] = slice.HasMore };
-        if (context.Source is GameEntity entity) info["subject"] = new JObject { ["id"] = entity.Id, ["map_id"] = entity.MapId };
-        if (context.Source is GameNode node) info["subject"] = new JObject { ["owner_id"] = node.Owner.Id, ["map_id"] = node.Owner.MapId, ["type"] = node.Kind, ["key"] = node.Key };
-        ResolvedFields[path] = info;
-    }
     private readonly Dictionary<string, SelectionConditions.Predicate> predicates = new();
     public Func<object?, bool> Matcher(string type, object? where)
     {

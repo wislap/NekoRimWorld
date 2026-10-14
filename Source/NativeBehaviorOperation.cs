@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using GraphQL;
 using Newtonsoft.Json.Linq;
@@ -8,23 +7,19 @@ using Verse;
 
 namespace Neko.RimWorld;
 
-internal sealed class NativeBehaviorOperation : IFrameQueryOperation
+internal sealed class NativeBehaviorOperation : FrameQueryOperation
 {
     private readonly Game game = Current.Game;
     private readonly SessionDescriptor session;
-    private readonly IEnumerator<int> work;
-    private readonly Stopwatch elapsed = Stopwatch.StartNew();
     private readonly int startedTick = Find.TickManager.TicksGame;
-    private bool disposed;
     internal readonly ReadContext Context;
     internal readonly JObject Result = new();
-    public QueryOutcome? Outcome { get; private set; }
 
     internal NativeBehaviorOperation(string operation, JObject arguments, SessionDescriptor session)
     {
         this.session = session;
         Context = new ReadContext(new VerseGameData(), session, 12);
-        work = Read(operation, (JObject)arguments.DeepClone()).GetEnumerator();
+        InitializeWork(Read(operation, (JObject)arguments.DeepClone()).GetEnumerator());
     }
 
     private IEnumerable<int> Read(string operation, JObject args)
@@ -33,25 +28,22 @@ internal sealed class NativeBehaviorOperation : IFrameQueryOperation
         foreach (var step in operation == "inspect_actions" ? ActionInspection.Read(args, this) : ThreatObservation.Read(args, this)) yield return step;
     }
 
-    public bool Advance()
+    protected override void RestartReadSlice() => Context.RestartSlice();
+    protected override void ValidateFrame()
     {
-        if (Outcome != null) return true;
-        Context.RestartSlice(); var slice = Stopwatch.StartNew();
-        try {
-            if (Current.Game != game) throw ReadContext.Error("world_changed", "Loaded game changed during behavior inspection");
-            if (elapsed.Elapsed.TotalSeconds > 8) throw ReadContext.Error("observation_deadline", "Behavior inspection exceeded its read deadline");
-            do {
-                if (!work.MoveNext()) { Finish(); return true; }
-            } while (slice.Elapsed.TotalMilliseconds < 2);
-        } catch (Exception e) when (ReadContext.Recoverable(e)) {
-            if (e is ExecutionError error && error.Code is "invalid_arguments" or "world_changed" or "ambiguous_reference") {
-                Outcome = QueryOutcome.Failure(error.Code!, error.Message); Dispose(); return true;
-            }
-            Result["status"] = "partial";
-            Result["read_error"] = new JObject { ["code"] = (e as ExecutionError)?.Code ?? "behavior_unavailable", ["message"] = e.Message };
-            Finish();
+        if (Current.Game != game) throw ReadContext.Error("world_changed", "Loaded game changed during behavior inspection");
+        EnsureLifetime(8, "observation_deadline", "Behavior inspection exceeded its read deadline");
+    }
+    protected override void Complete() => Finish();
+    protected override void HandleError(Exception e)
+    {
+        if (e is ExecutionError error && error.Code is "invalid_arguments" or "world_changed" or "ambiguous_reference") {
+            Outcome = QueryOutcome.Failure(error.Code!, error.Message);
+            return;
         }
-        return Outcome != null;
+        Result["status"] = "partial";
+        Result["read_error"] = new JObject { ["code"] = (e as ExecutionError)?.Code ?? "behavior_unavailable", ["message"] = e.Message };
+        Finish();
     }
 
     private void Finish()
@@ -60,16 +52,14 @@ internal sealed class NativeBehaviorOperation : IFrameQueryOperation
         Result["status"] = partial ? "partial" : "ok";
         Result["sample"] = new JObject { ["load_epoch"] = session.LoadEpoch, ["started_tick"] = startedTick, ["finished_tick"] = Find.TickManager.TicksGame, ["same_tick"] = startedTick == Find.TickManager.TicksGame, ["atomic"] = false };
         Result["read_only"] = true;
-        Result["read_ms"] = elapsed.Elapsed.TotalMilliseconds;
+        Result["read_ms"] = ElapsedMilliseconds;
         session.GameTick = Find.TickManager.TicksGame;
         Outcome = Result.ToString(Newtonsoft.Json.Formatting.None).Length > 90000
             ? QueryOutcome.Failure("observation_result_too_large", "Narrow the behavior inspection")
             : partial ? QueryOutcome.Partial(Result, "behavior_partial", "Some requested behavior evidence could not be completed; inspect read_error and per-target coverage.")
             : new QueryOutcome { Status = ProtocolStatuses.Ok, Data = Result };
-        Dispose();
     }
 
-    public void Dispose() { if (disposed) return; disposed = true; work.Dispose(); }
 
     internal IEnumerable<int> Resolve(JObject reference, bool pawn, Action<Thing> found)
     {

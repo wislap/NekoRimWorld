@@ -18,7 +18,6 @@ internal static class ThingCapabilities
         "powered" => thing.TryGetComp<CompPowerTrader>() != null,
         "refuelable" => thing.TryGetComp<CompRefuelable>() != null,
         "storage" => thing is ISlotGroupParent,
-        "production" => thing is IBillGiver,
         "bill_giver" => thing is IBillGiver,
         "hazard" => thing is Fire || thing is Building_Trap || thing is Building_Turret || thing.TryGetComp<CompExplosive>() != null,
         _ => false,

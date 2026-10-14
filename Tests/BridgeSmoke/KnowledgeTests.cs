@@ -90,8 +90,9 @@ internal static class KnowledgeTests
             var snapshot = new KnowledgeSnapshot { GameVersion = "1.6.fixture", Language = "ChineseSimplified" };
             snapshot.Mods.Add(new KnowledgeMod { PackageId = "fixture.mod", Name = "Fixture" });
             snapshot.Add(Entry());
-            KnowledgeFiles.Publish(snapshot, directory);
-            var path = Path.Combine(directory, "current.json");
+            KnowledgePublicationFixture.Publish(snapshot, directory);
+            var path = KnowledgePublicationFixture.PayloadPath(directory);
+            var firstPath = path;
             var first = File.ReadAllBytes(path);
             Require(first[0] == (byte)'{', "UTF8 BOM unexpectedly present");
             var parsed = JObject.Parse(Encoding.UTF8.GetString(first));
@@ -100,16 +101,21 @@ internal static class KnowledgeTests
             Require(snapshot.GeneratedAt.EndsWith("Z", StringComparison.Ordinal) && DateTime.TryParse(snapshot.GeneratedAt, out _), "UTC timestamp invalid");
             Require(parsed["entries"]![0]!["key"]!.ToString() == "Fixture.Def/Example", "typed key changed");
             snapshot.Language = "English";
-            KnowledgeFiles.Publish(snapshot, directory);
+            KnowledgePublicationFixture.Publish(snapshot, directory);
+            path = KnowledgePublicationFixture.PayloadPath(directory);
+            Require(path != firstPath && first.SequenceEqual(File.ReadAllBytes(firstPath)), "replacement rewrote the immutable payload");
             Require(File.ReadAllText(path).Contains("English"), "atomic replacement did not publish");
             var preserved = File.ReadAllText(path);
+            var readyPath = Path.Combine(directory, "ready.json");
+            var preservedPointer = File.ReadAllBytes(readyPath);
             // A failure before publication must not remove/modify the last complete file.
             snapshot.Language = "\ud800";
-            ExpectFailure(() => KnowledgeFiles.Publish(snapshot, directory));
+            ExpectFailure(() => KnowledgePublicationFixture.Publish(snapshot, directory));
             Require(File.ReadAllText(path) == preserved, "failed publication damaged old file");
+            Require(preservedPointer.SequenceEqual(File.ReadAllBytes(readyPath)), "failed publication changed the ready pointer");
             snapshot.Language = "English";
-            Task.WaitAll(Task.Run(() => KnowledgeFiles.Publish(snapshot, directory)), Task.Run(() => KnowledgeFiles.Publish(snapshot, directory)));
-            Require(JObject.Parse(File.ReadAllText(path))["entries"]!.Count() == 1, "concurrent writers corrupted JSON");
+            Task.WaitAll(Task.Run(() => KnowledgePublicationFixture.Publish(snapshot, directory)), Task.Run(() => KnowledgePublicationFixture.Publish(snapshot, directory)));
+            Require(JObject.Parse(File.ReadAllText(KnowledgePublicationFixture.PayloadPath(directory)))["entries"]!.Count() == 1, "concurrent writers corrupted JSON");
             Require(Directory.GetFiles(directory, "*.tmp").Length == 0, "temporary file leaked");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }

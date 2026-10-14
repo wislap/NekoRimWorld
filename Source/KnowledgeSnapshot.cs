@@ -253,38 +253,6 @@ internal static class KnowledgeFiles
         }
     }
 
-    internal static void Publish(KnowledgeSnapshot snapshot, string directory)
-    {
-        lock (WriterLock)
-        {
-            ValidateUtf8(snapshot);
-            Directory.CreateDirectory(directory);
-            var current = Path.Combine(directory, "current.json");
-            var temporary = Path.Combine(directory, "current." + Guid.NewGuid().ToString("N") + ".tmp");
-            try
-            {
-                using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                using (var limited = new SizeLimitedStream(file, KnowledgeSnapshot.MaxSnapshotBytes))
-                using (var text = new StreamWriter(limited, new UTF8Encoding(false, true), 64 * 1024, true))
-                {
-                    var writer = new JsonTextWriter(text) { Formatting = Formatting.None, CloseOutput = false };
-                    JsonSerializer.CreateDefault().Serialize(writer, snapshot);
-                    writer.Flush();
-                    text.Flush();
-                    limited.Flush();
-                    file.Flush(true);
-                    if (file.Length > KnowledgeSnapshot.MaxSnapshotBytes)
-                        throw new InvalidDataException("Snapshot exceeds byte limit; old snapshot retained.");
-                }
-                ReplaceTemporary(temporary, current);
-            }
-            finally
-            {
-                if (File.Exists(temporary)) File.Delete(temporary);
-            }
-        }
-    }
-
     internal static void ValidateUtf8(KnowledgeSnapshot snapshot)
     {
         ValidateString(snapshot.Format);
@@ -321,30 +289,5 @@ internal static class KnowledgeFiles
             }
             throw new EncoderFallbackException("Invalid UTF-16 string cannot be published as UTF-8.");
         }
-    }
-
-    private sealed class SizeLimitedStream : Stream
-    {
-        private readonly Stream inner;
-        private readonly long limit;
-        private long written;
-
-        internal SizeLimitedStream(Stream inner, long limit) { this.inner = inner; this.limit = limit; }
-        public override bool CanRead => false;
-        public override bool CanSeek => false;
-        public override bool CanWrite => true;
-        public override long Length => written;
-        public override long Position { get => written; set => throw new NotSupportedException(); }
-        public override void Flush() => inner.Flush();
-        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count)
-        {
-            if (count > limit - written) throw new InvalidDataException("Snapshot exceeds byte limit; old snapshot retained.");
-            inner.Write(buffer, offset, count);
-            written += count;
-        }
-        protected override void Dispose(bool disposing) { if (disposing) inner.Flush(); base.Dispose(disposing); }
     }
 }

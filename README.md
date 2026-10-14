@@ -143,13 +143,12 @@ default port is `48919`.
 
 ## Automatic offline Def knowledge
 
-The publisher also produces `ready.json` (`neko.defs.index.v1`) referencing an
+The publisher produces `ready.json` (`neko.defs.index.v1`) referencing an
 immutable `snapshot-<id>.json`. The payload keeps every full Def record; the small
 ready directory contains names/descriptions, UTF-8 byte offsets/lengths and SHA-256
 per record, plus the whole payload hash and source metadata. The ready directory
 is atomically replaced last. Readers attach this directory without reparsing the
-full payload, then seek and validate only requested records. Existing readers can
-still use `current.json`, which is retained as a compatibility copy. Old immutable
+full payload, then seek and validate only requested records. Old immutable
 payloads remain available to consultations already using them.
 
 The sub-second target applies to reader attachment after publication. Game startup,
@@ -172,9 +171,9 @@ The canonical publication is `ready.json` plus its immutable
 `%LOCALAPPDATA%/neko-rimworld/knowledge/ready.json`. Set
 `NEKO_RIMWORLD_KNOWLEDGE_DIR` in the game's environment to override the directory;
 configure the local reader with the same directory. This is host configuration,
-not a model-controlled path. The plugin reads this shared ready directory;
-`current.json` remains a compatibility copy for legacy/offline import. This Mod
-adds no wiki operation or protocol messages.
+not a model-controlled path. The plugin reads this shared ready directory. No
+`current.json` compatibility file is published. This Mod adds no wiki operation
+or protocol messages.
 
 Every process regenerates on its first game entry, without fingerprint cache
 reuse. Merely opening the main menu does not generate a new file. While generation

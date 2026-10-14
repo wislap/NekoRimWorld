@@ -66,7 +66,7 @@ internal static class VerseKnowledge
             if (publisher.IsFailed)
                 Log.Warning("[N.E.K.O RimWorld] Def knowledge publish failed; old snapshot retained: " + publisher.Failure?.GetType().Name);
             else
-                Log.Message("[N.E.K.O RimWorld] Offline Def knowledge published to current.json.");
+                Log.Message("[N.E.K.O RimWorld] Offline Def knowledge published to ready.json.");
             var failed = publisher.IsFailed;
             publisher.Dispose();
             publisher = null;

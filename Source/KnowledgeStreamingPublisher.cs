@@ -120,7 +120,6 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
     private void WriteFile()
     {
         var temporary = "";
-        var legacyTemporary = "";
         var readyTemporary = "";
         var dataPath = "";
         var published = false;
@@ -184,12 +183,6 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
             var ready = new JObject { ["format"] = "neko.defs.index.v1", ["data_file"] = filename,
                 ["data_bytes"] = new FileInfo(dataPath).Length, ["data_sha256"] = dataHash,
                 ["snapshot"] = metadata, ["entries"] = index };
-            // Old clients can still read current.json. New clients use only the
-            // final ready pointer and the immutable payload it names.
-            legacyTemporary = Path.Combine(directory, "legacy-" + id + ".tmp");
-            File.Copy(dataPath, legacyTemporary);
-            KnowledgeFiles.ReplaceTemporary(legacyTemporary, Path.Combine(directory, "current.json"));
-            legacyTemporary = "";
             readyTemporary = Path.Combine(directory, "ready-" + id + ".tmp");
             var readyBytes = utf8.GetBytes(ready.ToString(Formatting.None));
             if (readyBytes.Length > 32 * 1024 * 1024) throw new InvalidDataException("Knowledge directory exceeds reader limit.");
@@ -206,7 +199,7 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
         }
         finally
         {
-            foreach (var file in new[] { temporary, legacyTemporary, readyTemporary, published ? "" : dataPath })
+            foreach (var file in new[] { temporary, readyTemporary, published ? "" : dataPath })
                 if (!string.IsNullOrEmpty(file)) { try { File.Delete(file); } catch { } }
         }
     }

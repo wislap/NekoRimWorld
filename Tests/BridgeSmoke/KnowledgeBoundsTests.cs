@@ -71,13 +71,16 @@ internal static class KnowledgeBoundsTests
         {
             var snapshot = new KnowledgeSnapshot();
             snapshot.Add(Entry());
-            KnowledgeFiles.Publish(snapshot, directory);
-            var path = Path.Combine(directory, "current.json");
+            KnowledgePublicationFixture.Publish(snapshot, directory);
+            var path = KnowledgePublicationFixture.PayloadPath(directory);
             var previous = File.ReadAllBytes(path);
+            var readyPath = Path.Combine(directory, "ready.json");
+            var previousPointer = File.ReadAllBytes(readyPath);
 
             snapshot.Language = "\ud800";
-            ExpectFailure(() => KnowledgeFiles.Publish(snapshot, directory));
+            ExpectFailure(() => KnowledgePublicationFixture.Publish(snapshot, directory));
             Require(previous.SequenceEqual(File.ReadAllBytes(path)), "invalid UTF-16 damaged previous publication");
+            Require(previousPointer.SequenceEqual(File.ReadAllBytes(readyPath)), "invalid UTF-16 replaced the ready pointer");
             Require(Directory.GetFiles(directory, "*.tmp").Length == 0, "failed publication leaked a temporary file");
         }
         finally

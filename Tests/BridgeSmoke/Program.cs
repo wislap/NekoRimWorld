@@ -13,10 +13,16 @@ internal static class Program
 {
     private const string Token = "0123456789abcdef0123456789abcdef";
 
-    public static int Main()
+    public static int Main(string[] args)
     {
         try
         {
+            if (args.Length == 2 && args[0] == "--export-knowledge")
+            {
+                KnowledgePublicationFixture.Export(args[1]);
+                return 0;
+            }
+            if (args.Length != 0) throw new ArgumentException("Expected --export-knowledge DIRECTORY or no arguments.");
             SpatialContractTests.Run();
             SpatialRouteTests.Run();
             KnowledgeTests.Run();

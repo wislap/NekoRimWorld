@@ -17,6 +17,7 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 2 && args[0] == "--export-catalog") { QueryEngineTests.ExportCatalog(args[1]); return 0; }
             if (args.Length == 2 && args[0] == "--export-knowledge")
             {
                 KnowledgePublicationFixture.Export(args[1]);
@@ -40,7 +41,6 @@ internal static class Program
             ThingQueryTests.Run();
             PublicQueryTests.Run();
             PublicQueryTests.RunEvidence();
-            ResourceReportTests.Run();
             ProtocolRoundTrip();
             AuthenticationMatchesCrossLanguageVector();
             StrictSchemaRejectsUnexpectedInput();

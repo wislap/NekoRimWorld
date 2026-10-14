@@ -84,8 +84,6 @@ internal sealed class ReadContext
         var info = new JObject { ["native"] = context.ParentType.Name + "." + context.FieldDefinition.Name };
         if (context.Arguments?.Count > 0) info["arguments"] = JObject.FromObject(context.Arguments.ToDictionary(p => p.Key, p => p.Value.Value));
         if (context.Source is NodeSlice slice) info["window"] = new JObject { ["total"] = slice.Total, ["offset"] = slice.Offset, ["returned"] = slice.Returned, ["has_more"] = slice.HasMore };
-        if (context.Source is ThingPage page) info["window"] = new JObject { ["returned"] = page.Nodes.Count, ["has_more"] = page.HasNextPage };
-        if (context.Source is ColonistPage colonistsPage) info["window"] = new JObject { ["returned"] = colonistsPage.Nodes.Count, ["has_more"] = colonistsPage.HasNextPage };
         if (context.Source is GameEntity entity) info["subject"] = new JObject { ["id"] = entity.Id, ["map_id"] = entity.MapId };
         if (context.Source is GameNode node) info["subject"] = new JObject { ["owner_id"] = node.Owner.Id, ["map_id"] = node.Owner.MapId, ["type"] = node.Kind, ["key"] = node.Key };
         ResolvedFields[path] = info;
@@ -226,11 +224,4 @@ internal sealed class ReadContext
     internal static bool Recoverable(Exception exception) => exception is not OutOfMemoryException &&
         exception is not AccessViolationException && exception is not System.Threading.ThreadAbortException;
     internal static ExecutionError Error(string code, string message) => new(message) { Code = code };
-}
-
-internal sealed class ColonistPage
-{
-    public List<GameEntity> Nodes { get; set; } = new();
-    public bool HasNextPage { get; set; }
-    public string? EndCursor { get; set; }
 }

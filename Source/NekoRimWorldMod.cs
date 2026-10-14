@@ -14,7 +14,6 @@ public sealed class NekoRimWorldMod : Mod
     private static readonly string[] Capabilities =
     {
         "query.execute.v2",
-        "resource.evidence.v1",
         "spatial_query.v1",
         "native_behavior.v1",
     };

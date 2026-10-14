@@ -6,14 +6,11 @@ using Newtonsoft.Json.Linq;
 
 namespace Neko.RimWorld;
 
-/// <summary>Argument limits are shared by GraphQL validation and generated template schemas.</summary>
+/// <summary>Argument limits are shared by typed native fields and public query schemas.</summary>
 internal static class GameArguments
 {
-    public const int DefaultPageSize = 20;
-    public const int MaxPageSize = 50;
     public const int MaxIds = 50;
     public const int MaxNameLength = 128;
-    public const int MaxCursorLength = 1024;
 
     public static QueryArgument Ids(string name) => Create(name,
         new ListGraphType(new NonNullGraphType(new IdGraphType())),

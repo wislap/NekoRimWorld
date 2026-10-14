@@ -1,10 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using GraphQL;
 using GraphQL.Types;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace Neko.RimWorld;
@@ -13,13 +11,6 @@ internal interface IThingData
 {
     object? NativeRoot(string root, IReadOnlyDictionary<string, object?> arguments, ReadContext context);
     object? NativeField(GameNode node, string field, IReadOnlyDictionary<string, object?> arguments, ReadContext context);
-}
-
-internal sealed class ThingPage
-{
-    public List<GameNode> Nodes = new();
-    public bool HasNextPage;
-    public string? EndCursor;
 }
 
 /// <summary>Explicit native member projections. Only references and collection windows are transport wrappers.</summary>
@@ -34,8 +25,6 @@ internal sealed class ThingSchema
     public ObjectGraphType Map { get; } = Type("NativeMap", "Native map reference with explicitly selected storage and resource-counter members.");
     public ObjectGraphType Faction { get; } = Type("Faction", "Native RimWorld.Faction: the faction this Thing or Pawn belongs to. Faction membership is a native fact, not an inference from names, kinds or containers. A null faction means this instance has no faction (for example a wild animal or a loose item), not that the fact is unknown.");
     public List<ObjectGraphType> ComponentTypes { get; } = new();
-    private readonly ObjectGraphType defPage;
-    private readonly ObjectGraphType thingPage;
 
     public ThingSchema()
     {
@@ -149,40 +138,26 @@ internal sealed class ThingSchema
         Map.GetField("id")!.ResolvedType = new NonNullGraphType(new IdGraphType());
         foreach (var name in new[] { "name","isCurrent","isPlayerHome","colonistCount","hasVisibleThreat" })
             Map.GetField(name)!.Description = "Game-derived map summary, using the same reader and meaning as Map." + name + ".";
-        thingPage = Page("ThingPage", Thing); defPage = Page("ThingDefPage", Def);
     }
 
     public void AddRoots(ObjectGraphType root)
     {
         Root(root, "thing", Thing, new QueryArguments(Text("id", true), Text("mapId")));
-        Root(root, "things", thingPage, new QueryArguments(Text("mapId", true),
-            GameArguments.Create("requestGroup", new StringGraphType(), "Native query group: HaulableEver, HaulableAlways, HaulableEverOrMinifiable or Everything. This is not pawn-specific usability.", new JObject { ["enum"] = new JArray("HaulableEver", "HaulableAlways", "HaulableEverOrMinifiable", "Everything") }, "HaulableEver"),
-            GameArguments.Ids("defNames"), Text("name"), GameArguments.Create("visibleOnly", new BooleanGraphType(), "Default true: exclude fogged map things.", defaultValue: true), First(), Text("after")));
+        // PublicQuery owns source enumeration. These source declarations have no
+        // native-root resolver and do not retain the retired GraphQL execution path.
+        root.AddField(PublicQuery.ThingsRoot(Thing));
         Root(root, "thing_def", Def, new QueryArguments(Text("defName", true)));
-        Root(root, "thing_defs", defPage, new QueryArguments(Text("name"), Text("categoryDefName"),
+        root.AddField(new FieldType { Name = "thing_defs", ResolvedType = Def, Arguments = new QueryArguments(Text("name"), Text("categoryDefName"),
             GameArguments.Create("exactNames", new ListGraphType(new NonNullGraphType(new StringGraphType())),
                 "Exact canonical defName OR current localized label, case-insensitive. Retains every matching definition (including ambiguities); duplicates do not duplicate rows. Does not assert any physical instance exists.",
-                new JObject { ["minItems"] = 1, ["maxItems"] = DefinitionCandidates.MaxNames, ["items"] = new JObject { ["minLength"] = 1, ["maxLength"] = 128 } }),
-            First(), Text("after")));
+                new JObject { ["minItems"] = 1, ["maxItems"] = DefinitionCandidates.MaxNames, ["items"] = new JObject { ["minLength"] = 1, ["maxLength"] = 128 } })) });
         Root(root, "map", Map, new QueryArguments(Text("id", true)));
     }
     private static QueryArgument Text(string name, bool required = false) => GameArguments.Create(name,
-        required ? new NonNullGraphType(new StringGraphType()) : new StringGraphType(), "Exact identifier, or case-insensitive substring for name. after is a load/filter-bound cursor.", new JObject { ["minLength"] = 1, ["maxLength"] = name == "after" ? 1024 : 128 });
-    private static QueryArgument First() => GameArguments.Create("first", new IntGraphType(), "Returned page size 1..50. Identity scanning is separately bounded by the game-thread deadline.", new JObject { ["minimum"] = 1, ["maximum"] = 50 }, 20);
-    private static void Root(ObjectGraphType root, string name, ObjectGraphType type, QueryArguments args)
+        required ? new NonNullGraphType(new StringGraphType()) : new StringGraphType(), "Exact identifier, or case-insensitive substring for name.", new JObject { ["minLength"] = 1, ["maxLength"] = 128 });
+    private static void Root(ObjectGraphType root, string name, IGraphType type, QueryArguments args)
     {
-        var field = PawnSchema.Add(root, name, type, c => State(c).NativeRoot(name, Args(c)), args);
-        if (type.Name.EndsWith("Page", StringComparison.Ordinal)) { field.Metadata["cursor_page"] = true; field.Metadata["collection_element"] = ((ListGraphType)type.GetField("nodes")!.ResolvedType!).ResolvedType!; field.Metadata["list_default"] = 20; field.Metadata["list_max"] = 50; }
-    }
-    private static ObjectGraphType Page(string name, ObjectGraphType node)
-    {
-        var info = Type(name + "Info", "Load/filter-bound keyset cursor. Different pages are fresh observations, not one snapshot.");
-        PawnSchema.Add(info, "hasNextPage", new BooleanGraphType(), c => ((ThingPage)c.Source!).HasNextPage);
-        PawnSchema.Add(info, "endCursor", new StringGraphType(), c => ((ThingPage)c.Source!).EndCursor);
-        var page = Type(name, "Bounded collection wrapper. No global total is implied; field errors disable continuation.");
-        PawnSchema.Add(page, "nodes", new ListGraphType(node), c => ((ThingPage)c.Source!).Nodes).Metadata["collection_view"] = true;
-        PawnSchema.Add(page, "pageInfo", info, c => c.Source);
-        return page;
+        PawnSchema.Add(root, name, type, c => State(c).NativeRoot(name, Args(c)), args);
     }
     private static ObjectGraphType Type(string name, string description) => new() { Name = name, Description = description };
     private static ReadContext State(IResolveFieldContext c) => (ReadContext)c.UserContext["read"]!;
@@ -207,48 +182,4 @@ internal sealed class ThingSchema
         if (referenceOnly) field.Metadata["default_reference"] = true;
     }
     private static void Slice(ObjectGraphType type, string name, IGraphType item, QueryArguments? extra = null, int maximum = 100) => PawnSchema.Collection(type, name, item, extra, maximum);
-}
-
-internal static class ThingPaging
-{
-    internal static ThingPage Page(IEnumerable<GameNode> candidates, IReadOnlyDictionary<string, object?> args, ReadContext context)
-    {
-        var filter = Filter(JObject.FromObject(args));
-        var after = args.TryGetValue("after", out var raw) ? raw as string : null;
-        var last = Decode(after, context.Session.LoadEpoch, filter);
-        var first = args.TryGetValue("first", out var size) && size != null ? Convert.ToInt32(size) : 20;
-        if (first < 1 || first > 50) throw ReadContext.Error("invalid_arguments", "first must be 1..50.");
-        // Bounded top-k identity selection: no whole-map DTO materialization or per-thing detail reads.
-        var selected = new SortedDictionary<string, GameNode>(StringComparer.Ordinal); var scans = 0;
-        var filters = new Dictionary<string, Func<object?, bool>>();
-        foreach (var node in candidates)
-        {
-            context.Check();
-            if (++scans > 100000) throw ReadContext.Error("entity_scan_limit", "Identity scan exceeded 100000 candidates; narrow definition or map.");
-            if (last != null && StringComparer.Ordinal.Compare(node.Key, last) <= 0) continue;
-            if (!filters.TryGetValue(node.Kind, out var matches)) filters[node.Kind] = matches = context.Matcher(node.Kind, args.TryGetValue("where", out var where) ? where : null);
-            if (!matches(node)) continue;
-            if (selected.Count > first && StringComparer.Ordinal.Compare(node.Key, selected.Last().Key) >= 0) continue;
-            selected[node.Key] = node;
-            if (selected.Count > first + 1) selected.Remove(selected.Last().Key);
-        }
-        var page = new ThingPage { Nodes = selected.Values.Take(first).ToList(), HasNextPage = selected.Count > first };
-        if (page.Nodes.Count != 0) page.EndCursor = Convert.ToBase64String(Encoding.UTF8.GetBytes(context.Session.LoadEpoch + "\n" + filter + "\n" + page.Nodes.Last().Key));
-        return page;
-    }
-    private static string Filter(JObject args) => GameQueryEngine.Hash(new JObject(args.Properties().Where(x => x.Name is not ("first" or "after") && x.Value.Type != JTokenType.Null).OrderBy(x => x.Name, StringComparer.Ordinal).Select(x => new JProperty(x.Name, x.Value.DeepClone()))).ToString(Formatting.None));
-    internal static void ValidateCursor(JObject args, string epoch) => Decode((string?)args["after"], epoch, Filter(args));
-    private static string? Decode(string? cursor, string epoch, string filter)
-    {
-        if (cursor == null) return null;
-        try
-        {
-            var parts = Encoding.UTF8.GetString(Convert.FromBase64String(cursor)).Split('\n');
-            if (parts.Length != 3 || parts[2].Length == 0) throw new FormatException();
-            if (parts[0] != epoch || parts[1] != filter) throw ReadContext.Error("stale_cursor", "Cursor belongs to another load or filter.");
-            return parts[2];
-        }
-        catch (FormatException) { throw ReadContext.Error("invalid_cursor", "Invalid collection cursor."); }
-    }
-
 }

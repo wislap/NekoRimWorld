@@ -24,7 +24,6 @@
     <Compile Include="../../Source/NativeEnumScalar.cs;../../Source/SelectionInput.cs;../../Source/PublicFields.cs;../../Source/PublicQuery.cs" Link="%(Filename)%(Extension)" />
     <Compile Include="../../Source/ResultEvidence.cs" Link="ResultEvidence.cs" />
     <Compile Include="../../Source/SelectionConditions.cs" Link="SelectionConditions.cs" />
-    <Compile Include="..\..\Source\ResourceReports.cs" Link="ResourceReports.cs" />
     <Compile Include="..\..\Source\ThingSchema.cs" Link="ThingSchema.cs" />
     <Compile Include="..\..\Source\PawnSchema.cs" Link="PawnSchema.cs" />
     <Compile Include="..\..\Source\QueryArguments.cs" Link="QueryArguments.cs" />
@@ -33,9 +32,8 @@
     <Compile Include="../../Source/CooperativeQuery.cs;../../Source/ReadMethodDependencies.cs" Link="%(Filename)%(Extension)" />
     <Compile Include="..\..\Source\GameData.cs" Link="GameData.cs" />
     <Compile Include="..\..\Source\GameQueryEngine.cs" Link="GameQueryEngine.cs" />
-    <Compile Include="..\..\Source\TemplateCatalog.cs" Link="TemplateCatalog.cs" />
 
-    <PackageReference Include="GraphQL.NewtonsoftJson" Version="8.8.4" />
+    <PackageReference Include="GraphQL" Version="8.8.4" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Compile Include="..\..\Source\Protocol.cs" Link="Protocol.cs" />
     <Compile Include="..\..\Source\BridgeRuntime.cs" Link="BridgeRuntime.cs" />

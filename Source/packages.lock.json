@@ -2,15 +2,18 @@
   "version": 1,
   "dependencies": {
     ".NETFramework,Version=v4.7.2": {
-      "GraphQL.NewtonsoftJson": {
+      "GraphQL": {
         "type": "Direct",
         "requested": "[8.8.4, )",
         "resolved": "8.8.4",
-        "contentHash": "Y3ZN5RpVEM43g4U36fVMkBBETWxjCaffVlJ1CqLPBWqmL7PF/IXKt1lQCvWXDY6AysAbiPaLk5hy/zbP3hvEWw==",
+        "contentHash": "Ey/3R5ydkfriUG6PXiZPdeGkyLADQ/wZMgDBtHto5ZvSv+PtzpOD8YX0WAFvW3SA7Ldvwzw5S3RVBSB97imANA==",
         "dependencies": {
-          "GraphQL": "[8.8.4, 9.0.0)",
-          "Newtonsoft.Json": "13.0.3",
-          "System.Buffers": "4.5.1"
+          "GraphQL-Parser": "9.5.0",
+          "GraphQL.Analyzers": "8.8.4",
+          "Microsoft.Bcl.AsyncInterfaces": "1.1.1",
+          "Microsoft.CSharp": "4.7.0",
+          "System.ComponentModel.Annotations": "4.7.0",
+          "System.Memory": "4.5.5"
         }
       },
       "Krafs.Rimworld.Ref": {
@@ -48,19 +51,6 @@
         "requested": "[13.0.3, )",
         "resolved": "13.0.3",
         "contentHash": "HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ=="
-      },
-      "GraphQL": {
-        "type": "Transitive",
-        "resolved": "8.8.4",
-        "contentHash": "Ey/3R5ydkfriUG6PXiZPdeGkyLADQ/wZMgDBtHto5ZvSv+PtzpOD8YX0WAFvW3SA7Ldvwzw5S3RVBSB97imANA==",
-        "dependencies": {
-          "GraphQL-Parser": "9.5.0",
-          "GraphQL.Analyzers": "8.8.4",
-          "Microsoft.Bcl.AsyncInterfaces": "1.1.1",
-          "Microsoft.CSharp": "4.7.0",
-          "System.ComponentModel.Annotations": "4.7.0",
-          "System.Memory": "4.5.5"
-        }
       },
       "GraphQL-Parser": {
         "type": "Transitive",

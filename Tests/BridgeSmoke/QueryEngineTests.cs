@@ -12,210 +12,89 @@ internal static class QueryEngineTests
 {
     private static readonly SessionDescriptor Session = new(new string('2', 32), new string('3', 32), 100, 7);
 
+    public static void ExportCatalog(string path) => File.WriteAllText(path, new GameQueryEngine(1000).Execute("query_catalog",new JObject(),new FakeData(),Session).Data!.ToString());
+
     public static void Run()
     {
-        var engine = new GameQueryEngine(1000);
-        CatalogAndTemplates(engine);
-        SelectionAndCache(engine);
-        NestedCollectionsAndRelations(engine);
         ThoughtReferenceIdentity();
-        ValidationBeforeReads(engine);
-        MisplacedSelectorFeedback(engine);
-        Pagination(engine);
-        PartialAndNullResults(engine);
-        InlinePageCoverage(engine);
-        var expired = Exact(new GameQueryEngine(0), new FakeData(), "{ game { paused } }");
-        Require(expired.Status == "partial" && expired.Issues.Any(x => x.Code.Equals("deadline_exceeded", StringComparison.OrdinalIgnoreCase)), "read deadline not enforced");
-        Console.WriteLine("Query tests passed: object sections, exact equivalence, nested selection, bounded collections, cache isolation, validation, partials and thread identity.");
-    }
-
-    private static void CatalogAndTemplates(GameQueryEngine engine)
-    {
+        var engine = new GameQueryEngine(1000);
         var source = new FakeData();
-        var catalog = engine.Execute("query_catalog", new JObject(), source, Session);
-        Require(catalog.Status == "ok" && source.Reads.Count == 0, "catalog should not read game state");
-        Require((string?)catalog.Data?["spatial_query"]?["version"] == "spatial_query.v1" &&
-            (string?)catalog.Data?["spatial_query"]?["operation"] == "spatial_query",
-            "spatial capability was not advertised by the executable catalog");
-        var fixture = Environment.GetEnvironmentVariable("NEKO_QUERY_CATALOG");
-        if (!string.IsNullOrEmpty(fixture)) File.WriteAllText(fixture, catalog.Data!.ToString());
-        var batch = Templates(engine, source, @"{'requests':[
-            {'target':{'type':'colony'},'sections':['overview']},
-            {'target':{'type':'pawn','id':'pawn1'},'sections':['status','mood','health','equipment','profile']}
-        ]}");
-        Ok(batch, "five-section object query");
-        var exact = engine.Execute("graphql", new JObject {
-            ["document"] = batch.Execution!["document"], ["variables"] = batch.Execution["variables"]
-        }, new FakeData(), Session);
-        Ok(exact, "expanded exact query");
-        Require(JToken.DeepEquals(batch.Data, exact.Data), "template and exact results differ");
-        var pawn = (JObject)batch.Data!["o1"]!;
-        foreach (var section in new[] { "status", "mood", "health", "equipment", "profile" })
-            Require(pawn[section] is JObject, "requested section missing: " + section);
-        Require(((JArray)batch.Execution["bindings"]!).Count == 2, "missing object bindings");
-        var wireFixture = Environment.GetEnvironmentVariable("NEKO_TEMPLATE_RESULT");
-        if (!string.IsNullOrEmpty(wireFixture))
-        {
-            var request = ProtocolEnvelope.Create(ProtocolMessageTypes.QueryRequest, new string('1', 32), 2,
-                new ProtocolPayload { Operation = "template_query", Arguments = new JObject() }, Session, new string('4', 32));
-            var envelope = ProtocolEnvelope.CreateQueryResult(request, request.ConnectionEpoch, 3, Session,
-                batch.Status, batch.Data, batch.Issues, execution: batch.Execution);
-            File.WriteAllBytes(wireFixture, ProtocolCodec.Serialize(envelope));
+        QueryOutcome Query(string json) => engine.Execute("query",JObject.Parse(json),source,Session);
+        var catalog = engine.Execute("query_catalog",new JObject(),source,Session);
+        Require(catalog.Status=="ok" && source.Reads.Count==0,"Catalog read game state");
+        Require(catalog.Data!.Properties().Select(p=>p.Name).OrderBy(x=>x).SequenceEqual(new[]{"public_query","schema_id","selection_contract","spatial_query","world_observation"}),"Catalog exposed retired entries");
+        foreach(var operation in new[]{"graphql","describe_schema","resource_report","template_query"}) {
+            var rejected=engine.Execute(operation,JObject.Parse("{document:'{game{paused}}',requests:[]}"),source,Session);
+            Require(rejected.Status=="unsupported" && rejected.ErrorCode=="unsupported_operation" && source.Reads.Count==0,"Retired operation read game state: "+operation);
         }
-
-        source = new FakeData();
-        var merged = Templates(engine, source, @"{'requests':[
-            {'target':{'type':'pawn','id':'pawn1'},'sections':['status','mood']},
-            {'target':{'type':'pawn','id':'pawn1'},'sections':['health','mood']},
-            {'target':{'type':'pawn','id':'pawn2'},'sections':['profile']}
-        ]}");
-        Ok(merged, "same-object merge");
-        Require(merged.Data!.Properties().Count() == 2, "same pawn produced duplicate result roots");
-        Require((string?)merged.Data["o0"]?["id"] == "pawn1" && (string?)merged.Data["o1"]?["id"] == "pawn2", "merged roots lost identity");
-        Require(merged.Data["o0"]?["mood"] is JObject && merged.Data["o0"]?["health"] is JObject, "section union lost data");
-        Require(source.Reads.Count(x => x == "pawn1:Mood.level") == 1, "overlapping sections reread shared mood field");
-        Require(((JArray)merged.Execution!["bindings"]!).Count == 3, "merged requests lost bindings");
-        Require(source.Reads.Count(x => x == "Colonists") == 1, "same execution repeated identity enumeration");
-        AssertThread(source);
-    }
-
-    private static void MisplacedSelectorFeedback(GameQueryEngine engine)
-    {
-        var input = JObject.Parse(@"{'requests':[
-            {'target':{'type':'colony'},'sections':['overview']},
-            {'target':{'type':'thing_defs','first':1},'sections':['basic'],'where':{'fields':{'IsMedicine':{'eq':true}}},'first':50}
-        ]}");
-        var original = input.DeepClone(); var source = new FakeData();
-        var result = engine.Execute("template_query", input, source, Session);
-        Require(result.Status == "failed" && result.ErrorCode == "invalid_arguments" && source.Reads.Count == 0,
-            "misplaced selectors performed a partial batch read");
-        Require(result.Message!.Contains("requests[1].where") && result.Message.Contains("requests[1].target.where") &&
-            result.Message.Contains("requests[1].target.first") && result.Message.Contains("both locations"),
-            "feedback lost a wrong key, its destination, or conflict warning");
-        Require(JToken.DeepEquals(input, original), "feedback silently moved selectors or chose a conflicting value");
-
-        result = Templates(engine, new FakeData(), "{'requests':[{'target':{'type':'thing_defs','sections':['basic']}}]}");
-        Require(result.ErrorCode == "invalid_arguments" && result.Message!.Contains("requests[0].target.sections") &&
-            result.Message.Contains("only at requests[0].sections"), "nested sections did not identify their request-level location");
-        result = Templates(engine, new FakeData(), "{'requests':[{'target':{'type':'pawn','id':'pawn1'},'sections':['status'],'first':50}]}");
-        Require(result.ErrorCode == "invalid_arguments" && !result.Message!.Contains("target.first"), "unsupported target selector received a false relocation hint");
-        result = Templates(engine, new FakeData(), "{'requests':[{'target':{'type':{}},'sections':['basic'],'first':50}]}");
-        Require(result.ErrorCode == "invalid_arguments", "malformed target type crashed feedback");
-    }
-
-    private static void SelectionAndCache(GameQueryEngine engine)
-    {
-        var source = new FakeData();
-        Ok(Exact(engine, source, "{ game { paused } }"), "paused query");
-        Require(source.Reads.SequenceEqual(new[] { "Game.paused" }), "paused queried unrelated data: " + string.Join(",", source.Reads));
-        source = new FakeData();
-        Ok(Exact(engine, source, "{ pawn(id: \"pawn1\") { id name mood { level } } }"), "selected nested field");
-        Require(source.Reads.Contains("pawn1:Mood.level"), "selected mood field not read");
-        Require(!source.Reads.Any(x => x.Contains(":Health") || x.Contains(":Equipment") || x.Contains(":Profile") || x.Contains(":Status")), "unrequested section read");
-        Require(!source.Reads.Any(x => x.Contains("thoughtGroups") || x.Contains("memories")), "mood scalar read full mood details");
-        source = new FakeData();
-        var cached = Exact(engine, source, @"{
-            a:pawn(id:""pawn1""){mood{level} health{conditions(first:1,offset:0){items{id} returned}}}
-            b:pawn(id:""pawn1""){mood{level} health{conditions(first:1,offset:1){items{id} returned}}}
-            c:pawn(id:""pawn2""){mood{level}}
-        }");
-        Ok(cached, "aliased reads with distinct arguments");
-        Require(source.Reads.Count(x => x == "pawn1:Mood.level") == 1, "identical field aliases bypass cache");
-        Require(source.Reads.Count(x => x == "pawn2:Mood.level") == 1, "different pawn alias shared cache");
-        Require((string?)cached.Data!["a"]?["health"]?["conditions"]?["items"]?[0]?["id"] == "pawn1-condition0", "first slice mismatch");
-        Require((string?)cached.Data["b"]?["health"]?["conditions"]?["items"]?[0]?["id"] == "pawn1-condition1", "different slice arguments shared cached page");
-        source = new FakeData();
-        var stats = Exact(engine, source, @"{pawn(id:""pawn1""){
-            a:stats(defNames:[""MoveSpeed""]){items{defName value}}
-            b:stats(defNames:[""WorkSpeedGlobal""]){items{defName value}}
-        }}");
-        Ok(stats, "selected derived stats");
-        Require((string?)stats.Data!["pawn"]?["a"]?["items"]?[0]?["defName"] == "MoveSpeed" &&
-            (string?)stats.Data["pawn"]?["b"]?["items"]?[0]?["defName"] == "WorkSpeedGlobal", "stat definition arguments shared cache");
-        Require(!source.Reads.Any(x => x.Contains(":Profile") || x.Contains(":Equipment") || x.Contains(":Health")), "selected stats eagerly traversed unrelated object fields");
-        var visible = Exact(engine, source, @"{pawn(id:""pawn1""){health{
-            a:conditions(visibleOnly:true){total}
-            b:conditions(visibleOnly:false){total}
-        }}}");
-        Ok(visible, "filtered nested collections");
-        Require((int?)visible.Data!["pawn"]?["health"]?["a"]?["total"] == 3 &&
-            (int?)visible.Data["pawn"]?["health"]?["b"]?["total"] == 4, "different visibility arguments shared a collection cache");
-        Require(!source.Reads.Any(x => x.Contains(":Condition.")), "collection counts eagerly read per-condition details");
-        source = new FakeData();
-        var definitions = Exact(engine, source, "{pawn(id:\"pawn1\"){statDefinitions(search:\"Move\"){items{defName label description} total}}}");
-        Ok(definitions, "stat definition discovery");
-        Require((string?)definitions.Data!["pawn"]?["statDefinitions"]?["items"]?[0]?["defName"] == "MoveSpeed", "stat discovery lost definition identity");
-        Require(!source.Reads.Any(x => x.Contains(":Stat.") || x.EndsWith(":Pawn.stats", StringComparison.Ordinal)), "discovering stat definitions calculated pawn values");
-        AssertThread(source);
-    }
-
-    private static void NestedCollectionsAndRelations(GameQueryEngine engine)
-    {
-        var source = new FakeData();
-        var first = Exact(engine, source, @"{pawn(id:""pawn1""){health{
-            conditions(first:1,offset:0){items{id part{key label parentKey}} total offset returned hasMore nextOffset complete}
-            bodyParts(first:3){items{key parentKey label} total returned}
-        }}}");
-        Ok(first, "bounded health objects");
-        var page = first.Data!["pawn"]!["health"]!["conditions"]!;
-        Require((int?)page["total"] == 3 && (int?)page["returned"] == 1 && (int?)page["offset"] == 0, "nested page counts incorrect");
-        Require((bool?)page["hasMore"] == true && (int?)page["nextOffset"] == 1 && (bool?)page["complete"] == true, "normal page is not complete or cannot continue");
-        var part = page["items"]![0]!["part"]!;
-        Require((string?)part["key"] == "pawn1-part1" && (string?)part["parentKey"] == "pawn1-part0", "condition lost body-part relationship");
-        Require(first.Data["pawn"]!["health"]!["bodyParts"]!["items"]!.Any(x => (string?)x["key"] == (string?)part["key"]), "condition points to missing body-part identity");
-        var last = Exact(engine, source, @"{pawn(id:""pawn1""){health{conditions(first:2,offset:1){items{id} returned hasMore nextOffset complete}}}}");
-        Ok(last, "last nested page");
-        var lastPage = last.Data!["pawn"]!["health"]!["conditions"]!;
-        Require((int?)lastPage["returned"] == 2 && (bool?)lastPage["hasMore"] == false && lastPage["nextOffset"]!.Type == JTokenType.Null, "last page advertises another page");
-        var groups = Exact(engine, source, @"{pawn(id:""pawn1""){mood{thoughtGroups(first:1){items{defName moodOffset memberCount members(first:1){items{ref kind otherPawnId} total hasMore nextOffset}}}}}}");
-        Ok(groups, "nested thought membership");
-        var group = groups.Data!["pawn"]!["mood"]!["thoughtGroups"]!["items"]![0]!;
-        Require((int?)group["memberCount"] == 2 && (int?)group["members"]?["total"] == 2, "thought group membership counts lost");
-        Require((bool?)group["members"]?["hasMore"] == true, "nested list lacks independent continuation");
-        var referenceQuery = new JObject { ["document"] = "{pawn(id:\"pawn1\"){mood{memories(first:1){items{ref referenceScope}}}}}" };
-        var references = engine.Execute("graphql", referenceQuery, source, Session);
-        var laterReferences = engine.Execute("graphql", referenceQuery, source,
-            new SessionDescriptor(Session.ColonyId, Session.LoadEpoch, 101, 8));
-        Ok(references, "observation-scoped thought refs"); Ok(laterReferences, "later thought refs");
-        var currentRef = references.Data!["pawn"]!["mood"]!["memories"]!["items"]![0]!;
-        var laterRef = laterReferences.Data!["pawn"]!["mood"]!["memories"]!["items"]![0]!;
-        Require((string?)currentRef["referenceScope"] == "observation" && (string?)currentRef["ref"] != (string?)laterRef["ref"], "thought references pretended to persist across samples");
-        AssertThread(source);
-    }
-
-    private static void ValidationBeforeReads(GameQueryEngine engine)
-    {
-        foreach (var invalid in new[] {
-            "{ game { nonexistent } }", "mutation { game { paused } }", "{ __schema { queryType { name } } }",
-            "{ colonists(first:51){nodes{id}} }", "{ game{paused} colonists(first:-1){nodes{id}} }",
-            "{ game{paused} colonists(after:\"invalid\"){nodes{id}} }",
-            "query { ...Fields } fragment Fields on Query { game { paused } }",
-            "{game{paused} pawn(id:\"pawn1\"){health{conditions(first:101){items{id}}}}}",
-            "{game{paused} pawn(id:\"pawn1\"){health{conditions(offset:-1){items{id}}}}}",
-            "{game{paused} pawn(id:\"pawn1\"){health{conditions(offset:8193){items{id}}}}}",
-            "{game{paused} pawn(id:\"pawn1\"){stats(defNames:[]){items{defName}}}}",
-            "{pawn(id:\"pawn1\"){mood{thoughtGroups(first:100){items{members(first:100){items{defName label moodOffset}}}}}}}"
-        })
-        {
-            var source = new FakeData();
-            var bad = Exact(engine, source, invalid);
-            Require(bad.Status == "failed" && source.Reads.Count == 0, "invalid/overbudget query performed reads: " + invalid + " status=" + bad.Status);
+        var result=Query("{requests:[{from:'pawn',args:{id:'pawn1'},select:['id','name','status','mood','health','profile']},{from:'colony',select:['game','maps']}]}");
+        Ok(result,"Current pawn sections and colony overview");
+        var pawn=result.Data!["results"]![0]!["rows"]![0]!;
+        foreach(var section in new[]{"status","mood","health","profile"}) Require(pawn[section] is JObject,"Requested section absent: "+section);
+        Require(source.Threads.All(t=>t==Thread.CurrentThread.ManagedThreadId),"Getter left caller thread");
+        source=new FakeData();
+        result=Query("{requests:[{from:'pawn',args:{id:'pawn1'},select:['mood.level']},{from:'pawn',args:{id:'pawn1'},select:['mood.level']}]}");
+        Ok(result,"Current overlapping field requests");
+        Require(source.Reads.Count(x=>x=="pawn1:Mood.level")==1 && source.Reads.Count(x=>x=="Colonists")==1,"Shared field/identity cache reread native state");
+        source=new FakeData();
+        result=Query("{from:'spawned_free_colonists',args:{name:'Walter',map_id:'map1'},select:['id','name']}");
+        Ok(result,"Current colonist selection");
+        Require((int?)result.Data?["results"]?[0]?["matched_count"]==1,"Name/map selectors changed");
+        source=new FakeData();
+        result=Query("{from:'spawned_free_colonists',select:['id'],limit:1,offset:1}");
+        Require((string?)result.Data?["results"]?[0]?["rows"]?[0]?["id"]=="pawn2" && (bool?)result.Data?["results"]?[0]?["page"]?["has_more"]==true,"Current offset paging changed");
+        source=new FakeData();
+        result=Query("{from:'pawn',args:{id:'pawn1'},select:{health:{select:{conditions:{select:['id','severity'],where:{severity:{gt:1}},limit:1}}}}}");
+        Require(result.Status=="ok" && (int?)result.Data?["results"]?[0]?["rows"]?[0]?["health"]?["conditions"]?["matched_count"]==2,"Nested health filter no longer precedes window");
+        source=new FakeData {FailCondition=true};
+        result=Query("{from:'pawn',args:{id:'pawn1'},select:{health:{select:{conditions:{select:['id','severity'],limit:1}}}}}");
+        Require(result.Status=="partial" && result.Issues.Length>0,"Unavailable condition became successful");
+        source=new FakeData {MissingMood=true};
+        result=Query("{from:'pawn',args:{id:'pawn1'},select:['mood.level']}");
+        Require(result.Status=="ok" && result.Data?["results"]?[0]?["rows"]?[0]?["mood"]?.Type==JTokenType.Null,"Applicable null became a failure");
+        source=new FakeData {EmptyConditions=true};
+        result=Query("{from:'pawn',args:{id:'pawn1'},select:['health.conditions']}");
+        Require(result.Status=="ok" && (int?)result.Data?["results"]?[0]?["rows"]?[0]?["health"]?["conditions"]?["matched_count"]==0,"Empty conditions became unavailable");
+        source=new FakeData();
+        result=Query("{requests:[{from:'pawn',args:{id:'pawn1'},select:{stats:{args:{def_names:['MoveSpeed']},select:['def_name','value']}}},{from:'pawn',args:{id:'pawn1'},select:{stats:{args:{def_names:['WorkSpeedGlobal']},select:['def_name','value']}}}]}");
+        Ok(result,"Stat arguments use separate cache entries");
+        Require((string?)result.Data?["results"]?[0]?["rows"]?[0]?["stats"]?["rows"]?[0]?["def_name"]=="MoveSpeed" && (string?)result.Data?["results"]?[1]?["rows"]?[0]?["stats"]?["rows"]?[0]?["def_name"]=="WorkSpeedGlobal","Distinct StatDef arguments collided");
+        Require(!source.Reads.Any(x=>x.Contains(":Health") || x.Contains(":Profile")),"Stat request eagerly read unrelated sections");
+        source=new FakeData();
+        result=Query("{from:'pawn',args:{id:'pawn1'},select:{stat_definitions:{args:{search:'Move'},select:['def_name','label']}}}");
+        Require(result.Status=="ok" && (string?)result.Data?["results"]?[0]?["rows"]?[0]?["stat_definitions"]?["rows"]?[0]?["def_name"]=="MoveSpeed" && !source.Reads.Any(x=>x.Contains(":Stat.") || x.EndsWith(":Pawn.stats")),"Stat discovery calculated values or lost identity");
+        source=new FakeData();
+        result=Query("{requests:[{from:'pawn',args:{id:'pawn1'},select:{health:{select:{conditions:{args:{visible_only:true},aggregate:{n:{op:'count'}},limit:0}}}}},{from:'pawn',args:{id:'pawn1'},select:{health:{select:{conditions:{args:{visible_only:false},aggregate:{n:{op:'count'}},limit:0}}}}}]}");
+        Require(result.Status=="ok" && (int?)result.Data?["results"]?[0]?["rows"]?[0]?["health"]?["conditions"]?["aggregates"]?["n"]?["value"]==3 && (int?)result.Data?["results"]?[1]?["rows"]?[0]?["health"]?["conditions"]?["aggregates"]?["n"]?["value"]==4 && !source.Reads.Any(x=>x.Contains(":Condition.")),"Visibility arguments collided or count read per-record detail");
+        source=new FakeData();
+        result=Query("{from:'pawn',args:{id:'pawn1'},select:{health:{select:{conditions:{select:['id','part.key','part.parent_key'],limit:1},body_parts:{select:['key','parent_key']}}}}}");
+        Ok(result,"Native condition/body-part relationships");
+        var health=result.Data!["results"]![0]!["rows"]![0]!["health"]!;
+        var part=health["conditions"]!["rows"]![0]!["part"]!;
+        Require((string?)part["key"]=="pawn1-part1" && (string?)part["parent_key"]=="pawn1-part0" && health["body_parts"]!["rows"]!.Any(x=>(string?)x["key"]==(string?)part["key"]),"Body-part identities or relationship changed");
+        source=new FakeData();
+        result=Query("{from:'pawn',args:{id:'pawn1'},select:{mood:{select:{thought_groups:{select:{member_count:true,members:{select:['ref','kind','other_pawn_id'],limit:1}},limit:1}}}}}");
+        Ok(result,"Thought groups with independent member windows");
+        var group=result.Data!["results"]![0]!["rows"]![0]!["mood"]!["thought_groups"]!["rows"]![0]!;
+        Require((int?)group["member_count"]==2 && (int?)group["members"]?["matched_count"]==2 && (bool?)group["members"]?["page"]?["has_more"]==true,"Thought group member count/window changed");
+        var referenceRequest=JObject.Parse("{from:'pawn',args:{id:'pawn1'},select:{mood:{select:{memories:{select:['ref','reference_scope'],limit:1}}}}}");
+        var refs=engine.Execute("query",referenceRequest,source,Session);
+        var laterRefs=engine.Execute("query",referenceRequest,source,new SessionDescriptor(Session.ColonyId,Session.LoadEpoch,101,8));
+        var currentRef=refs.Data!["results"]![0]!["rows"]![0]!["mood"]!["memories"]!["rows"]![0]!;
+        var laterRef=laterRefs.Data!["results"]![0]!["rows"]![0]!["mood"]!["memories"]!["rows"]![0]!;
+        Require((string?)currentRef["reference_scope"]=="observation" && (string?)currentRef["ref"]!=(string?)laterRef["ref"],"Thought references persisted across observation samples");
+        source=new FakeData {FailMood=true};
+        result=Query("{from:'pawn',args:{id:'pawn1'},select:['mood.level','health.summary.health_percent']}");
+        Require(result.Status=="partial" && (double?)result.Data?["results"]?[0]?["rows"]?[0]?["health"]?["summary"]?["health_percent"]==0.75,"Failed mood discarded independent health");
+        source=new FakeData {OversizedConditions=true};
+        result=Query("{from:'pawn',args:{id:'pawn1'},select:['health.conditions.id']}");
+        Require(result.Status=="partial" && result.Issues.Any(i=>i.Code=="node_scan_limit"),"Unbounded nested source bypassed guard");
+        foreach(var request in new[]{"{from:'pawn',args:{id:'pawn1',first:1},select:['id']}","{from:'pawn',args:{id:'pawn1'},select:['invented']}","{from:'spawned_free_colonists',limit:101,select:['id']}","{from:'pawn',args:{id:'pawn1'},select:{health:{select:{conditions:{limit:101,select:['id']}}}}}","{from:'pawn',args:{id:'pawn1'},select:{health:{select:{conditions:{offset:-1,select:['id']}}}}}","{from:'pawn',args:{id:'pawn1'},select:{health:{select:{conditions:{offset:8193,select:['id']}}}}}","{from:'pawn',args:{id:'pawn1'},select:{stats:{args:{def_names:[]},select:['value']}}}"}) {
+            source=new FakeData();result=Query(request);
+            Require(result.Status=="failed" && source.Reads.Count==0,"Invalid current query performed reads");
         }
-        foreach (var invalid in new[] {
-            @"{'requests':[{'target':{'type':'pawn','id':'pawn1'},'sections':['status']},{'target':{'type':'pawn','id':'pawn2'},'sections':['not_a_section']}]}",
-            @"{'requests':[{'target':{'type':'colony'},'sections':['overview']},{'target':{'type':'pawn'},'sections':['health']}]}",
-            @"{'requests':[{'target':{'type':'colony'},'sections':['health']}]}",
-            @"{'requests':[{'target':{'type':'colonists','first':500},'sections':['summary']}]}",
-            @"{'requests':[{'target':{'type':'unknown','id':'pawn1'},'sections':['status']}]}",
-            @"{'requests':[{'target':{'type':'pawn','id':'pawn1'},'sections':[]}]}",
-        })
-        {
-            var source = new FakeData();
-            var bad = Templates(engine, source, invalid);
-            Require(bad.Status == "failed" && source.Reads.Count == 0, "invalid template partially executed: " + invalid);
-        }
+        Console.WriteLine("Query engine tests passed: retired operations perform zero reads; current getters, sections, cache, filters, offset paging, partial/null/empty and pre-read rejection.");
     }
-
     private static void ThoughtReferenceIdentity()
     {
         var source = new FakeData();
@@ -234,85 +113,8 @@ internal static class QueryEngineTests
         Require((string?)context.ReadNode(memory, "referenceScope") == "observation" && source.Reads.Count == 0, "detached reference metadata performed game reads");
     }
 
-    private static void Pagination(GameQueryEngine engine)
-    {
-        var source = new FakeData();
-        var first = Exact(engine, source, "{colonists(first:1){nodes{id} pageInfo{hasNextPage endCursor}}}");
-        Ok(first, "first colonist page");
-        var cursor = (string)first.Data!["colonists"]!["pageInfo"]!["endCursor"]!;
-        var args = new JObject { ["document"] = "query($c:String){colonists(first:1,after:$c){nodes{id} pageInfo{hasNextPage endCursor}}}", ["variables"] = new JObject { ["c"] = cursor } };
-        var second = engine.Execute("graphql", args, source, Session);
-        Ok(second, "second colonist page");
-        Require((string?)second.Data!["colonists"]?["nodes"]?[0]?["id"] == "pawn2", "paging duplicated or skipped an identity");
-        var reloaded = engine.Execute("graphql", args, source, new SessionDescriptor(Session.ColonyId, new string('9', 32), 100, 0));
-        Require(reloaded.ErrorCode == "stale_cursor", "cursor survived load change");
-        var missing = Exact(engine, source, "{colonists(name:\"Missing\"){nodes{id}} pawn(id:\"missing\"){id}}");
-        Ok(missing, "missing identity");
-        Require(((JArray)missing.Data!["colonists"]!["nodes"]!).Count == 0 && missing.Data["pawn"]!.Type == JTokenType.Null, "not-found identity semantics incorrect");
-        var filtered = Templates(engine, source, @"{'requests':[
-            {'target':{'type':'colonists','ids':['pawn1'],'map_id':'map1','name':'wal','first':1},'sections':['summary']},
-            {'target':{'type':'colonists','ids':['pawn2']},'sections':['summary']}
-        ]}");
-        Ok(filtered, "filtered colonist targets");
-        Require((string?)filtered.Data!["o0"]?["nodes"]?[0]?["id"] == "pawn1" && (string?)filtered.Data["o1"]?["nodes"]?[0]?["id"] == "pawn2", "distinct filters collided");
-    }
-
-    private static void PartialAndNullResults(GameQueryEngine engine)
-    {
-        var source = new FakeData { FailMood = true };
-        var partial = Exact(engine, source, "{pawn(id:\"pawn1\"){id mood{level} health{summary{healthPercent}} equipment{Primary{id}}}}");
-        Require(partial.Status == "partial", "field failure lost partial semantics");
-        Require((string?)partial.Data!["pawn"]?["id"] == "pawn1" && (double?)partial.Data["pawn"]?["health"]?["summary"]?["healthPercent"] == 0.75, "mood failure erased another section");
-        Require(partial.Issues.Any(x => x.Path.ToString().Contains("level")), "field failure path missing");
-        var aliased = Exact(engine, source, "{p:colonists(first:1){pi:pageInfo{cursor:endCursor} people:nodes{id m:mood{v:level}}}}");
-        Require(aliased.Status == "partial" && aliased.Data!["p"]!["pi"]!["cursor"]!.Type == JTokenType.Null, "aliases bypassed partial-page cursor handling");
-        var lastPage = Exact(engine, source, "{colonists(first:50){nodes{id mood{level}} pageInfo{hasNextPage endCursor}}}");
-        Require(lastPage.Status == "partial" && (bool?)lastPage.Data!["colonists"]!["pageInfo"]!["hasNextPage"] == false &&
-            lastPage.Data["colonists"]!["pageInfo"]!["endCursor"]!.Type == JTokenType.Null,
-            "a failed detail field invented extra colonist identities on the final page");
-        source = new FakeData { FailCondition = true };
-        var failedPage = Exact(engine, source, "{pawn(id:\"pawn1\"){health{c:conditions(first:2){rows:items{id s:severity} more:hasMore next:nextOffset done:complete}}}}");
-        Require(failedPage.Status == "partial", "failed nested field reported successful page");
-        var page = failedPage.Data!["pawn"]!["health"]!["c"]!;
-        Require((bool?)page["done"] == false && page["next"]!.Type == JTokenType.Null,
-            "incomplete nested page advanced past failed fields: " + page + " issues=" + string.Join(";", failedPage.Issues.Select(x => x.Path.ToString())));
-        source = new FakeData { MissingMood = true, EmptyConditions = true };
-        var absent = Exact(engine, source, "{pawn(id:\"pawn1\"){mood{level} health{conditions{items{id} total returned complete}} equipment{Primary{id}}}}");
-        Ok(absent, "not-applicable and empty collection");
-        Require(absent.Data!["pawn"]!["mood"]!.Type == JTokenType.Null, "absent mood tracker should return null without issue");
-        var conditions = absent.Data["pawn"]!["health"]!["conditions"]!;
-        Require((int?)conditions["total"] == 0 && ((JArray)conditions["items"]!).Count == 0 && (bool?)conditions["complete"] == true, "empty list conflated with failed read");
-        Require(absent.Data["pawn"]!["equipment"]!["Primary"]!.Type == JTokenType.Null, "absent primary weapon should be null");
-        source = new FakeData { OversizedConditions = true };
-        var tooMany = Exact(engine, source, "{pawn(id:\"pawn1\"){health{conditions(first:1){items{id} total}} mood{level}}}");
-        Require(tooMany.Status == "partial" && tooMany.Issues.Any(x => x.Code.Equals("node_scan_limit", StringComparison.OrdinalIgnoreCase)), "oversized nested identity scan bypassed bounds");
-        Require(tooMany.Data!["pawn"]!["health"]!["conditions"]!.Type == JTokenType.Null, "incomplete enumeration claimed an exact collection count");
-        Require((double?)tooMany.Data["pawn"]?["mood"]?["level"] == 0.6, "collection scan failure erased unrelated section");
-        AssertThread(source);
-    }
-
-    private static QueryOutcome Exact(GameQueryEngine engine, FakeData source, string document) => engine.Execute("graphql", new JObject { ["document"] = document }, source, Session);
-
-    private static void InlinePageCoverage(GameQueryEngine engine)
-    {
-        const string query = "{p:colonists(first:1){people:nodes{id health{c:conditions(first:1){items{id severity} ... on HealthConditionsSlice {... {done:complete next:nextOffset}}}}} ... on ColonistPage {pi:pageInfo{... on PageInfo {cursor:endCursor more:hasNextPage}}}}}";
-        var failed = Exact(engine, new FakeData { FailCondition = true }, query);
-        Require(failed.Status == "partial", "inline failure did not remain partial");
-        var slice = failed.Data!["p"]!["people"]![0]!["health"]!["c"]!;
-        Require((bool?)slice["done"] == false && slice["next"]!.Type == JTokenType.Null,
-            "inline metadata advanced past failed condition fields");
-        Require(failed.Data["p"]!["pi"]!["cursor"]!.Type == JTokenType.Null && (bool?)failed.Data["p"]!["pi"]!["more"] == true,
-            "inline root pageInfo allowed unsafe continuation");
-        var success = Exact(engine, new FakeData(), query);
-        Ok(success, "successful inline coverage");
-        Require((bool?)success.Data!["p"]!["people"]![0]!["health"]!["c"]!["done"] == true &&
-            (int?)success.Data["p"]!["people"]![0]!["health"]!["c"]!["next"] == 1 &&
-            success.Data["p"]!["pi"]!["cursor"]!.Type == JTokenType.String, "inline success lost normal continuation");
-    }
-    private static QueryOutcome Templates(GameQueryEngine engine, FakeData source, string arguments) => engine.Execute("template_query", JObject.Parse(arguments), source, Session);
-    private static void Ok(QueryOutcome result, string scenario) => Require(result.Status == "ok", scenario + ": " + result.Status + " " + result.Message + " " + string.Join(";", result.Issues.Select(x => x.Message)));
-    private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
-    private static void AssertThread(FakeData source) => Require(source.Threads.All(x => x == Thread.CurrentThread.ManagedThreadId), "resolver left calling thread");
+    private static void Ok(QueryOutcome result,string scenario) => Require(result.Status=="ok",scenario+": "+result.Status+" "+result.Message+" "+string.Join(";",result.Issues.Select(i=>i.Message)));
+    private static void Require(bool pass,string message) { if(!pass)throw new InvalidOperationException(message); }
 
     private sealed class FakeData : IGameData
     {

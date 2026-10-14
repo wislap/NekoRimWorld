@@ -14,40 +14,33 @@ internal static class SelectionTests
     public static void Run()
     {
         var engine = new GameQueryEngine(1000); var data = new Data();
-        QueryOutcome Query(string document) => engine.Execute("graphql", new JObject { ["document"] = document }, data, Session);
-        foreach (var pair in new[] { ("IsMedicine", "herb"), ("IsWeapon", "rifle"), ("IsIngestible", "rice"), ("CountAsResource", "steel") })
-        {
-            var result = Query("{thing_defs(first:1,where:{fields:{" + pair.Item1 + ":{eq:true}}}){nodes{defName} pageInfo{hasNextPage}}}");
-            Require(result.Status == "ok" && (string?)result.Data!["thing_defs"]!["nodes"]![0]!["defName"] == pair.Item2, pair.Item1 + " did not filter before paging: " + result.Message + string.Join(";", result.Issues.Select(i => i.Message)));
+        QueryOutcome Query(string condition,int limit=100,int offset=0) => engine.Execute("query",new JObject { ["from"]="thing_defs",["where"]=JObject.Parse(condition),["select"]=new JArray("def_name"),["limit"]=limit,["offset"]=offset },data,Session);
+        JToken? Rows(QueryOutcome result) => result.Data?["results"]?[0]?["rows"];
+        foreach(var pair in new[]{("is_medicine","herb"),("is_weapon","rifle"),("is_ingestible","rice"),("count_as_resource","steel")}) {
+            var result=Query("{"+pair.Item1+":{eq:true}}",1);
+            Require(result.Status=="ok" && (string?)Rows(result)?[0]?["def_name"]==pair.Item2,"Native classification filter changed: "+pair.Item1);
         }
-        var numeric = Query("{thing_defs(where:{fields:{stackLimit:{gte:75},label:{contains:\"MEDICINE\",case_sensitive:false}}}){nodes{defName}}}");
-        Require(numeric.Status == "ok" && (string?)numeric.Data!["thing_defs"]!["nodes"]![0]!["defName"] == "steel", "name match acquired classification meaning");
-        var noMedicine = Query("{thing_defs(where:{fields:{IsMedicine:{eq:false}}}){nodes{defName}}}");
-        Require(((JArray)noMedicine.Data!["thing_defs"]!["nodes"]!).Count == 3, "false became omitted");
-        var nested = Query("{thing_defs(where:{fields:{ingestible:{fields:{HumanEdible:{eq:true}}}}}){nodes{defName}}}");
-        Require(nested.Status == "ok" && (string?)nested.Data!["thing_defs"]!["nodes"]![0]!["defName"] == "rice", "nested nullable selection failed");
-        var relation = Query("{thing_defs(where:{fields:{thingCategories:{some:{reach:{field:\"parent\",include_self:true,some:{fields:{defName:{eq:\"ModRoot\"}}}}}}}}){nodes{defName}}}");
-        Require(relation.Status == "ok" && (string?)relation.Data!["thing_defs"]!["nodes"]![0]!["defName"] == "rifle", "arbitrary category ancestry failed");
-        var full = Query("{thing_defs(where:{fields:{stackLimit:{gte:1}}},first:1){nodes{defName} pageInfo{endCursor}}}");
-        var cursor = (string)full.Data!["thing_defs"]!["pageInfo"]!["endCursor"]!;
-        data.Reads = 0;
-        var changed = engine.Execute("graphql", JObject.FromObject(new { document = "query($c:String){thing_defs(first:1,after:$c,where:{fields:{stackLimit:{gte:2}}}){nodes{defName}}}", variables = new { c = cursor } }), data, Session);
-        Require(changed.Status == "failed" && data.Reads == 0, "cursor crossed predicate boundary");
-        foreach (var bad in new[] {
-            "{thing_defs(where:{fields:{IsMedicine:{eq:1}}}){nodes{defName}}}",
-            "{thing_defs(where:{fields:{stackLimit:{eq:true}}}){nodes{defName}}}",
-            "{thing_defs(where:{fields:{Invented:{eq:true}}}){nodes{defName}}}",
-            "{thing_defs(isMedicine:true){nodes{defName}}}",
-            "{thing_defs(where:{fields:{stats:{eq:true}}}){nodes{defName}}}",
-        }) { data.Reads = 0; var result = Query(bad); Require(result.Status == "failed" && data.Reads == 0, "invalid predicate performed reads: " + bad); }
-        data.FailField = "IsMedicine";
-        var failed = Query("{thing_defs(where:{fields:{IsMedicine:{eq:true}}}){nodes{defName}}}");
-        Require(failed.Status == "partial" && failed.Data!["thing_defs"]!.Type == JTokenType.Null, "unknown membership became empty");
-        var certain = Query("{thing_defs(where:{any:[{fields:{IsMedicine:{eq:true}}},{fields:{stackLimit:{gt:0}}}]}){nodes{defName}}}");
-        Require(certain.Status == "ok" && ((JArray)certain.Data!["thing_defs"]!["nodes"]!).Count == 4, "three-valued OR lost a proven match");
-        data.FailField = null;
-        var slice = Query("{thing_def(defName:\"rifle\"){thingCategories(first:1,where:{fields:{defName:{eq:\"ModChild\"}}}){items{defName} total returned complete}}}");
-        Require(slice.Status == "ok" && (int?)slice.Data!["thing_def"]!["thingCategories"]!["total"] == 1, "slice predicate was applied after its window");
+        var numeric=Query("{stack_limit:{gte:75},label:{contains:'MEDICINE',case_sensitive:false}}");
+        Require(numeric.Status=="ok" && (string?)Rows(numeric)?[0]?["def_name"]=="steel","Text label acquired classification meaning");
+        Require(((JArray)Rows(Query("{is_medicine:{eq:false}}"))!).Count==3,"False condition omitted");
+        var nested=Query("{ingestible:{human_edible:{eq:true}}}");
+        Require(nested.Status=="ok" && (string?)Rows(nested)?[0]?["def_name"]=="rice","Nullable nested predicate failed");
+        var relation=Query("{thing_categories:{some:{reach:{field:'parent',include_self:true,some:{def_name:{eq:'ModRoot'}}}}}}");
+        Require(relation.Status=="ok" && (string?)Rows(relation)?[0]?["def_name"]=="rifle","Category ancestry failed");
+        var full=Query("{stack_limit:{gte:1}}",1);
+        var continuation=Query("{stack_limit:{gte:1}}",1,1);
+        Require((bool?)full.Data?["results"]?[0]?["page"]?["has_more"]==true && (string?)Rows(continuation)?[0]?["def_name"]=="rifle","Current offset continuation changed");
+        foreach(var bad in new[]{"{is_medicine:{eq:1}}","{stack_limit:{eq:true}}","{invented:{eq:true}}","{stats:{eq:true}}"}) {
+            data.Reads=0;var result=Query(bad);Require(result.Status=="failed" && data.Reads==0,"Invalid condition performed reads");
+        }
+        data.FailField="IsMedicine";
+        var failed=Query("{is_medicine:{eq:true}}");
+        Require(failed.Status=="partial" && failed.Data?["results"]?[0]?["matched_count"]?.Type==JTokenType.Null,"Unknown membership became empty");
+        var certain=Query("{any:[{is_medicine:{eq:true}},{stack_limit:{gt:0}}]}");
+        Require(certain.Status=="ok" && ((JArray)Rows(certain)!).Count==4,"Three-valued OR lost proven match");
+        data.FailField=null;
+        var slice=engine.Execute("query",JObject.Parse("{from:'thing_def',args:{def_name:'rifle'},select:{thing_categories:{select:['def_name'],where:{def_name:{eq:'ModChild'}},limit:1}}}"),data,Session);
+        Require(slice.Status=="ok" && (int?)slice.Data?["results"]?[0]?["rows"]?[0]?["thing_categories"]?["matched_count"]==1,"Nested predicate applied after window");
         var scalarTypes = new IGraphType[] { new BooleanGraphType(), new IntGraphType(), new FloatGraphType(), new StringGraphType(), new IdGraphType(), new EnumerationGraphType { Name = "TestEnum" } };
         ((EnumerationGraphType)scalarTypes.Last()).Add("Alpha", 1);
         var custom = new ObjectGraphType { Name = "NovelObject" };
@@ -63,6 +56,11 @@ internal static class SelectionTests
         }
         Require(conditions.Compile("NovelObject", JObject.Parse("{'fields':{'children':{'every':{'fields':{'newBoolean':{'eq':true}}}}}}"))(values, context) == true, "empty every is not true");
         Require(conditions.Compile("NovelObject", JObject.Parse("{'fields':{'children':{'some':{'fields':{'newBoolean':{'eq':true}}}}}}"))(values, context) == false, "empty some is not false");
+        var literalDocument=GraphQLParser.Parser.Parse("{objects(where:{fields:{newInt:{eq:42},newBoolean:{eq:true},newString:{in:[Alpha,null,1.5]}}}){newInt}}");
+        var literalOperation=(GraphQLParser.AST.GraphQLOperationDefinition)literalDocument.Definitions[0];
+        var literalField=(GraphQLParser.AST.GraphQLField)literalOperation.SelectionSet.Selections[0];
+        var literal=new ConditionGraphType().ParseLiteral(literalField.Arguments![0].Value);
+        Require(JToken.DeepEquals((JToken)literal!,JObject.Parse("{fields:{newInt:{eq:42},newBoolean:{eq:true},newString:{in:['Alpha',null,1.5]}}}")),"Typed predicate literal conversion changed");
         var exactDefs = engine.Execute("query", JObject.Parse("{'from':'thing_defs','args':{'exact_names':['STEEL','Fake medicine']},'select':['def_name','label'],'where':{'any':[{'def_name':{'eq':'steel','case_sensitive':false}},{'label':{'eq':'Fake medicine','case_sensitive':false}}]}}"), new Data(), Session);
         Require(exactDefs.Status == "ok" && (string?)exactDefs.Data?["results"]?[0]?["rows"]?[0]?["def_name"] == "steel", "exact_names was not accepted/projected by real public-query schema: " + exactDefs.Message + exactDefs.Data);
         Console.WriteLine("Selection tests passed: shared native booleans, numeric/text/null/collection/ancestry conditions, unknown logic, new schema fields, paging and pre-read rejection.");
@@ -95,7 +93,7 @@ internal static class SelectionTests
             Reads++; if (root == "thing_def") return definitions.First(n => n.Key == (string)args["defName"]!);
             var selected = args.TryGetValue("exactNames", out var exact) && exact != null
                 ? DefinitionCandidates.Exact(definitions, ((System.Collections.IEnumerable)exact).Cast<string>(), n => n.Key, n => (string?)((Dictionary<string, object?>)n.Handle!)["label"], context.Check) : definitions;
-            return root == "query_defs" ? selected : ThingPaging.Page(selected, args, context);
+            return selected;
         }
     }
 }

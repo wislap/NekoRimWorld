@@ -58,10 +58,10 @@ internal sealed class SelectionConditions
                 {
                     field.Arguments ??= new QueryArguments();
                     field.Arguments.Add(GameArguments.Create("where", predicate,
-                        "Predicate over " + element.Name + "; evaluated before pagination. fields/all/any/not; field operations follow public types. Unavailable membership is not false. See selection_contract and describe_schema."));
+                        "Predicate over " + element.Name + "; evaluated before pagination. fields/all/any/not; field operations follow public types. Unavailable membership is not false. See selection_contract and describe_query."));
                     field.Metadata["collection_element"] = element;
-                    // Slice and cursor producers apply the predicate before constructing their window.
-                    if (!field.Metadata.ContainsKey("slice") && !field.Metadata.ContainsKey("cursor_page"))
+                    // Slice producers apply the predicate before constructing their window.
+                    if (!field.Metadata.ContainsKey("slice"))
                     {
                         var original = field.Resolver!;
                         field.Resolver = new FuncFieldResolver<object?>(c => {
@@ -350,5 +350,18 @@ internal sealed class ConditionGraphType : ScalarGraphType
     public ConditionGraphType() { Name = "SelectionPredicate"; Description = "Schema-validated structured condition; selection_contract defines the shared operators."; }
     public override object? ParseValue(object? value) => value == null ? null : value is JObject obj ? obj : JObject.FromObject(value);
     public override object? Serialize(object? value) => value;
-    public override object? ParseLiteral(GraphQLValue value) => value is GraphQLNullValue ? null : GameQueryEngine.Value(value, new JObject());
+    private static JToken Literal(GraphQLValue value) => value switch {
+        GraphQLBooleanValue v => new JValue(v.BoolValue),
+        GraphQLIntValue v => new JValue(long.Parse(v.Value.ToString(), CultureInfo.InvariantCulture)),
+        GraphQLFloatValue v => new JValue(double.Parse(v.Value.ToString(), CultureInfo.InvariantCulture)),
+        GraphQLEnumValue v => new JValue(v.Name.StringValue),
+        GraphQLObjectValue v => v.Fields == null ? new JObject() : new JObject(v.Fields.Select(f => new JProperty(f.Name.StringValue, Literal(f.Value)))),
+        GraphQLStringValue v => new JValue(v.Value.ToString()),
+        GraphQLNullValue => JValue.CreateNull(),
+        GraphQLListValue v => v.Values is null
+            ? new JArray()
+            : new JArray(v.Values.Select(x => Literal(x))),
+        _ => throw ReadContext.Error("invalid_arguments", "Unsupported argument value for this schema."),
+    };
+    public override object? ParseLiteral(GraphQLValue value) => value is GraphQLNullValue ? null : Literal(value);
 }

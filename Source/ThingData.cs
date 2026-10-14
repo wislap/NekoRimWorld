@@ -103,7 +103,7 @@ internal static class ThingData
             }
             throw ReadContext.Error("object_not_found", "Thing ID was not found in loaded maps and their holder trees. IDs can disappear after stack changes.");
         }
-        if (root is "thing_defs" or "query_defs")
+        if (root == "query_defs")
         {
             var categoryName = Text("categoryDefName");
             var category = categoryName == null ? null : DefDatabase<ThingCategoryDef>.GetNamedSilentFail(categoryName);
@@ -121,32 +121,9 @@ internal static class ThingData
                     yield return Definition(def);
                 }
             }
-            return root == "query_defs" ? Definitions() : ThingPaging.Page(Definitions(), args, context);
+            return Definitions();
         }
-        if (root != "things") throw ReadContext.Error("unknown_target", "Unsupported native target.");
-        var groupName = Text("requestGroup") ?? "HaulableEver";
-        if (groupName is not ("HaulableEver" or "HaulableAlways" or "HaulableEverOrMinifiable" or "Everything")) throw ReadContext.Error("invalid_arguments", "Unsupported ThingRequestGroup.");
-        var names = Strings(args, "defNames");
-        var defs = names?.Select(name => DefDatabase<ThingDef>.GetNamedSilentFail(name) ?? throw ReadContext.Error("unknown_definition", "Unknown ThingDef: " + name)).ToArray();
-        var group = (ThingRequestGroup)Enum.Parse(typeof(ThingRequestGroup), groupName);
-        var visible = !args.TryGetValue("visibleOnly", out var rawVisible) || rawVisible is not false;
-        IEnumerable<GameNode> Candidates()
-        {
-            foreach (var map in maps)
-            {
-                var candidates = defs == null ? map.listerThings.ThingsInGroup(group).AsEnumerable() : defs.SelectMany(def => map.listerThings.ThingsOfDef(def));
-                foreach (var thing in candidates)
-                {
-                    context.Check();
-                    if (thing.Destroyed || !thing.Spawned || !group.Includes(thing.def)) continue;
-                    if (visible && thing.Position.Fogged(map)) continue;
-                    var search = Text("name");
-                    if (search != null && !Match(search, thing.def.defName, thing.Label)) continue;
-                    yield return Node(thing);
-                }
-            }
-        }
-        return ThingPaging.Page(Candidates(), args, context);
+        throw ReadContext.Error("unknown_target", "Unsupported native target.");
     }
 
     private static IEnumerable<Thing> Descendants(IThingHolder holder, ReadContext context, HashSet<IThingHolder> visited, HashSet<Thing> seen, int depth)

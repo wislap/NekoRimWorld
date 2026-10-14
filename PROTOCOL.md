@@ -1,124 +1,50 @@
-> Current: wire v2; catalog contracts public_query.v2, world_observation.v2.3, spatial_query.v1, native_behavior.v1, resource_evidence.v3. Change history is in git and rimworld-bench-archive.
-
 # N.E.K.O RimWorld protocol v2
 
-The executable contract is Source/Protocol.cs and the plugin's game/protocol.py.
-The complete v2 request/response contract, ownership and extension procedure are
-in [DATA_PATH.md](../N.E.K.O/plugin/plugins/neko_rimworld/DATA_PATH.md).
+The executable wire contract is Source/Protocol.cs and the plugin's
+game/protocol.py. [DATA_PATH.md](../N.E.K.O/plugin/plugins/neko_rimworld/DATA_PATH.md)
+describes ownership, limits and supported read paths.
 
-Transport: 4-byte unsigned big-endian length followed by UTF-8 JSON. Loopback
-only. Mod is the client; Python is the listener. Mutual authentication uses
-hello/challenge/authenticate/welcome, HMAC-SHA256, connection epoch and both
-nonces. Authentication domain: neko-rimworld-bridge/v2. Hello capabilities
-(NekoRimWorldMod.cs): query.execute.v2, resource.evidence.v1, spatial_query.v1,
-native_behavior.v1. The plugin requires query.execute.v2. The capability name
-resource.evidence.v1 is unchanged while the catalog's resource contract is
-resource_evidence.v3.
+Transport uses a 4-byte unsigned big-endian length and UTF-8 JSON on loopback.
+The Mod is the client; Python is the listener. Mutual authentication uses
+hello/challenge/authenticate/welcome and HMAC-SHA256 over connection epoch and both
+nonces in the neko-rimworld-bridge/v2 domain. Hello advertises query.execute.v2,
+spatial_query.v1, and native_behavior.v1.
 
-Session messages, heartbeat, request correlation and strictly increasing
-per-direction sequence numbers are unchanged in purpose. colony_id identifies
-the save and load_epoch identifies this load. One query_result belongs to one
-session and sample. Only the protocol-v2 wire shape is accepted.
+Session messages retain save colony_id, current load_epoch, tick/sample,
+request correlation and strictly increasing per-direction sequence numbers.
+Only the v2 wire shape is accepted. A query request contains an operation and
+arguments object; a result contains status, optional data, issues and failure
+code/message. Gameplay DTO meanings belong to the readers.
 
-query_request payload: operation (nonempty text), arguments (JSON object).
-query_result payload: status, optional data object, issues array; non-data
-statuses additionally require error_code and message. Game field meanings are
-owned by query readers; protocol code does not validate a gameplay DTO union.
+## Supported contracts and operations
 
-Current operations (NekoGameComponent.cs, VerseQueryExecutor.cs, GameQueryEngine.cs):
+- query_catalog: current public, selection, spatial and world contracts;
+  the live Verse executor adds native behavior and game-implementation audit metadata.
+- query / describe_query: public_query.v2, canonical fields, conditions,
+  related collections, grouping and whole-selection aggregates.
+- spatial_query: spatial_query.v1.
+- survey_space, inspect_route, inspect_state: world_observation.v2.3.
+- inspect_actions, inspect_threats: native_behavior.v1.
 
-- Sent by the plugin: query_catalog, query, describe_query, spatial_query,
-  survey_space, inspect_route, inspect_state, inspect_actions, inspect_threats.
-- template_query: sent only by the plugin's manual probe_game_overview entry.
-- graphql, describe_schema, resource_report: not sent by the plugin; kept for
-  BridgeSmoke tests and the rimworld-bench capture Mod.
+The current catalog has no SDL, template list/parameters, GraphQL document
+parameters, resource-report contract or legacy result-description declaration.
+graphql, describe_schema, template_query, resource_report and
+colony_snapshot return unsupported_operation without native reads.
 
-colony_snapshot is removed. query_catalog's native_behavior and
-game_implementation entries are added only in VerseQueryExecutor.cs, so hosts
-that call GameQueryEngine directly (the bench frozen engine and capture Mod)
-never include them. query_result may include a generic execution object containing the
-expanded query, variables, schema ID and template-root bindings. See DATA_PATH.md
-for supported fields, limits, pagination and error paths.
+The shared typed field schema remains internal: it supplies current public
+getter/condition semantics and the in-process capture adapter. Public collections
+use limit/offset windows, never old root keyset cursors. A window does not change
+the population counted; missing/failed fields remain unknown with scoped issues.
 
-`spatial_query` is an additive v2.1 operation. It accepts one `from` Pawn
-reference and one `to` Thing or map-cell reference, resolves names/IDs on the
-game thread, and returns current-tick native reachability. It does not execute a
-Job, inspect WorkGivers, compute routes, or expose Room/Region graphs.
+Current public responses still include execution.evidence describing already
+returned data; this does not perform additional game reads. Request arguments,
+schema identity, effective scope, sampled ticks and complete/partial facts remain
+in raw audit. Earlier stored envelopes are not rewritten.
 
-Version 0.5.0 template arguments are requests[{target:{type,id?},sections:[...]}].
-Selectors: pawn + required id, colony, or colonists with discovery filters.
-Sections are applicable to the target and merge by exact target identity.
-Nested data remains generic JSON; maximum wire depth is 32. No type/args fallback.
-## Historical resource evidence extension (1.2 development)
-
-Wire version and authentication are unchanged. `query_catalog` now advertises
-`resource_parameters` and `resource_contract` (`resource_evidence.v2`). A
-`query_request` with operation `resource_report` uses that JSON parameter schema.
-The normal `query_result` envelope retains sample and request correlation.
-
-The resource domain reports game-computed per-definition quantities for ground,
-native storage cells, free-colonist inventory/worn/equipment/carried items and
-cached resource counters. Physical scopes use stable Thing IDs for deduplication;
-cached values never enter the physical union. The union is restricted to the
-selected map/scopes and is not a universal colony total.
-
-Ground defaults to fog-filtered; native stored counts, pawn scopes and cached
-counts are not made visible-only by that flag. Partial physical quantities are
-null with explicit observed lower bounds. Missing cached keys differ from zero.
-Conflicting item identity fails the report. The12ms read budget, bounded scans
-and bounded response remain in force; no Verse handles reach network workers.
-
-This extension does not remove GraphQL, templates or schema discovery. Older
-plugins ignore the additional catalog properties; new plugins only advertise
-resource mode when the catalog supports it.
-
-V2 groups each definition's readings under `rows[].scopes`: physical readings
-contain `units`, `known_units`, `item_count`, `status`, and `fog_filter`; cached
-readings contain `units`, `entry_present`, and `fog_filter`. Top-level coverage
-retains scan diagnostics. `row_page.total_rows/returned_rows` describe selected
-definition rows across scopes, never a count of ground categories. This replaces
-v1's parallel quantity maps, cached presence field and `view`; v1 field meanings
-are not silently reused. Physical membership and counting rules are unchanged.
-
-`thing_defs` also accepts optional boolean `isMedicine`, mapped to template
-target `is_medicine`. It filters native `ThingDef.IsMedicine`, intersects other
-selectors and participates in cursor identity; false is a filter, not omission.
-
-
-## Current v1.3 development contracts
-
-Wire v2 and authentication remain unchanged. The catalog advertises
-resource_evidence.v3, selection_contract (schema_conditions.v1), and
-result_description_contract (observed_values.v1). Capability comes from the
-connected catalog, not a guessed package version.
-
-Resource v3 removes focus and dedicated medicine arguments. definition_where
-operates on ThingDef, instance_where on physical Thing; exact names intersect
-conditions. Cached has no Thing instance and therefore rejects instance_where
-in a mixed request. include_total optionally publishes request-wide physical
-scope totals and an ID union; cached never enters it. Pagination does not turn
-a request-wide quantity into a page subtotal.
-
-Collection producers expose where against their element type. The shared
-compiler validates all clauses/field arguments before game reads, filters
-before pagination, binds cursors to conditions, and treats unavailable field
-values as unknown rather than false. Scalar/object/collection/possible-type
-operations apply uniformly across public fields. Transport nodes/items are
-windows, not alternative filtering roots. Same-type reference traversal uses
-bounded cycle-aware reach; no private reflection or inferred reverse relation.
-
-execution.evidence describes existing returned values: nodes, interned contexts
-and subjects, with concrete-path overrides for heterogeneous data. Actual
-resolver response paths establish canonical fields, including aliases and
-inline fragments. Effective arguments/defaults and collection windows remain
-bound to scalar and empty-list references. Metadata-only queries cannot be
-presented as live state. Resource structural values retain map, selection,
-source status and row pagination context; measurement values retain units,
-state, subject and physical scope. Descriptions do not trigger extra game reads.
-
-These are development contracts. Earlier stored envelopes are not rewritten.
-No game action, additional network service or automatic investigation workflow
-is introduced. Activation uses a normally restarted Mod, never a hot DLL swap.
+FrozenWorld is an offline public-query host. Its catalog omits live world/spatial
+contracts and uses a consistent host-specific schema identity. Capture verifies
+only current public_query_parity and retains original native snapshot field keys;
+historical snapshots and runners remain sealed.
 
 ## V2.1 identity and scope repair
 
@@ -141,11 +67,14 @@ public query is an empty result; an interrupted lookup remains partial.
 
 ## V2.1-B optional native path summary
 
-`inspect_space(from,to,detail="route")` uses the existing spatial request to check
-reachability and, if true, run at most one native `FindPathNow`. Omitting `detail`
-or using `summary` retains reachability-only behavior. Discovery advertises
-`spatial_query.route_summary = native_path_summary.v1`; older Mods do not expose
-the route parameter. No preliminary `look` or separate reach request is required.
+The retained Mod operation `spatial_query` accepts a `from` Pawn reference, a `to`
+Thing or map-cell reference, and optional `detail` (`summary` or `route`). Omitting
+`detail` or using `summary` checks native reachability only. With `route`, a
+reachable target also runs at most one native `FindPathNow` in the same request.
+The catalog advertises `spatial_query.route_summary = native_path_summary.v1`.
+The default plugin uses `evaluate_activity` for activity checks and does not
+expose `inspect_space` as a model tool. Native reachability does not establish
+reservation success, work eligibility or arrival time.
 
 A found `route` reports `steps` (grid transitions), `grid_distance` (sum of cardinal
 1 and diagonal sqrt(2) cell widths), `native_cost` (native weighted search cost),

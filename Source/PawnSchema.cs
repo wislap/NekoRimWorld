@@ -138,8 +138,6 @@ internal static class PawnSchema
         field.Metadata["projection_single"] = single;
         field.Metadata["public_name"] = publicName;
         field.Metadata["collection_element"] = element;
-        field.Metadata["list_default"] = DefaultFirst;
-        field.Metadata["list_max"] = MaxFirst;
         field.Metadata["native_path"] = string.Join(".",path);
         field.Description = "Contents in the " + publicName + " relation. Read directly as a Thing collection with the same selection, conditions and aggregation as other collections. Preserves this relation's population; an absent container is not an empty collection.";
     }
@@ -179,8 +177,6 @@ internal static class PawnSchema
         if (extra != null) foreach (var argument in extra) args.Add(argument);
         var field = Add(type, name, slice, c => State(c).Slice(Node(c), name,
             c.GetArgument<int?>("first") ?? Math.Min(DefaultFirst, maximum), c.GetArgument<int?>("offset") ?? 0, Arguments(c), item.Name), args);
-        field.Metadata["list_max"] = maximum;
-        field.Metadata["list_default"] = Math.Min(DefaultFirst, maximum);
         field.Metadata["slice"] = true;
         field.Metadata["collection_element"] = item;
     }

@@ -22,7 +22,7 @@ internal static class QueryEngineTests
         QueryOutcome Query(string json) => engine.Execute("query",JObject.Parse(json),source,Session);
         var catalog = engine.Execute("query_catalog",new JObject(),source,Session);
         Require(catalog.Status=="ok" && source.Reads.Count==0,"Catalog read game state");
-        Require(catalog.Data!.Properties().Select(p=>p.Name).OrderBy(x=>x).SequenceEqual(new[]{"public_query","schema_id","selection_contract","spatial_query","world_observation"}),"Catalog exposed retired entries");
+        Require(catalog.Data!.Properties().Select(p=>p.Name).OrderBy(x=>x).SequenceEqual(new[]{"public_query","schema_id","selection_contract","world_observation"}),"Catalog exposed retired entries");
         foreach(var operation in new[]{"graphql","describe_schema","resource_report","template_query"}) {
             var rejected=engine.Execute(operation,JObject.Parse("{document:'{game{paused}}',requests:[]}"),source,Session);
             Require(rejected.Status=="unsupported" && rejected.ErrorCode=="unsupported_operation" && source.Reads.Count==0,"Retired operation read game state: "+operation);

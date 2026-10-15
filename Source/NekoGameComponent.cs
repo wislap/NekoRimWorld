@@ -19,9 +19,9 @@ public sealed class NekoGameComponent : GameComponent
     private string colonyId = string.Empty;
     private string loadEpoch = string.Empty;
     private long snapshotSequence;
-    private IFrameQueryOperation? spatial;
-    private ProtocolEnvelope? spatialRequest;
-    private SessionDescriptor? spatialSession;
+    private IFrameQueryOperation? activeOperation;
+    private ProtocolEnvelope? activeRequest;
+    private SessionDescriptor? activeSession;
 
 
     // RimWorld discovers GameComponents with this exact constructor signature.
@@ -62,14 +62,14 @@ public sealed class NekoGameComponent : GameComponent
             tickManager?.TicksGame ?? 0,
             snapshotSequence);
 
-        if (spatial != null) {
-            if (spatial.Advance()) {
-                var completed = spatial;
-                var request = spatialRequest!;
-                var sample = spatialSession!;
+        if (activeOperation != null) {
+            if (activeOperation.Advance()) {
+                var completed = activeOperation;
+                var request = activeRequest!;
+                var sample = activeSession!;
                 // Completion owns no queue slot during delivery. Even an
                 // unexpected publication error cannot replay it every frame.
-                spatial = null; spatialRequest = null; spatialSession = null;
+                activeOperation = null; activeRequest = null; activeSession = null;
                 try { Publish(runtime, request, sample, completed.Outcome!); }
                 finally { completed.Dispose(); }
             }
@@ -89,7 +89,7 @@ public sealed class NekoGameComponent : GameComponent
 
     private void StartSession(string source)
     {
-        spatial?.Dispose(); spatial = null; spatialRequest = null; spatialSession = null;
+        activeOperation?.Dispose(); activeOperation = null; activeRequest = null; activeSession = null;
         WorldObservation.Clear();
         VerseKnowledge.StartOnce();
         GameImplementation.PrepareBehaviorReads();
@@ -145,12 +145,11 @@ public sealed class NekoGameComponent : GameComponent
 
         var next = checked(snapshotSequence + 1);
         var sampledSession = new SessionDescriptor(colonyId, loadEpoch, session.GameTick, next);
-        if (request.Payload.Operation == "query" || request.Payload.Operation == "spatial_query" || Array.IndexOf(WorldObservationContract.Operations, request.Payload.Operation) >= 0 || Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0) {
-            spatial = request.Payload.Operation == "query" ? QueryExecutor.BeginPublicQuery(request.Payload.Arguments!,sampledSession)
-                : request.Payload.Operation == "spatial_query" ? new SpatialQuery.Operation(request.Payload.Arguments!, sampledSession)
+        if (request.Payload.Operation == "query" || Array.IndexOf(WorldObservationContract.Operations, request.Payload.Operation) >= 0 || Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0) {
+            activeOperation = request.Payload.Operation == "query" ? QueryExecutor.BeginPublicQuery(request.Payload.Arguments!,sampledSession)
                 : Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0 ? new NativeBehaviorOperation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession)
                 : new WorldObservation.Operation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession);
-            spatialRequest = request; spatialSession = sampledSession;
+            activeRequest = request; activeSession = sampledSession;
             return;
         }
         QueryOutcome outcome;

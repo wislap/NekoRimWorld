@@ -24,12 +24,6 @@ internal static class SpatialRouteTests
             catch(ExecutionError) { continue; }
             throw new Exception("Invalid path cost accepted");
         }
-        SpatialContract.Validate(JObject.Parse("{from:{kind:'pawn',id:'p'},to:{kind:'cell',x:0,z:0},detail:'route'}"));
-        foreach(var value in new[]{"null","false","'path'","[]"}) {
-            try { SpatialContract.Validate(JObject.Parse("{from:{kind:'pawn',id:'p'},to:{kind:'thing',id:'t'},detail:"+value+"}")); }
-            catch(ExecutionError e) when(e.Code=="invalid_arguments") { continue; }
-            throw new Exception("Invalid route detail accepted");
-        }
         Console.WriteLine("Spatial route tests passed: zero/diagonal/reversed paths, cost units and invalid geometry.");
     }
     private static void Require(bool condition,string message) { if(!condition) throw new Exception(message); }

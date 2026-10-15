@@ -16,7 +16,7 @@ internal static class ThreatObservation
         GameImplementation.RequireKnownBinary();
         yield return 0;
         operation.Context.RestartSlice();
-        var map = SpatialQuery.ResolveMap((string?)args["map"])!;
+        var map = GameWorldReferences.ResolveMap((string?)args["map"])!;
         var result = operation.Result;
         result["map"] = map.GetUniqueLoadID();
         try {

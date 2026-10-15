@@ -30,7 +30,6 @@ internal sealed class GameQueryEngine
         publicQuery = new PublicQuery(schema, conditions);
         catalog = new JObject {
             ["selection_contract"] = SelectionConditions.Contract(),
-            ["spatial_query"] = SpatialContract.Catalog(),
             ["world_observation"] = WorldObservationContract.Catalog(),
             ["public_query"] = publicQuery.Catalog(),
         };

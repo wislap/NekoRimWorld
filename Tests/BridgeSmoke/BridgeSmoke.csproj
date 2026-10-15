@@ -17,7 +17,6 @@
     <Compile Include="../../Source/SpatialStatePolicy.cs" Link="SpatialStatePolicy.cs" />
     <Compile Include="../../Source/WorldResultPaging.cs" Link="WorldResultPaging.cs" />
     <Compile Include="../../Source/SpatialRouteSummary.cs" Link="SpatialRouteSummary.cs" />
-    <Compile Include="../../Source/SpatialContract.cs" Link="SpatialContract.cs" />
     <Compile Include="../../Source/WorldObservationContract.cs" Link="WorldObservationContract.cs" />
     <Compile Include="../../Source/ActionInspectionContract.cs" Link="ActionInspectionContract.cs" />
     <Compile Include="../../Source/KnowledgeSnapshot.cs;../../Source/KnowledgeFields.cs;../../Source/KnowledgeStreamingPublisher.cs" Link="%(Filename)%(Extension)" />

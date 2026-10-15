@@ -65,7 +65,7 @@ internal sealed class NativeBehaviorOperation : FrameQueryOperation
     {
         // Player orders only address spawned objects. Do not traverse every holder
         // on the map to resolve one actor or a ground target.
-        var map = SpatialQuery.ResolveMap((string?)reference["map"])!;
+        var map = GameWorldReferences.ResolveMap((string?)reference["map"])!;
         var members = pawn ? map.mapPawns.AllPawnsSpawned.Cast<Thing>().ToArray() : map.listerThings.AllThings.ToArray();
         var matches = new List<Thing>();
         string? id = (string?)reference["id"], name = (string?)reference["name"];

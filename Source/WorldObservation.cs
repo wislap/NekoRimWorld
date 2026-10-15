@@ -16,7 +16,6 @@ internal static class WorldObservation
     private sealed class Page { internal string Load = "", Signature = ""; internal JObject Data = new(); internal List<JObject> Rows = new(); internal DateTime Expires; }
     private static readonly Dictionary<string, Page> pages = new();
     internal static void Clear() => pages.Clear();
-    internal static QueryOutcome Execute(string op, JObject args, SessionDescriptor session) { using var work = new Operation(op, args, session); while (!work.Advance()) { } return work.Outcome!; }
     internal sealed class Operation : FrameQueryOperation
     {
         private readonly Game game = Current.Game; private readonly SessionDescriptor session; private readonly ReadContext context;
@@ -70,15 +69,23 @@ internal static class WorldObservation
                 Outcome = new QueryOutcome { Status = partial ? ProtocolStatuses.Partial : ProtocolStatuses.Ok, Data = result,
                     Issues = partial ? new[] { new QueryIssue { Code = "observation_partial", Message = "Some requested evidence could not be completed; inspect per-facet coverage", Path = new JArray() } } : Array.Empty<QueryIssue>() };
         }
+        private sealed class ResolvedReference
+        {
+            internal object? Value;
+            internal Map? Map;
+            internal IntVec3? Cell;
+            internal List<object>? Candidates;
+            internal bool CandidatesTruncated;
+        }
         private sealed class Target { internal Thing? Thing; internal Map Map = null!; internal IntVec3 Cell; internal bool Held; }
         private IEnumerable<int> Resolve(JObject reference, Action<Target> set, bool pawn = false)
         {
             bool includeFogged = op == "inspect_state" && (bool?)args["include_fogged"] == true;
             var raw = (JObject)reference.DeepClone(); raw["kind"] = raw["x"] != null ? "cell" : pawn ? "pawn" : "thing";
             if (pawn && raw["x"] != null) throw ReadContext.Error("invalid_arguments", "Pawn context requires id/name");
-            var r = new SpatialQuery.Reference();
+            var r = new ResolvedReference();
             bool allMaps = op == "inspect_state" && !pawn && raw["x"] == null && reference["map"] == null && (bool?)args["exact_lookup"] == true;
-            var defaultMap = allMaps ? null : SpatialQuery.ResolveMap((string?)raw["map"]); r.Map = defaultMap;
+            var defaultMap = allMaps ? null : GameWorldReferences.ResolveMap((string?)raw["map"]); r.Map = defaultMap;
             if (raw["x"] != null) r.Cell = new IntVec3((int)raw["x"]!, 0, (int)raw["z"]!);
             else
             {
@@ -198,7 +205,7 @@ internal static class WorldObservation
             }
             else
             {
-                var r = (JObject)args["region"]!; map = SpatialQuery.ResolveMap((string?)r["map"]); geometry = (JObject)r.DeepClone();
+                var r = (JObject)args["region"]!; map = GameWorldReferences.ResolveMap((string?)r["map"]); geometry = (JObject)r.DeepClone();
                 if (r["near"] is JObject near || r["room_of"] is JObject)
                 {
                     Target? center = null; var rf = (JObject)(r["near"] ?? r["room_of"])!.DeepClone(); if (rf["map"] == null && r["map"] != null) rf["map"] = r["map"]!.DeepClone(); foreach (var step in Resolve(rf, t => center = t)) yield return step; if (r["map"] != null && map != center!.Map) throw ReadContext.Error("invalid_arguments", "Region map and center map differ"); map = center!.Map; geometry["resolved_center"] = WorldStateReader.Cell(map, center.Cell); geometry["center_position_kind"] = center.Held ? "holder" : "own";

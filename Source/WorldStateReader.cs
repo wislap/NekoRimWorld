@@ -31,7 +31,7 @@ internal sealed class WorldStateReader
         reservationTick = Find.TickManager.TicksGame;
         reservationsRead = true;
     }
-    internal static JObject Cell(Map map, IntVec3 c) => SpatialQuery.DescribeCell(map, c);
+    internal static JObject Cell(Map map, IntVec3 c) => GameWorldReferences.DescribeCell(map, c);
     internal static JObject Identity(Thing t) => new()
     {
         ["id"] = t.GetUniqueLoadID(),

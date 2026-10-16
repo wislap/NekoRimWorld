@@ -53,3 +53,24 @@ The Def publisher produces immutable payloads and a validated ready.json index.
 The plugin consumes that index directly. FrozenWorld advertises public-query
 capabilities only; paused capture verifies public_query_parity. Historical records
 and archived runners remain unchanged.
+
+## Colony-state consultation reads
+
+The additive `colony_state.v1` catalog declares inspect_planet, inspect_factions,
+inspect_quests, inspect_trade, inspect_research, evaluate_journey and evaluate_trade.
+Each operation supplies its executable argument schema. These native operations
+support the plugin's look domains and two computations; they are not seven new
+model tools. Existing public_query/world_observation/native_behavior contracts
+retain their current meanings.
+
+Responses retain selected scope, sample, pre-page population total and continuation.
+World positions retain layer and tile identity; relations are to the player;
+quest reward alternatives and deadline kinds remain distinct; research progress
+and public prerequisites remain state-bound. Trader inventory is existing-only,
+and quotation never opens a TradeSession, generates stock or executes a deal.
+Journey calculation uses an existing player caravan and never issues orders.
+
+The shared frame-operation lifecycle provides world invalidation, lifetime and
+release. A synchronous domain/path calculation cannot be hard-preempted. Software
+and provider-free pipeline checks establish contracts and wiring, not content
+quality or generalized cost improvement. No user assembly deployment is implied.

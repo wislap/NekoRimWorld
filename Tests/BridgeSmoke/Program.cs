@@ -26,6 +26,7 @@ internal static class Program
             }
             if (args.Length != 0) throw new ArgumentException("Expected --export-knowledge DIRECTORY or no arguments.");
             FrameQueryOperationTests.Run();
+            ColonyReadContractTests.Run();
             SpatialRouteTests.Run();
             KnowledgeTests.Run();
             KnowledgeCompletenessTests.Run();

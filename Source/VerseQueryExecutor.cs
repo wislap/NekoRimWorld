@@ -14,6 +14,7 @@ internal static class QueryExecutor
         var outcome = Engine.Value.Execute(operation, arguments, new VerseGameData(), session);
         if (operation == "query_catalog" && outcome.Data != null) {
             outcome.Data["native_behavior"] = ActionInspectionContract.Catalog();
+            outcome.Data["colony_state"] = ColonyReadContract.Catalog();
             outcome.Data["game_implementation"] = GameImplementation.Describe();
         }
         return outcome;

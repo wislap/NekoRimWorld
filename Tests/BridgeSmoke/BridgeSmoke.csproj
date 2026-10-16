@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <Compile Include="../../Source/FrameQueryOperation.cs" Link="FrameQueryOperation.cs" />
+    <Compile Include="../../Source/ColonyReadContract.cs" Link="ColonyReadContract.cs" />
     <Compile Include="../../Source/DefinitionCandidates.cs" Link="DefinitionCandidates.cs" />
     <Compile Include="../../Source/WorldPresentation.cs" Link="WorldPresentation.cs" />
     <Compile Include="../../Source/SpatialStatePolicy.cs" Link="SpatialStatePolicy.cs" />

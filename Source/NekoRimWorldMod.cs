@@ -15,6 +15,7 @@ public sealed class NekoRimWorldMod : Mod
     {
         "query.execute.v2",
         "native_behavior.v1",
+        "colony_state.v1",
     };
 
     private readonly NekoRimWorldSettings settings;

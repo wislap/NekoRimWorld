@@ -7,7 +7,16 @@ game thread; the bridge does not issue player orders.
 ## Current reads
 
 `query_catalog`, `query`, `describe_query`, `survey_space`, `inspect_route`,
-`inspect_state`, `inspect_actions` and `inspect_threats` are the complete operation set.
+`inspect_state`, `inspect_actions` and `inspect_threats` form the base operation set.
+
+The additive `colony_state.v1` contract supplies world places and existing caravans,
+faction relations, public task requirements/rewards/deadlines, existing trader
+inventory and research progress/prerequisites. Native `evaluate_journey` compares
+requested destinations for an existing player caravan; `evaluate_trade` quotes
+an explicit trader/negotiator buy/sell basket. Neither issues orders. Ordinary
+reads are exposed through the plugin's look vocabulary, without a discovery step
+or automatic five-domain background. Missing settlement stock is never generated
+for a read, and quotation never opens or changes a TradeSession.
 
 Public queries use schema-derived fields, related collections, conditions,
 whole-selection counts and stack-unit sums. Conditions run before display paging.

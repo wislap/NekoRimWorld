@@ -3,7 +3,7 @@
   <name>N.E.K.O RimWorld Bridge (Dev)</name>
   <author>N.E.K.O Team</author>
   <packageId>neko.rimworld.bridge</packageId>
-  <modVersion>1.0.0</modVersion>
+  <modVersion>3.2.0</modVersion>
   <supportedVersions>
     <li>1.6</li>
   </supportedVersions>
@@ -19,12 +19,12 @@
     <li>brrainz.harmony</li>
   </loadAfter>
   <description>
-Read-only development bridge between RimWorld and N.E.K.O. This build provides
-an authenticated loopback protocol, save/load session identity, and a bounded
-resource-evidence query with scoped quantities, item identity, overlap and completeness.
-Native exact queries remain available. It also answers bounded spatial reads (reachability
-and route summaries), world observation (area survey, routes and object state) and
-read-only checks of player-order conditions and current threats.
+Read-only v3.2 development bridge between RimWorld and N.E.K.O. This source version
+provides native situation background, exact and scoped queries, spatial observations,
+and read-only checks of player-order conditions and current threats. World places,
+factions, quests, existing trader stock and research support consultation; resource
+sources, native trade quotes and loaded-caravan journey estimates support decisions.
+Version 3.2.0 identifies the current source; it does not mark a published or deployed build.
 It does not execute gameplay actions or automate the colony.
   </description>
 </ModMetaData>

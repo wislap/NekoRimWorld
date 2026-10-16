@@ -9,12 +9,13 @@ namespace Neko.RimWorld;
 public sealed class NekoRimWorldMod : Mod
 {
     public const string PackageId = "neko.rimworld.bridge";
-    public const string ModVersion = "1.0.0";
+    public const string ModVersion = "3.2.0";
 
     private static readonly string[] Capabilities =
     {
         "query.execute.v2",
         "native_behavior.v1",
+        "situation_snapshot.v1",
         "colony_state.v1",
     };
 

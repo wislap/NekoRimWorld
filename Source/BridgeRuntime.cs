@@ -45,7 +45,7 @@ public sealed class BridgeRuntime
     private bool enabled;
     private int port = DefaultPort;
     private string token = string.Empty;
-    private string modVersion = "0.1.0";
+    private string modVersion = "3.2.0";
     private string gameVersion = "unknown";
     private string[] capabilities = Array.Empty<string>();
     private long configGeneration;

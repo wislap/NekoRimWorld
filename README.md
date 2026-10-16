@@ -1,13 +1,20 @@
-# N.E.K.O RimWorld Bridge
+# N.E.K.O RimWorld Bridge v3.2
+
+Product version: **3.2.0**. This is the current local source version, not a
+published or deployed release. v3.2 includes the selected native situation
+background, world/faction/quest/trade/research consultation, and the exact-read,
+resource-source and loaded-journey improvements. Product and protocol versions
+are independent; the supported wire contracts below retain their meanings.
 
 Read-only RimWorld 1.6 bridge for the N.E.K.O plugin. The v2 transport supports
-public_query.v2, world_observation.v2.3 and native_behavior.v1. Reads run on the
+public_query.v2, world_observation.v2.3, native_behavior.v1 and the internal
+situation_snapshot.v1 consultation background. Reads run on the
 game thread; the bridge does not issue player orders.
 
 ## Current reads
 
 `query_catalog`, `query`, `describe_query`, `survey_space`, `inspect_route`,
-`inspect_state`, `inspect_actions` and `inspect_threats` form the base operation set.
+`inspect_state`, `inspect_actions`, `inspect_threats` and `read_situation` form the base operation set.
 
 The additive `colony_state.v1` contract supplies world places and existing caravans,
 faction relations, public task requirements/rewards/deadlines, existing trader
@@ -44,6 +51,14 @@ Faction settlement previews are bounded and link to the paged world-object reade
 Single-item silver purchase quotes also return an affordable subset of the quoted
 lot; currency remains bound to that trader/negotiator channel, not total wealth.
 
+`read_situation` supplies native situation facts before consultation: current map
+and clock, conditions, visible hostile groups, cached alerts and associated objects,
+actionable quests, and recent letters/messages. It is advertised separately from
+world tools and is never a model-callable tool. The plugin owns compact prompt
+projection and reuse. Ordinary queries, world observations and action reads retain
+their existing contracts. Native alert calculations are observed without rerunning
+them or keeping their game-object graphs.
+
 Public queries use schema-derived fields, related collections, conditions,
 whole-selection counts and stack-unit sums. Conditions run before display paging.
 Limit/offset windows remain new observations; scoped completeness and unknowns
@@ -75,6 +90,8 @@ bills remain a state facet.
 - WorldObservation owns scoped state, survey and route reads; GameWorldReferences
   owns loaded-map references and cell coordinates.
 - NativeBehaviorOperation owns behavior sampling and domain results.
+- SituationSnapshot owns internal situation facts; SituationAlertObservations
+  observes detached facts from native alert calculations.
 - KnowledgeStreamingPublisher publishes immutable Def payloads and ready.json.
 
 Public queries, world observations and behavior inspections share the iterator,
@@ -92,6 +109,15 @@ items. A running game keeps its loaded assembly until a normal restart.
 Tests/BridgeSmoke covers deterministic protocol, query, enum, knowledge,
 observation, route reduction and lifecycle behavior under net472 and net8.0.
 These checks do not establish actual gameplay or answer quality.
+
+The completed original-30 + standard-45 regression compares the recent exact-read,
+resource-source and loaded-journey improvements before/after; both arms already
+contain the five consultation domains and the selected situation background.
+Public input decreased 12.20% in that controlled comparison, with completion
+74/75 -> 73/75 and remaining answer issues. This is not a whole-v3.2 cost estimate,
+a claim of universal quality improvement, or a reason to deploy automatically.
+See the workspace [regression report](../.bench-results/capability-regression75-20261016-v2/RESULTS.md)
+and [implementation evidence](../.bench-results/consultation-decisions-20261016-v1/RESULTS.md).
 
 The bench capture Mod exports paused native snapshots and verifies public-query
 parity. Scenario control/fixture types belong to the bench consultation setup.

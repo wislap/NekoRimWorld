@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Collections;
 using System.Diagnostics;
 using System.Linq;
@@ -10,6 +11,14 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace Neko.RimWorld;
+
+// Iterator scheduling only. Progress never participates in source counts, filters or output.
+internal sealed class ReadProgress
+{
+    internal static readonly ReadProgress Instance = new();
+    private ReadProgress() { }
+    internal static bool Is(object? value) => value is ReadProgress || value is GameNode node && node.Handle is ReadProgress || value is GameEntity entity && entity.Handle is ReadProgress;
+}
 
 internal sealed class GameEntity
 {
@@ -22,12 +31,23 @@ internal sealed class GameEntity
 /// <summary>A query-local source handle. Never serialized or retained across queries.</summary>
 internal sealed class GameNode
 {
-    public GameNode(string kind, string key, GameEntity owner, object? handle)
-    { Kind = kind; Key = key; Owner = owner; Handle = handle; }
+    public GameNode(string kind, string key, GameEntity owner, object? handle, IReadOnlyDictionary<string, object?>? observedScalars = null)
+    {
+        Kind = kind; Key = key; Owner = owner; Handle = handle;
+        ObservedScalars = observedScalars == null ? null : new ReadOnlyDictionary<string, object?>(observedScalars.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal));
+    }
     public string Kind { get; }
     public string Key { get; }
     public GameEntity Owner { get; }
     public object? Handle { get; }
+    // Only detached primitive values already captured for this query-local node.
+    private IReadOnlyDictionary<string, object?>? ObservedScalars { get; }
+    internal bool TryObservedScalar(string field, out object? value)
+    {
+        if (ObservedScalars != null && ObservedScalars.TryGetValue(field, out value)
+            && value is null or string or bool or byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal) return true;
+        value = null; return false;
+    }
 }
 
 internal interface IGameData
@@ -191,17 +211,21 @@ internal sealed class ReadContext
         Check();
         try
         {
-            var value = read();
-            if (value is float f && (float.IsNaN(f) || float.IsInfinity(f)) || value is double d && (double.IsNaN(d) || double.IsInfinity(d)))
-                throw Error("invalid_number", "The game returned a non-finite value.");
-            if (value is string text && text.Length > 4096)
-                throw Error("field_too_large", "The field exceeds its text limit.");
+            var value = ValidateNativeValue(read());
             values[key] = value;
             return value;
         }
         catch (ExecutionError) { throw; }
         catch (Exception exception) when (Recoverable(exception))
         { throw Error("field_unavailable", "The requested game field is unavailable."); }
+    }
+    internal static object? ValidateNativeValue(object? value)
+    {
+        if (value is float f && (float.IsNaN(f) || float.IsInfinity(f)) || value is double d && (double.IsNaN(d) || double.IsInfinity(d)))
+            throw Error("invalid_number", "The game returned a non-finite value.");
+        if (value is string text && text.Length > 4096)
+            throw Error("field_too_large", "The field exceeds its text limit.");
+        return value;
     }
     private sealed class ReferenceComparer : IEqualityComparer<object>
     {

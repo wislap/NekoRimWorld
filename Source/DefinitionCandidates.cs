@@ -5,13 +5,25 @@ using Newtonsoft.Json.Linq;
 
 namespace Neko.RimWorld;
 
-// Cheap raw-name candidate selection before the normal query projection. No cache:
+// Raw-name candidate selection before normal projection. Progress steps let the
+// frame runner resume scans even when most loaded definitions do not match. No cache:
 // Mod-added definitions and localized labels are read from the current collection.
 internal static class DefinitionCandidates
 {
     internal const int MaxNames = 64;
     internal static IEnumerable<T> Exact<T>(IEnumerable<T> source, IEnumerable<string> requested,
         Func<T, string> name, Func<T, string?> label, Action? check = null)
+    {
+        foreach (var step in Steps(source, requested, name, label, check, 128))
+            if (!ReadProgress.Is(step)) yield return (T)step;
+    }
+
+    internal static IEnumerable<object> ExactSteps<T>(IEnumerable<T> source, IEnumerable<string> requested,
+        Func<T, string> name, Func<T, string?> label, Action? check = null)
+        => Steps(source, requested, name, label, check, 16);
+
+    private static IEnumerable<object> Steps<T>(IEnumerable<T> source, IEnumerable<string> requested,
+        Func<T, string> name, Func<T, string?> label, Action? check, int batch)
     {
         var names = requested.ToArray();
         if (names.Length == 0 || names.Length > MaxNames || names.Any(n => string.IsNullOrWhiteSpace(n) || n.Length > 128))
@@ -20,8 +32,9 @@ internal static class DefinitionCandidates
         int visited = 0;
         foreach (var item in source)
         {
-            if ((visited++ & 127) == 0) check?.Invoke();
-            if (wanted.Contains(name(item)) || label(item) is string text && wanted.Contains(text)) yield return item;
+            // Yield before the next batch, so its deadline belongs to the resumed slice.
+            if (visited++ % batch == 0) { yield return ReadProgress.Instance; check?.Invoke(); }
+            if (wanted.Contains(name(item)) || label(item) is string text && wanted.Contains(text)) yield return item!;
         }
         check?.Invoke();
     }

@@ -14,8 +14,14 @@ namespace Neko.RimWorld;
 internal static class ThingData
 {
     public static readonly HashSet<string> Kinds = new(StringComparer.Ordinal) { "Thing", "ThingReference", "ThingDef", "NativeMap", "IntVec3", "ThingHolder", "ThingOwner", "Faction", "Pawn_EquipmentTracker", "Pawn_ApparelTracker", "Pawn_InventoryTracker", "Pawn_CarryTracker", "ThingCategoryDef", "IngestibleProperties", "CompProperties", "CompQuality", "CompRottable", "CompForbiddable", "CompIngredients", "UnsupportedThingComp", "NativeStat", "StorageSettings", "StorageParent", "ThingFilter", "SlotGroup", "HaulDestinationManager", "ResourceCounter", "ResourceCountEntry" };
+    private static readonly GameNode ScanProgress = new("QueryProgress", "", new GameEntity("", null, ReadProgress.Instance), ReadProgress.Instance);
     public static GameNode Node(Thing t, string kind = "Thing") => new(kind, t.GetUniqueLoadID(), new GameEntity(t.GetUniqueLoadID(), null, t), t);
-    public static GameNode Definition(ThingDef def) => new("ThingDef", def.defName, new GameEntity("def:" + def.defName, null, def), def);
+    public static GameNode Definition(ThingDef def)
+    {
+        string name = def.defName;
+        return new GameNode("ThingDef", name, new GameEntity("def:" + name, null, def), def,
+            new Dictionary<string, object?> { ["defName"] = name, ["label"] = def.label });
+    }
     public static GameNode MapNode(Map map) => new("NativeMap", map.GetUniqueLoadID(), new GameEntity(map.GetUniqueLoadID(), map.GetUniqueLoadID(), map), map);
     public static GameNode? Wrap(GameNode parent, string kind, string key, object? value) => value == null ? null : new GameNode(kind, parent.Key + "/" + key, parent.Owner, value);
     private static string TypeOf(object value) => value.GetType().FullName ?? value.GetType().Name;
@@ -59,7 +65,7 @@ internal static class ThingData
             var inspected = 0;
             foreach (var thing in spawned) {
                 // Between checks only plain fields and cached definition decisions are read; every selected object/getter checks immediately.
-                if ((inspected++ & 127) == 0) context.Check();
+                if ((inspected++ & 15) == 0) { yield return ScanProgress; context.Check(); }
                 if (Selected(thing) && seen.Add(thing)) yield return Node(thing);
             }
             if (!includeHeld) continue;
@@ -71,23 +77,47 @@ internal static class ThingData
             var children = new List<IThingHolder>(); map.GetChildHolders(children);
             foreach (var child in children)
                 foreach (var thing in Descendants(child,context,visited,discovered,0))
-                    if ((unreal || thing.ParentHolder == null || ThingOwnerUtility.AreImmediateContentsReal(thing.ParentHolder)) && Selected(thing) && seen.Add(thing)) yield return Node(thing);
+                    if (thing == null) yield return ScanProgress;
+                    else if ((unreal || thing.ParentHolder == null || ThingOwnerUtility.AreImmediateContentsReal(thing.ParentHolder)) && Selected(thing) && seen.Add(thing)) yield return Node(thing);
         }
     }
 
     public static object? Root(string root, IReadOnlyDictionary<string, object?> args, ReadContext context)
     {
         string? Text(string key) => args.TryGetValue(key, out var value) ? value as string : null;
-        var mapId = Text(root == "map" ? "id" : "mapId");
-        var maps = Find.Maps.Where(x => x != null && !x.Disposed && (mapId == null || x.GetUniqueLoadID() == mapId)).ToArray();
-        if (mapId != null && maps.Length == 0) throw ReadContext.Error("object_unavailable", "The selected map is not loaded.");
-        if (root == "map") return MapNode(maps[0]);
+        // Loaded definitions do not depend on maps, holders or physical instances.
         if (root == "thing_def")
         {
             var def = DefDatabase<ThingDef>.GetNamedSilentFail(Text("defName"));
             if (def == null) throw ReadContext.Error("unknown_definition", "ThingDef was not found.");
             return Definition(def);
         }
+        if (root == "query_defs")
+        {
+            var categoryName = Text("categoryDefName");
+            var category = categoryName == null ? null : DefDatabase<ThingCategoryDef>.GetNamedSilentFail(categoryName);
+            if (categoryName != null && category == null) throw ReadContext.Error("unknown_definition", "ThingCategoryDef was not found.");
+            IEnumerable<object> Definitions()
+            {
+                var exactNames = Strings(args, "exactNames");
+                var candidates = exactNames == null ? DefDatabase<ThingDef>.AllDefsListForReading.Cast<object>()
+                    : DefinitionCandidates.ExactSteps(DefDatabase<ThingDef>.AllDefsListForReading, exactNames, d => d.defName, d => d.label, context.Check);
+                foreach (var candidate in candidates)
+                {
+                    if (candidate is ReadProgress) { yield return candidate; continue; }
+                    var def = (ThingDef)candidate;
+                    context.Check();
+                    if (category != null && !def.IsWithinCategory(category)) continue;
+                    if (!Match(Text("name"), def.defName, def.label)) continue;
+                    yield return Definition(def);
+                }
+            }
+            return Definitions();
+        }
+        var mapId = Text(root == "map" ? "id" : "mapId");
+        var maps = Find.Maps.Where(x => x != null && !x.Disposed && (mapId == null || x.GetUniqueLoadID() == mapId)).ToArray();
+        if (mapId != null && maps.Length == 0) throw ReadContext.Error("object_unavailable", "The selected map is not loaded.");
+        if (root == "map") return MapNode(maps[0]);
         if (root == "thing")
         {
             var id = Text("id"); var seen = new HashSet<Thing>(new IdentityComparer<Thing>()); var holders = new HashSet<IThingHolder>(new IdentityComparer<IThingHolder>());
@@ -99,41 +129,24 @@ internal static class ThingData
                     if (!thing.Destroyed && thing.GetUniqueLoadID() == id) return Node(thing);
                 }
                 foreach (var thing in Descendants(map, context, holders, seen, 0))
-                    if (thing.GetUniqueLoadID() == id) return Node(thing);
+                    if (thing != null && thing.GetUniqueLoadID() == id) return Node(thing);
             }
             throw ReadContext.Error("object_not_found", "Thing ID was not found in loaded maps and their holder trees. IDs can disappear after stack changes.");
-        }
-        if (root == "query_defs")
-        {
-            var categoryName = Text("categoryDefName");
-            var category = categoryName == null ? null : DefDatabase<ThingCategoryDef>.GetNamedSilentFail(categoryName);
-            if (categoryName != null && category == null) throw ReadContext.Error("unknown_definition", "ThingCategoryDef was not found.");
-            IEnumerable<GameNode> Definitions()
-            {
-                var exactNames = Strings(args, "exactNames");
-                var candidates = exactNames == null ? DefDatabase<ThingDef>.AllDefsListForReading.AsEnumerable()
-                    : DefinitionCandidates.Exact(DefDatabase<ThingDef>.AllDefsListForReading, exactNames, d => d.defName, d => d.label, context.Check);
-                foreach (var def in candidates)
-                {
-                    context.Check();
-                    if (category != null && !def.IsWithinCategory(category)) continue;
-                    if (!Match(Text("name"), def.defName, def.label)) continue;
-                    yield return Definition(def);
-                }
-            }
-            return Definitions();
         }
         throw ReadContext.Error("unknown_target", "Unsupported native target.");
     }
 
-    private static IEnumerable<Thing> Descendants(IThingHolder holder, ReadContext context, HashSet<IThingHolder> visited, HashSet<Thing> seen, int depth)
+    private static IEnumerable<Thing?> Descendants(IThingHolder holder, ReadContext context, HashSet<IThingHolder> visited, HashSet<Thing> seen, int depth)
     {
+        yield return null;
         context.Check();
         if (!visited.Add(holder)) yield break;
         if (depth > 24 || visited.Count > 16384) throw ReadContext.Error("holder_scan_limit", "Holder lookup exceeded its scan limit; narrow the map.");
         var own = holder.GetDirectlyHeldThings();
+        int inspected = 0;
         if (own != null) foreach (var thing in own)
         {
+            if ((inspected++ & 15) == 0) yield return null;
             context.Check();
             if (!thing.Destroyed && seen.Add(thing)) yield return thing;
         }
@@ -160,6 +173,23 @@ internal static class ThingData
         if (!args.TryGetValue(name, out var value) || value == null) return null;
         if (value is not System.Collections.IEnumerable sequence || value is string) throw ReadContext.Error("invalid_arguments", name + " must be a list.");
         return sequence.Cast<object>().Select(x => x as string ?? throw ReadContext.Error("invalid_arguments", "Expected definition names.")).Distinct().ToArray();
+    }
+
+    // Definition predicates and projections share this small metadata reader;
+    // they do not initialize the unrelated physical Thing/component dispatcher.
+    internal static object? ReadDefinition(GameNode node, string field, ReadContext context)
+    {
+        if (field == "runtimeType") return TypeOf(node.Handle!);
+        if (field == "ref") return Ref(node, context);
+        var d = (ThingDef)node.Handle!;
+        return field switch {
+            "defName" => d.defName, "label" => d.label, "thingClass" => d.thingClass?.FullName, "category" => d.category.ToString(),
+            "stackLimit" => d.stackLimit, "alwaysHaulable" => d.alwaysHaulable, "designateHaulable" => d.designateHaulable,
+            "EverHaulable" => d.EverHaulable, "IsMedicine" => d.IsMedicine, "IsWeapon" => d.IsWeapon, "IsIngestible" => d.IsIngestible, "CountAsResource" => d.CountAsResource,
+            "thingCategories" => d.thingCategories?.Select((x,i) => Wrap(node, "ThingCategoryDef", "category" + i, x)!),
+            "comps" => d.comps?.Select((x,i) => Wrap(node, "CompProperties", "compDef" + i, x)!),
+            "ingestible" => Wrap(node, "IngestibleProperties", field, d.ingestible), _ => Unknown(node, field),
+        };
     }
 
     public static object? Read(GameNode node, string field, IReadOnlyDictionary<string, object?> args, ReadContext context)
@@ -209,18 +239,7 @@ internal static class ThingData
                 _ => Unknown(node, field),
             };
         }
-        if (node.Kind == "ThingDef")
-        {
-            var d = (ThingDef)h;
-            return field switch {
-                "defName" => d.defName, "label" => d.label, "thingClass" => d.thingClass?.FullName, "category" => d.category.ToString(),
-                "stackLimit" => d.stackLimit, "alwaysHaulable" => d.alwaysHaulable, "designateHaulable" => d.designateHaulable,
-                "EverHaulable" => d.EverHaulable, "IsMedicine" => d.IsMedicine, "IsWeapon" => d.IsWeapon, "IsIngestible" => d.IsIngestible, "CountAsResource" => d.CountAsResource,
-                "thingCategories" => d.thingCategories?.Select((x,i) => Wrap(node, "ThingCategoryDef", "category" + i, x)!),
-                "comps" => d.comps?.Select((x,i) => Wrap(node, "CompProperties", "compDef" + i, x)!),
-                "ingestible" => Wrap(node, "IngestibleProperties", field, d.ingestible), _ => Unknown(node, field),
-            };
-        }
+        if (node.Kind == "ThingDef") return ReadDefinition(node, field, context);
         if (node.Kind == "NativeMap")
         {
             var map = (Map)h; if (map.Disposed) throw ReadContext.Error("object_unavailable", "Map was unloaded.");

@@ -282,6 +282,10 @@ internal sealed class SelectionConditions
     }
     internal object? ReadField(IComplexGraphType owner, FieldType field, object value, IReadOnlyDictionary<string, object?> arguments, ReadContext state)
     {
+        // A declared scalar captured with this node is already observed evidence,
+        // like GameEntity.Id. Reusing it does not perform another native read.
+        if (arguments.Count == 0 && Bare(field.ResolvedType!) is ScalarGraphType && Element(field) == null
+            && value is GameNode captured && captured.TryObservedScalar(field.Name, out var observed)) return ReadContext.ValidateNativeValue(observed);
         state.Check();
         if (field.Metadata.TryGetValue("projection_path",out var projection) && projection is string[] path) {
             var node = value is GameEntity entity ? new GameNode(owner.Name,"pawn",entity,entity.Handle) : (GameNode)value;

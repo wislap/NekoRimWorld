@@ -274,7 +274,8 @@ internal static class PublicQueryTests
         data.LargePawns=false;data.FailEnumeration=true;
         foreach(var code in new[]{"holder_scan_limit","deadline_exceeded","query_scan_limit"}) {
             data.EnumerationError=code;result=Read(singleton);
-            Check(result.Issues.Any(i=>i.Code==code && i.Message=="Incomplete fixture collection"),"Backend-specific error was rewritten",result);
+            string expectedMessage = "Incomplete fixture collection" + (code == "deadline_exceeded" ? " Read stage: source_iteration." : "");
+            Check(result.Issues.Any(i=>i.Code==code && i.Message==expectedMessage),"Backend-specific reason/message was lost or deadline stage is incorrect",result);
         }
     }
     private static void Check(bool pass,string message,QueryOutcome result) { if (!pass) throw new InvalidOperationException(message + ": " + result.Message + result.Data); }

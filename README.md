@@ -18,6 +18,32 @@ reads are exposed through the plugin's look vocabulary, without a discovery step
 or automatic five-domain background. Missing settlement stock is never generated
 for a read, and quotation never opens or changes a TradeSession.
 
+`inspect_resources` reads selected item definitions (for example,
+`{ "map":"current", "items":["ComponentIndustrial"] }`); the plugin exposes this as
+`look` kind `resources` with `focus.items`. Its quantity/distribution views split
+spawned ground, player-pawn-held, trader-stock and other-held units. They retain
+unknown ownership instead of treating every map-held item as player supply. General count remains a physical collection count; merchant stock
+is still seller inventory and quest reward offers are not delivered inventory.
+
+`evaluate_journey` optionally accepts `cargo_add`/`cargo_remove` baskets such as
+`[{"item":"WoodLog","quantity":40}]`. Rows keep the existing current-cargo estimate
+and add `cargo_scenario` for the same party with changed numeric mass. The native
+movement and arrival estimates include load-related speed changes and night rest;
+overloaded scenarios have no loaded ETA. Added items use native definition Mass
+and must have a fixed material; removals use actual carried stacks and cannot
+exceed their quantity. No loading is performed or assumed. Supplies still describe
+the unchanged current inventory/current-speed food estimate; obtaining/loading
+time and changed-food/foraging simulation are outside this calculation.
+
+`inspect_research` accepts `items:["ComponentIndustrial"]` instead of project
+names/IDs. It follows loaded product recipes, workbenches and research references,
+then returns the existing progress/requirements views plus `production_paths`.
+Research requirements distinguish existing benches, power and active linked
+facilities; an empty compatible combination does not imply the bench is absent.
+Faction settlement previews are bounded and link to the paged world-object reader.
+Single-item silver purchase quotes also return an affordable subset of the quoted
+lot; currency remains bound to that trader/negotiator channel, not total wealth.
+
 Public queries use schema-derived fields, related collections, conditions,
 whole-selection counts and stack-unit sums. Conditions run before display paging.
 Limit/offset windows remain new observations; scoped completeness and unknowns

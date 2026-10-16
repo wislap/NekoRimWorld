@@ -49,6 +49,10 @@ internal static class ObservationSemanticsTests
         bool stopped = false;
         try { DefinitionCandidates.Exact(large, new[] { "Def19999" }, d => d.Name, d => d.Label, () => throw new InvalidOperationException("deadline")).ToArray(); } catch (InvalidOperationException) { stopped = true; }
         Require(stopped, "Deadline swallowed into empty resolution");
+        var steps = DefinitionCandidates.ExactSteps(large, new[] { "Def19999" }, d => d.Name, d => d.Label).ToArray();
+        Require(steps.OfType<ReadProgress>().Count() == 1250 && steps.Count(value => !ReadProgress.Is(value)) == 1, "Long unmatched scan has no resumable progress, or progress changed membership");
+        var collisionSteps = DefinitionCandidates.ExactSteps(defs, new[] { "bed" }, d => d.Name, d => d.Label).Where(value => !ReadProgress.Is(value)).ToArray();
+        Require(collisionSteps.Length == 3, "Cooperative exact scan hid localized label/canonical collisions");
         var suggestion = DefinitionCandidates.Suggestions(new[] { ("ModStat", (string?)"特殊值"), ("MoveSpeed", (string?)"移动速度") }, "特殊值");
         Require((string?)suggestion["matches"]?[0]?["definition"] == "ModStat", "Stat candidates hardcoded to vanilla or ignored labels");
         var names = WorldObservationContract.Capabilities;

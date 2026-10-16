@@ -111,16 +111,25 @@ internal sealed class WorldStateReader
         var requestedStats=stats.ToArray();if(requestedStats.Length>0)names.Add("stats");
         var started=Find.TickManager.TicksGame;var watch=System.Diagnostics.Stopwatch.StartNew();JObject? result=null;
         var phases = WorldObservationContract.SelectStatePhases(names.Distinct().ToArray(), selectedFacets);
+        string[]? SectionsFor(string name) => selectedFacets!=null && (name is "pawn" or "work" or "stats") ? sections?.Where(s=>s!="state").ToArray() ?? new[]{"identity"} : sections;
+        // Acquire the real identity row once, including reader initialization,
+        // before a requested facet starts its existing independent read slice.
+        var identitySections = phases.Length > 0 ? SectionsFor(phases[0]) : new[]{"identity"};
+        var identityState = Read(t,actor,user,Array.Empty<string>(),details,identitySections,detailLimit,"identity");
+        var identity = (JObject)identityState["target"]!;
+        int identityTick = (int)identityState["sample_tick"]!;
+        yield return 0;
         foreach(var name in phases) {
             context?.RestartSlice();
-            var readSections = selectedFacets!=null && (name is "pawn" or "work" or "stats") ? sections?.Where(s=>s!="state").ToArray() ?? new[]{"identity"} : sections;
-            var part=Read(t,actor,user,name=="stats"?requestedStats:Array.Empty<string>(),details,readSections,detailLimit,name);
+            var readSections = SectionsFor(name);
+            var part=Read(t,actor,user,name=="stats"?requestedStats:Array.Empty<string>(),details,readSections,detailLimit,name,identity,identityTick);
             if(result==null)result=part;
             else foreach(var facet in ((JObject)part["facets"]!).Properties())result["facets"]![facet.Name]=facet.Value.DeepClone();
             foreach(var facet in ((JObject)part["facets"]!).Properties())result["facets"]![facet.Name]!["sample_tick"]=Find.TickManager.TicksGame;
             yield return 0;
         }
-        result??=Read(t,actor,user,Array.Empty<string>(),details,new[]{"identity"},detailLimit,"identity");
+        result??=identityState;
+        result["identity_sample_tick"] = identityTick;
         if(selectedFacets!=null) {
             foreach(var name in selectedFacets.Where(name=>!names.Contains(name))) result["facets"]![name]=new JObject {
                 ["status"]="not_applicable",["reason"]="facet_not_registered_for_target",["sample_tick"]=Find.TickManager.TicksGame };
@@ -134,9 +143,10 @@ internal sealed class WorldStateReader
         publish(result);
     }
 
-    internal JObject Read(Thing t, Pawn? actor, Pawn? user, IEnumerable<string> stats, bool details, string[]? sections = null, int? detailLimit = null,string? onlyFacet=null)
+    internal JObject Read(Thing t, Pawn? actor, Pawn? user, IEnumerable<string> stats, bool details, string[]? sections = null, int? detailLimit = null,string? onlyFacet=null,JObject? targetIdentity=null,int? identitySampleTick=null)
     {
-        var watch = System.Diagnostics.Stopwatch.StartNew(); var facets = new JObject(); var unsupported = new JArray(); var result = new JObject { ["target"] = sections == null || sections.Contains("spatial") ? Identity(t) : ObjectIdentity(t), ["facets"] = facets, ["unsupported_components"] = unsupported, ["sample_tick"] = Find.TickManager.TicksGame };
+        var watch = System.Diagnostics.Stopwatch.StartNew(); var facets = new JObject(); var unsupported = new JArray(); var result = new JObject { ["target"] = targetIdentity ?? (sections == null || sections.Contains("spatial") ? Identity(t) : ObjectIdentity(t)), ["facets"] = facets, ["unsupported_components"] = unsupported, ["sample_tick"] = Find.TickManager.TicksGame };
+        if (identitySampleTick.HasValue) result["identity_sample_tick"] = identitySampleTick.Value;
         bool All = sections == null || sections.Contains("state");
         bool spatial = sections?.Contains("spatial") == true;
         bool Wants(string section) => All || sections!.Contains(section);

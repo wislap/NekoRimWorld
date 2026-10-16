@@ -53,6 +53,15 @@ internal static class TradeReadings
         return partner.Trader.Goods.Where(item => !item.Destroyed).Distinct().ToArray();
     }
 
+    internal static IEnumerable<(ITrader Trader, string Id, string Name, string Channel, Map? Map, Thing[] Stock)> ExistingMapStocks(Map map)
+    {
+        foreach (var partner in Partners(map.GetUniqueLoadID()).Where(p => p.Map == map))
+        {
+            var stock = ExistingStock(partner, out bool materialized);
+            if (materialized) yield return (partner.Trader, partner.Id, partner.Name, partner.Channel, partner.Map, stock);
+        }
+    }
+
     internal static JObject Read(JObject args, SessionDescriptor session)
     {
         var aspects = ColonyReadContract.Aspects(args, "identity");
@@ -70,6 +79,7 @@ internal static class TradeReadings
             WorldNativeAccess.RequireNative(partner.Trader, "get_CanTradeNow", "get_TradePriceImprovementOffsetForPlayer");
             var row = partner.Identity();
             row["can_trade_now"] = partner.Trader.CanTradeNow;
+            row["availability_basis"] = "Trader availability only; negotiator ability, reachable channel and currency are checked by evaluate_trade.";
             if (partner.Settlement != null) row["location"] = PlanetReadings.Location(partner.Settlement.Tile);
             if (aspects.Contains("stock"))
             {
@@ -192,8 +202,27 @@ internal static class TradeReadings
             int traderSilver = stock.Where(item => item.def == ThingDefOf.Silver).Sum(item => item.stackCount);
             result["settlement"] = new JObject { ["player_pays"] = settlement, ["rounding"] = partner.Trader.TradeCurrency == TradeCurrency.Favor ? "ceil_aggregate" : "nearest_integer_aggregate",
                 ["player_silver_available"] = playerSilver, ["trader_silver_available"] = traderSilver,
+                ["funds_scope"] = "Only goods currently accepted and reachable through this trader/negotiator channel; not total colony wealth.",
+                ["trader_id"] = partner.Id, ["negotiator_id"] = negotiator.GetUniqueLoadID(),
                 ["player_funds_sufficient"] = settlement <= playerSilver,
                 ["trader_funds_sufficient"] = partner.Trader.TradeCurrency == TradeCurrency.Favor || -settlement <= traderSilver };
+        }
+        // A useful partial purchase for a one-item silver quote, using the same price,
+        // native whole-transaction rounding and current channel funds. No optimization.
+        if (complete && partner.Trader.TradeCurrency == TradeCurrency.Silver && lines.Count == 1 && (string?)lines[0]!["player_direction"] == "buy")
+        {
+            var line = (JObject)lines[0]!;
+            float price = (float)line["unit_price"]!;
+            int available = (int)line["available_units"]!, requested = (int)line["requested_units"]!;
+            int funds = (int)result["settlement"]!["player_silver_available"]!;
+            int low = 0, high = Math.Min(available, requested);
+            while (low < high)
+            {
+                int middle = low + (high - low + 1) / 2;
+                if (Mathf.RoundToInt(price * middle) <= funds) low = middle; else high = middle - 1;
+            }
+            result["affordable_purchase"] = new JObject { ["item"] = line["item"]!.DeepClone(), ["units"] = low, ["player_pays"] = Mathf.RoundToInt(price * low),
+                ["basis"] = "Subset of this requested one-item lot at its quoted unit price, current channel silver and native aggregate rounding; no purchases or sales executed." };
         }
         return result;
     }

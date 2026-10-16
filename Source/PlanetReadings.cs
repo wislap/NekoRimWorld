@@ -47,6 +47,12 @@ internal static class PlanetReadings
         IEnumerable<WorldObject> population = kind == "caravans" ? PlayerCaravans() : KnownObjects();
         var category = (string?)args["category"];
         if (category != null) population = population.Where(item => string.Equals(Kind(item), category.TrimEnd('s'), StringComparison.OrdinalIgnoreCase) || string.Equals(item.def.defName, category, StringComparison.OrdinalIgnoreCase));
+        if (args["faction"] != null)
+        {
+            string reference = (string)args["faction"]!;
+            var faction = ColonyReadContract.Select(Find.FactionManager.AllFactionsListForReading.Where(f => !f.Hidden), new JObject { ["names"] = new JArray(reference) }, f => f.GetUniqueLoadID(), f => f.Name).Single();
+            population = population.Where(item => item.Faction == faction);
+        }
         bool targeted = args["ids"] != null || args["names"] != null;
         if (kind == "world" && !targeted && category == null)
             population = population.Where(item => item.Faction == Faction.OfPlayer || item.questTags?.Count > 0);
@@ -64,7 +70,7 @@ internal static class PlanetReadings
         var all = selected.ToArray();
         int offset = (int?)args["offset"] ?? 0, limit = (int?)args["limit"] ?? 20;
         var rows = all.Skip(offset).Take(limit).Select(item => Describe(item, aspects, origin)).ToArray();
-        var scope = new JObject { ["kind"] = kind, ["population"] = kind == "caravans" ? "existing_player_caravans" : "known_selectable_world_objects", ["category"] = category };
+        var scope = new JObject { ["kind"] = kind, ["population"] = kind == "caravans" ? "existing_player_caravans" : "known_selectable_world_objects", ["category"] = category, ["faction"] = (string?)args["faction"] };
         if (origin.HasValue) scope["near"] = Location(origin.Value);
         if (kind == "world" && !targeted && category == null) scope["view"] = "player_objects_and_quest_related_places";
         var result = ColonyReadContract.Page(new JObject { ["limit"] = limit }, rows, scope, session);

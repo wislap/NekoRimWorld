@@ -10,10 +10,14 @@ internal static class ColonyReadContractTests
     internal static void Run()
     {
         var catalog = ColonyReadContract.Catalog();
-        Require((string?)catalog["version"] == "colony_state.v1" && ((JArray)catalog["operations"]!).Count == 7, "Complete additive native business catalog");
-        Require(catalog["tools"] == null, "Native operations do not become seven extra public tools");
+        Require((string?)catalog["version"] == "colony_state.v1" && ((JArray)catalog["operations"]!).Count == 8, "Complete additive native business catalog");
+        Require(catalog["tools"] == null, "Native operations do not become extra public tools");
         ColonyReadContract.Validate("inspect_research", JObject.Parse("{\"names\":[\"MicroelectronicsBasics\"],\"aspects\":[\"progress\",\"requirements\"]}"));
         ColonyReadContract.Validate("evaluate_journey", JObject.Parse("{\"caravan\":{\"name\":\"采购队\"},\"destinations\":[{\"name\":\"据点\"}]}"));
+        ColonyReadContract.Validate("inspect_resources", JObject.Parse("{items:['WoodLog'],map:'current',aspects:['quantity','distribution']}"));
+        ColonyReadContract.Validate("inspect_research", JObject.Parse("{items:['ComponentIndustrial'],aspects:['requirements']}"));
+        ColonyReadContract.Validate("evaluate_journey", JObject.Parse("{caravan:{name:'采购队'},destinations:[{name:'据点'}],cargo_add:[{item:'WoodLog',quantity:40}]}"));
+        Invalid(() => ColonyReadContract.Validate("inspect_resources", new JObject()), "invalid_arguments");
         Invalid(() => ColonyReadContract.Validate("inspect_research", JObject.Parse("{\"names\":[]}")), "invalid_arguments");
         Invalid(() => ColonyReadContract.Validate("inspect_quests", JObject.Parse("{\"limit\":0}")), "invalid_arguments");
         Invalid(() => ColonyReadContract.Validate("inspect_quests", JObject.Parse("{\"fields\":[\"all\"]}")), "invalid_arguments");

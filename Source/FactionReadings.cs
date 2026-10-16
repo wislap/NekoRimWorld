@@ -30,10 +30,19 @@ internal static class FactionReadings
                     ["goodwill"] = goodwill.HasValue ? (JToken)goodwill.Value : null,
                     ["goodwill_status"] = !goodwillApplies ? "not_applicable" : goodwill.HasValue ? "ok" : "native_situation_cache_not_ready",
                     ["permanent_enemy"] = f.def.permanentEnemy,
-                    ["goodwill_locked_by_quest"] = !f.IsPlayer && QuestUtility.IsGoodwillLockedByQuest(f, Faction.OfPlayer) };
+                    ["goodwill_locked_by_quest"] = !f.IsPlayer && QuestUtility.IsGoodwillLockedByQuest(f, Faction.OfPlayer),
+                    ["kind_thresholds"] = goodwillApplies ? new JObject { ["become_hostile_at_or_below"] = -75, ["become_ally_at_or_above"] = 75,
+                        ["hostile_returns_neutral_at_or_above"] = 0, ["ally_returns_neutral_at_or_below"] = 0,
+                        ["source"] = "FactionRelation.CheckKindThresholds; thresholds use effective goodwill, not a prediction that an offered reward is paid or applies unchanged." } : null };
             }
-            if (aspects.Contains("settlements")) row["settlements"] = new JArray(Find.WorldObjects.Settlements.Where(s => s.Faction == f).Select(s => new JObject {
-                ["id"] = s.GetUniqueLoadID(), ["name"] = s.Label, ["location"] = new JObject { ["tile_id"] = s.Tile.tileId, ["layer_id"] = s.Tile.Layer.LayerID } }));
+            if (aspects.Contains("settlements"))
+            {
+                var settlements = Find.WorldObjects.Settlements.Where(s => s.Faction == f && !s.Destroyed).ToArray();
+                row["settlements"] = new JObject { ["total"] = settlements.Length, ["rows"] = new JArray(settlements.Take(5).Select(s => new JObject {
+                    ["id"] = s.GetUniqueLoadID(), ["name"] = s.Label, ["location"] = PlanetReadings.Location(s.Tile) })),
+                    ["omitted"] = System.Math.Max(0, settlements.Length - 5),
+                    ["read_more"] = new JObject { ["object"] = new JObject { ["kind"] = "world_objects", ["category"] = "settlement" }, ["focus"] = new JObject { ["faction"] = new JObject { ["id"] = f.GetUniqueLoadID() } }, ["offset"] = 0, ["limit"] = 20 } };
+            }
             return row;
         });
         return ColonyReadContract.Page(args, rows, "Public faction instances; relations are relative to the player; settlements are existing world objects, not stock observations.", session);

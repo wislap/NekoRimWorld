@@ -11,10 +11,13 @@ internal sealed class VerseGameData : IGameData, IThingData, IQueryData
     public IEnumerable<GameEntity> QueryPawns(IReadOnlyDictionary<string, object?> args, ReadContext context)
     {
         foreach (var node in ThingData.QueryThings(new Dictionary<string,object?>(args) { ["includeHeld"] = true, ["visibleOnly"] = false },context,requestGroup:ThingRequestGroup.Pawn))
-            if (node.Handle is Pawn pawn) yield return new GameEntity(pawn.GetUniqueLoadID(),pawn.MapHeld?.GetUniqueLoadID(),pawn);
+            if (ReadProgress.Is(node)) yield return new GameEntity("", null, ReadProgress.Instance);
+            else if (node.Handle is Pawn pawn) yield return new GameEntity(pawn.GetUniqueLoadID(),pawn.MapHeld?.GetUniqueLoadID(),pawn);
     }
     public object? NativeRoot(string root, IReadOnlyDictionary<string, object?> args, ReadContext context) => ThingData.Root(root, args, context);
-    public object? NativeField(GameNode node, string field, IReadOnlyDictionary<string, object?> args, ReadContext context) => ThingData.Kinds.Contains(node.Kind) ? ThingData.Read(node, field, args, context) : NodeField(node, field, args);
+    public object? NativeField(GameNode node, string field, IReadOnlyDictionary<string, object?> args, ReadContext context)
+        => node.Kind == "ThingDef" ? ThingData.ReadDefinition(node, field, context)
+            : ThingData.Kinds.Contains(node.Kind) ? ThingData.Read(node, field, args, context) : NodeField(node, field, args);
     public IEnumerable<GameEntity> Maps()
     {
         foreach (var map in Find.Maps)

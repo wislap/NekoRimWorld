@@ -10,7 +10,7 @@ namespace Neko.RimWorld;
 internal static class ColonyReadContract
 {
     internal const string Version = "colony_state.v1";
-    internal static readonly string[] Operations = { "inspect_planet", "inspect_factions", "inspect_quests", "inspect_trade", "inspect_research", "evaluate_journey", "evaluate_trade" };
+    internal static readonly string[] Operations = { "inspect_planet", "inspect_factions", "inspect_quests", "inspect_trade", "inspect_resources", "inspect_research", "evaluate_journey", "evaluate_trade" };
     internal static JObject Catalog() => new() {
         ["version"] = Version,
         ["operations"] = new JArray(Operations.Select(op => new JObject { ["operation"] = op, ["parameters"] = Parameters(op) }))
@@ -30,6 +30,7 @@ internal static class ColonyReadContract
         var properties = new JObject();
         var required = new JArray();
         if (op == "evaluate_journey") {
+            properties["cargo_add"] = Basket(); properties["cargo_remove"] = Basket();
             properties["caravan"] = Reference(); properties["destinations"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["items"] = Reference() }; properties["include"] = Strings(); required.Add("caravan"); required.Add("destinations");
         } else if (op == "evaluate_trade") {
             properties["trader"] = Reference(true); properties["negotiator"] = Reference(true); properties["buy"] = Basket(); properties["sell"] = Basket(); required.Add("trader"); required.Add("negotiator");
@@ -39,9 +40,12 @@ internal static class ColonyReadContract
             properties["offset"] = new JObject { ["type"] = "integer", ["minimum"] = 0, ["default"] = 0 };
             if (op == "inspect_planet") {
                 properties["kind"] = new JObject { ["type"] = "string", ["enum"] = new JArray("world", "world_objects", "caravans") };
+                properties["faction"] = new JObject { ["type"] = "string" };
                 properties["category"] = new JObject { ["type"] = "string" };
                 properties["near"] = new JObject { ["type"] = "object" };
             }
+            if (op == "inspect_research") properties["items"] = Strings();
+            if (op == "inspect_resources") { properties["map"] = new JObject { ["type"] = "string" }; properties["items"] = Strings(); required.Add("items"); }
             if (op == "inspect_trade") { properties["map"] = new JObject { ["type"] = "string" }; properties["items"] = Strings(); }
         }
         return new JObject { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = properties, ["required"] = required };

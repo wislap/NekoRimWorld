@@ -102,6 +102,9 @@ internal static class QuestReadings
         if (reward is Reward_Items items) {
             bool remembered = (bool)UsedReward.GetValue(reward)!;
             row["representation"] = remembered ? "native_remembered_offer" : "native_offer_items";
+            row["lifecycle"] = "reward_offer_not_current_inventory";
+            row["payment_status"] = "not_proven_by_offer";
+            row["item_state"] = remembered ? "remembered_offer; native reward was used or cleaned up, payment not inferred" : "existing_offer_objects; not evidence of delivery to player";
             row["items"] = remembered ? new JArray(((List<Reward_Items.RememberedItem>)RememberedItems.GetValue(items)!).Select(t => new JObject {
                 ["def"] = t.thing.thing.defName, ["name"] = t.label, ["units"] = t.stackCount }))
                 : new JArray(items.items.Select(t => new JObject { ["id"] = t.GetUniqueLoadID(), ["def"] = t.def.defName, ["name"] = t.LabelNoCount, ["units"] = t.stackCount }));

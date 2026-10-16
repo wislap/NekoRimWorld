@@ -14,6 +14,7 @@ internal sealed class ColonyReadOperation : FrameQueryOperation
     private readonly SessionDescriptor session;
     private readonly int startedTick = Find.TickManager.TicksGame;
     private JObject? result;
+    private ReadContext? context;
     internal ColonyReadOperation(string operation, JObject args, SessionDescriptor session)
     {
         this.session = session;
@@ -24,6 +25,11 @@ internal sealed class ColonyReadOperation : FrameQueryOperation
         ColonyReadContract.Validate(operation, args);
         GameImplementation.RequireKnownBinary();
         yield return 0;
+        if (operation == "inspect_resources") {
+            context = new ReadContext(new VerseGameData(), session, 12);
+            foreach (var step in ResourceReadings.ReadSteps(args, session, context, value => result = value)) yield return step;
+            yield break;
+        }
         result = operation switch {
             "inspect_factions" => FactionReadings.Read(args, session), "inspect_quests" => QuestReadings.Read(args, session),
             "inspect_research" => ResearchReadings.Read(args, session), "inspect_planet" => PlanetReadings.Read(args, session),
@@ -32,7 +38,7 @@ internal sealed class ColonyReadOperation : FrameQueryOperation
         };
         yield return 0;
     }
-    protected override void RestartReadSlice() { }
+    protected override void RestartReadSlice() => context?.RestartSlice();
     protected override void ValidateFrame()
     {
         if (Current.Game != game) throw ReadContext.Error("world_changed", "Loaded game changed during colony-state read.");
@@ -50,5 +56,5 @@ internal sealed class ColonyReadOperation : FrameQueryOperation
             : new QueryOutcome { Status = ProtocolStatuses.Ok, Data = result };
     }
     protected override void HandleError(Exception error) => Outcome = QueryOutcome.Failure((error as ExecutionError)?.Code ?? "colony_state_unavailable", error.Message);
-    protected override void ReleaseReferences() => result = null;
+    protected override void ReleaseReferences() { result = null; context = null; }
 }

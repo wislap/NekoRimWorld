@@ -162,6 +162,9 @@ internal sealed class PublicQuery
             if (!roots.TryGetValue(name,out var root)) throw PublicFields.Error("Unknown from. Available: " + string.Join(", ",roots.Keys));
             var arguments = ArgumentsAt(root, obj["args"], obj["args"] == null ? inputPath : SelectionInput.Pointer(inputPath, "args"), RootType(name));
             var selection = Compile(RootType(name),obj,0,true,inputPath);
+            // exact_names already selects this complete canonical-name/label union.
+            // Drop only a validated, provably identical duplicate predicate.
+            if (name == "thing_defs" && ExactNamesCoverPredicate(arguments, obj["where"])) selection.Predicate = null;
             SelectionConditions.Predicate? definitionFilter = null;
             var fullyPushed = false;
             if (name == "things" && obj["where"] is JObject where)
@@ -217,6 +220,27 @@ internal sealed class PublicQuery
         if (data.ToString(Formatting.None).Length > 80000) { publish(QueryOutcome.Failure("query_result_too_large","Request fewer fields or displayed rows.")); yield break; }
         publish(new QueryOutcome { Status = run.Issues.Count == 0 ? "ok" : "partial", Data = data, Issues = run.Issues.Take(256).ToArray(), Execution = new JObject { ["schema_id"] = schemaId,["contract"] = Version,["requests"] = input["requests"]!.DeepClone(),["phases"] = run.Phases } });
     }
+    private static bool ExactNamesCoverPredicate(IReadOnlyDictionary<string,object?> args, JToken? where)
+    {
+        if (!args.TryGetValue("exactNames", out var raw) || raw is not IEnumerable sequence || raw is string
+            || where is not JObject predicate || predicate.Count != 1 || predicate["any"] is not JArray branches || branches.Count == 0) return false;
+        var requested = sequence.Cast<object>().ToArray();
+        if (requested.Length == 0 || requested.Any(value => value is not string)) return false;
+        var wanted = new HashSet<string>(requested.Cast<string>(), StringComparer.OrdinalIgnoreCase);
+        var covered = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal) {
+            ["def_name"] = new(StringComparer.OrdinalIgnoreCase), ["label"] = new(StringComparer.OrdinalIgnoreCase)
+        };
+        foreach (var branch in branches) {
+            if (branch is not JObject term || term.Count != 1) return false;
+            var field = term.Properties().Single();
+            if (!covered.TryGetValue(field.Name, out var names) || field.Value is not JObject comparison || comparison.Count != 2
+                || comparison["case_sensitive"]?.Type != JTokenType.Boolean || (bool)comparison["case_sensitive"]! != false
+                || comparison["eq"]?.Type != JTokenType.String || comparison["eq"] is not JValue exact || exact.Value is not string text || !wanted.Contains(text)) return false;
+            names.Add(text);
+        }
+        return covered.Values.All(names => names.SetEquals(wanted));
+    }
+
     private static (JObject? Condition,bool Exact) DefinitionCondition(JObject source,string definitionField)
     {
         // A necessary definition-only predicate. Non-definition clauses are TOP,
@@ -274,11 +298,34 @@ internal sealed class PublicQuery
 
     private IEnumerable<object> ReadRoot(string root, Dictionary<string,object?> args, IGameData source, ReadContext state,Func<GameNode,bool>? definitionFilter,IReadOnlyCollection<string>? exactIds)
     {
+        // This iterator's preparation belongs before the first checked game read.
+        yield return ReadProgress.Instance;
+        if (root is "thing_defs" or "thing_def") {
+            if (source is not IThingData native) throw ReadContext.Error("unsupported_target", "Native Thing data is unavailable.");
+            // Definition-only reads already have a typed native root and exact
+            // candidate walker. No map resolution or general cache/signature work.
+            var definitions = native.NativeRoot(root == "thing_defs" ? "query_defs" : root, args, state);
+            yield return ReadProgress.Instance;
+            if (definitions is IEnumerable sequence) foreach (var definition in sequence) yield return definition;
+            else if (definitions != null) yield return definitions;
+            yield break;
+        }
         var mapArgument = root == "map" ? "id" : "mapId";
-        if (args.TryGetValue(mapArgument,out var requestedMap) && requestedMap as string == "current")
+        if (args.TryGetValue(mapArgument,out var requestedMap) && requestedMap as string == "current") {
             args[mapArgument] = state.Read("Game",null,"currentMapId") as string ?? throw ReadContext.Error("object_unavailable","There is no current map.");
-        if (args.TryGetValue(mapArgument,out var selectedMap) && selectedMap is string mapId && !state.Maps().Any(m => m.Id == mapId))
-            throw ReadContext.Error("object_unavailable","Selected map is not loaded.");
+            // A completed native getter can consume this slice before the next getter.
+            yield return ReadProgress.Instance;
+        }
+        if (args.TryGetValue(mapArgument,out var selectedMap) && selectedMap is string mapId) {
+            if (!state.Maps().Any(m => m.Id == mapId)) throw ReadContext.Error("object_unavailable","Selected map is not loaded.");
+            yield return ReadProgress.Instance;
+        }
+        var values = ReadResolvedRoot(root, args, source, state, definitionFilter, exactIds);
+        yield return ReadProgress.Instance;
+        foreach (var value in values) yield return value;
+    }
+    private IEnumerable<object> ReadResolvedRoot(string root, Dictionary<string,object?> args, IGameData source, ReadContext state,Func<GameNode,bool>? definitionFilter,IReadOnlyCollection<string>? exactIds)
+    {
         if (root is "things" or "pawns")
         {
             if (source is not IQueryData query) throw ReadContext.Error("query_source_unavailable","This data source has no complete loaded-map/holder query capability.");
@@ -301,7 +348,6 @@ internal sealed class PublicQuery
             try { return new[] { state.NativeRoot(root, args)! }; }
             catch (ExecutionError error) when (error.Code == "object_not_found") { return Array.Empty<object>(); }
         }
-        if (root == "thing_defs") return ((IEnumerable)state.NativeRoot("query_defs",args)!).Cast<object>();
         var field = roots[root]; var value = registry.Read("Query",state,field,args,state);
         return value is IEnumerable sequence && value is not string ? sequence.Cast<object>() : value == null ? Array.Empty<object>() : new[] { value };
     }
@@ -516,26 +562,44 @@ internal sealed class PublicQuery
     private IEnumerable<int> ScanSteps(Selection plan,Func<IEnumerable<object>> read,Run run,string path,List<object> values,HashSet<string> identities,Action<bool> complete,Func<string>? scanLimitMessage)
     {
         IEnumerator<object>? iterator=null; bool scan=true; int scanned=0;
+        string stage = "root_acquisition";
+        void Failed(Exception error) {
+            var failure = error as ExecutionError ?? ReadContext.Error("field_unavailable", "Collection read failed.");
+            if (failure.Code == "deadline_exceeded") failure = ReadContext.Error(failure.Code, failure.Message + " Read stage: " + stage + ".");
+            run.Fail(failure, path);
+        }
         try { iterator=read().GetEnumerator(); }
-        catch(Exception error) when(ReadContext.Recoverable(error)) { scan=false;run.Fail(error as ExecutionError ?? ReadContext.Error("field_unavailable","Collection read failed."),path); }
+        catch(Exception error) when(ReadContext.Recoverable(error)) { scan=false;Failed(error); }
         try {
+            // Root acquisition may perform synchronous native initialization before
+            // returning its lazy iterator. Let the frame runner end that slice
+            // before a deadline check rejects the still-unread first candidate.
+            if (scan) yield return 0;
             while(scan) {
-                bool more=false; object? value=null;
+                bool more=false; bool progress=false; object? value=null;
                 try {
-                    run.Context.Check(); more=iterator!.MoveNext();
+                    stage = "before_source_advance";
+                    run.Context.Check();
+                    stage = "source_iteration";
+                    more=iterator!.MoveNext();
                     if(more) {
                         value=iterator.Current;
-                        if(++scanned>8192)throw ReadContext.Error("query_scan_limit",scanLimitMessage?.Invoke()??CollectionScanLimitMessage);
-                        var id=value is GameEntity e?"entity:"+e.Id:value is GameNode n && n.Kind is "Thing" or "ThingReference"?n.Kind+":"+n.Owner.Id+":"+n.Key:null;
-                        if(id==null || identities.Add(id)) {
-                            var match=plan.Predicate?.Invoke(value,run.Context) ?? (plan.Predicate==null?(bool?)true:null);
-                            if(match==null)throw ReadContext.Error("filter_unavailable","Candidate membership is unknown, not false.");
-                            if(match.Value)values.Add(value);
+                        progress = ReadProgress.Is(value);
+                        // Scheduler progress is not a candidate, count or evidence row.
+                        if (!progress) {
+                            if(++scanned>8192)throw ReadContext.Error("query_scan_limit",scanLimitMessage?.Invoke()??CollectionScanLimitMessage);
+                            var id=value is GameEntity e?"entity:"+e.Id:value is GameNode n && n.Kind is "Thing" or "ThingReference"?n.Kind+":"+n.Owner.Id+":"+n.Key:null;
+                            if(id==null || identities.Add(id)) {
+                                stage = "selection_predicate";
+                                var match=plan.Predicate?.Invoke(value,run.Context) ?? (plan.Predicate==null?(bool?)true:null);
+                                if(match==null)throw ReadContext.Error("filter_unavailable","Candidate membership is unknown, not false.");
+                                if(match.Value)values.Add(value);
+                            }
                         }
                     }
-                } catch(Exception error) when(ReadContext.Recoverable(error)) { scan=false;run.Fail(error as ExecutionError ?? ReadContext.Error("field_unavailable","Collection read failed."),path); }
+                } catch(Exception error) when(ReadContext.Recoverable(error)) { scan=false;Failed(error); }
                 if(!more)break;
-                if((scanned&15)==0)yield return 0;
+                if(progress || (scanned&15)==0)yield return 0;
             }
         } finally { iterator?.Dispose(); }
         complete(scan);

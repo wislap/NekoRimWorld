@@ -87,6 +87,7 @@ internal static class ResourceReadings
             return row;
         });
         var scope = new JObject { ["map_id"] = map.GetUniqueLoadID(), ["population"] = "visible_spawned_map_and_real_holder_contents_plus_existing_public_map_trader_stock",
+            ["selection"] = ColonyReadContract.ExactDefinitionSelection(requested, definitions.Select(def => def.defName)),
             ["ownership"] = "spawned_ground_and_other_held_do_not_establish_player_ownership_or_usability; trader_stock_is_seller_goods",
             ["excluded"] = "fogged_map_contents,unreal_offer_items,off_map_caravans,settlement_inventories", ["deduplicated"] = true };
         publish(ColonyReadContract.Page(args, rows, scope, session));

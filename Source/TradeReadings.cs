@@ -89,6 +89,7 @@ internal static class TradeReadings
                 int stockOffset = targetedStock ? offset : 0;
                 var stockRows = groups.Skip(stockOffset).Take(limit).Select(group => Item(group[0], group.Sum(item => item.stackCount))).ToArray();
                 row["stock"] = new JObject { ["status"] = materialized ? "ok" : "not_materialized", ["source"] = "existing_inventory_only", ["total"] = groups.Count,
+                    ["price_basis"] = "market_value_reference_not_negotiated_quote",
                     ["rows"] = new JArray(stockRows),
                     ["page"] = new JObject { ["offset"] = stockOffset, ["limit"] = limit, ["returned"] = stockRows.Length, ["has_more"] = stockOffset + stockRows.Length < groups.Count,
                         ["next_offset"] = stockOffset + stockRows.Length < groups.Count ? (JToken)(stockOffset + stockRows.Length) : null } };

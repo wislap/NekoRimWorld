@@ -31,6 +31,14 @@ for a read, and quotation never opens or changes a TradeSession.
 spawned ground, player-pawn-held, trader-stock and other-held units. They retain
 unknown ownership instead of treating every map-held item as player supply. General count remains a physical collection count; merchant stock
 is still seller inventory and quest reward offers are not delivered inventory.
+The resource scope keeps the exact requested labels/definition names and resolved
+native definitions in `selection`; `selected_definitions_only` means a zero or
+complete result covers those definitions, not all food or another business
+category. This read excludes fogged contents and adds existing public map-trader
+stock, so its source totals cannot silently replace a differently scoped count.
+Trader stock declares `price_basis: market_value_reference_not_negotiated_quote`
+beside its rows. Only explicit-context `evaluate_trade` supplies negotiated native
+prices; quantity reads do not request a quote.
 
 `evaluate_journey` optionally accepts `cargo_add`/`cargo_remove` baskets such as
 `[{"item":"WoodLog","quantity":40}]`. Rows keep the existing current-cargo estimate

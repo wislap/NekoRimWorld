@@ -32,6 +32,16 @@ internal static class ColonyReadContractTests
         var end = ColonyReadContract.Page(JObject.Parse("{\"offset\":2,\"limit\":1}"), population.Select(x => new JObject { ["id"] = x.Id }), "declared", new SessionDescriptor("colony", "load", 12, 3));
         Require(!(bool)end["page"]!["has_more"]! && end["page"]!["next_offset"]!.Type == JTokenType.Null, "Final page has no continuation");
         Require((string?)page["sample"]!["colony_id"] == "colony" && !(bool)page["sample"]!["atomic"]!, "Read preserves sample and avoids atomic claims");
+        var selection = ColonyReadContract.ExactDefinitionSelection(new[] { "simple meal", "Pemmican" }, new[] { "MealSimple", "Pemmican" });
+        var resourcePage = ColonyReadContract.Page(JObject.Parse("{limit:1}"), new[] {
+            new JObject { ["def_name"] = "MealSimple", ["observed_units"] = 0, ["coverage"] = "complete_in_scope", ["sources"] = new JArray() },
+            new JObject { ["def_name"] = "Pemmican", ["observed_units"] = 0, ["coverage"] = "complete_in_scope", ["sources"] = new JArray() }
+        }, new JObject { ["selection"] = selection, ["population"] = "visible_spawned_map_and_real_holder_contents_plus_existing_public_map_trader_stock" }, new SessionDescriptor("colony", "load", 12, 3));
+        Require((string?)resourcePage["scope"]!["selection"]!["coverage"] == "selected_definitions_only", "Zero quantities remain scoped to selected definitions, not all food");
+        Require(resourcePage["scope"]!["selection"]!["requested"]!.Values<string>().SequenceEqual(new[] { "simple meal", "Pemmican" })
+            && resourcePage["scope"]!["selection"]!["resolved_definitions"]!.Values<string>().SequenceEqual(new[] { "MealSimple", "Pemmican" }), "Exact-label resolution preserves requested and native definition identities");
+        Require((bool)resourcePage["page"]!["has_more"]! && (int)resourcePage["total"]! == 2
+            && resourcePage["scope"]!["selection"]!["resolved_definitions"]!.Count() == 2, "Paged resource rows retain whole selected definition scope without claiming listing completeness");
         var export = Environment.GetEnvironmentVariable("NEKO_COLONY_CATALOG_EXPORT");
         if (!string.IsNullOrEmpty(export)) System.IO.File.WriteAllText(export, catalog.ToString());
     }

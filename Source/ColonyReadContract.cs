@@ -92,6 +92,13 @@ internal static class ColonyReadContract
         }
         return selected.ToArray();
     }
+    // A complete result for exact definitions does not close their business category.
+    internal static JObject ExactDefinitionSelection(IEnumerable<string> requested, IEnumerable<string> resolvedDefinitions) => new() {
+        ["mode"] = "exact_definitions_or_labels",
+        ["requested"] = new JArray(requested.Distinct(StringComparer.OrdinalIgnoreCase)),
+        ["resolved_definitions"] = new JArray(resolvedDefinitions.Distinct(StringComparer.OrdinalIgnoreCase)),
+        ["coverage"] = "selected_definitions_only"
+    };
     internal static JObject Page(JObject args, IEnumerable<JObject> rows, string scope, SessionDescriptor session)
     {
         var all = rows.ToArray(); int offset = (int?)args["offset"] ?? 0, limit = (int?)args["limit"] ?? 20;

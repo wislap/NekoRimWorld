@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+  <NekoRimWorld_SettingsTitle>N.E.K.O RimWorld Bridge</NekoRimWorld_SettingsTitle>
+  <NekoRimWorld_ConnectionHelp>将当前游戏连接到 N.E.K.O 的 RimWorld 插件。在插件中填写相同的端口和配对码，然后载入殖民地即可使用。</NekoRimWorld_ConnectionHelp>
+  <NekoRimWorld_EnableConnection>启用 N.E.K.O 连接</NekoRimWorld_EnableConnection>
+  <NekoRimWorld_EnableConnectionHelp>只连接本机上的 N.E.K.O 插件（127.0.0.1）。请先生成配对码，再到插件设置中保存相同的端口和配对码。</NekoRimWorld_EnableConnectionHelp>
+  <NekoRimWorld_Port>连接端口</NekoRimWorld_Port>
+  <NekoRimWorld_PairingCode>配对码</NekoRimWorld_PairingCode>
+  <NekoRimWorld_GeneratePairingCode>生成新配对码</NekoRimWorld_GeneratePairingCode>
+  <NekoRimWorld_LocalAddress>本机连接地址：127.0.0.1:{0}</NekoRimWorld_LocalAddress>
+  <NekoRimWorld_ConnectionState>连接状态：{0}</NekoRimWorld_ConnectionState>
+  <NekoRimWorld_PairingCodeHelp>点击按钮可生成随机配对码；手动填写时，请使用 {0}–{1} 个字符。</NekoRimWorld_PairingCodeHelp>
+  <NekoRimWorld_PairingCodeTooShort>配对码太短，请先生成配对码，再启用连接。直接关闭此窗口会将连接保存为关闭状态。</NekoRimWorld_PairingCodeTooShort>
+  <NekoRimWorld_SaveHelp>完成修改后，关闭此设置窗口以保存并应用。重新生成配对码后，也需要更新插件中的配对码。</NekoRimWorld_SaveHelp>
+  <NekoRimWorld_PairingCodePrivacy>配对码用于连接你的游戏与 N.E.K.O，请妥善保管，分享截图或日志时记得遮去。</NekoRimWorld_PairingCodePrivacy>
+  <NekoRimWorld_State_Stopped>连接已停止</NekoRimWorld_State_Stopped>
+  <NekoRimWorld_State_Disabled>连接未启用</NekoRimWorld_State_Disabled>
+  <NekoRimWorld_State_Connecting>正在连接 N.E.K.O…</NekoRimWorld_State_Connecting>
+  <NekoRimWorld_State_Handshaking>正在核对配对码…</NekoRimWorld_State_Handshaking>
+  <NekoRimWorld_State_Ready>已连接 N.E.K.O</NekoRimWorld_State_Ready>
+  <NekoRimWorld_State_Backoff>连接已中断，正在重连…</NekoRimWorld_State_Backoff>
+</LanguageData>

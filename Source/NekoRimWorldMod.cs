@@ -21,6 +21,8 @@ public sealed class NekoRimWorldMod : Mod
 
     private readonly NekoRimWorldSettings settings;
     private string portBuffer;
+    private Vector2 settingsScrollPosition;
+    private float settingsContentHeight = 600f;
 
     public NekoRimWorldMod(ModContentPack content) : base(content)
     {
@@ -40,46 +42,55 @@ public sealed class NekoRimWorldMod : Mod
 
     public override string SettingsCategory()
     {
-        return "N.E.K.O RimWorld Bridge";
+        return "NekoRimWorld_SettingsTitle".Translate();
     }
 
     public override void DoSettingsWindowContents(Rect inRect)
     {
+        var viewRect = new Rect(0f, 0f, inRect.width - 20f, Mathf.Max(inRect.height, settingsContentHeight));
+        Widgets.BeginScrollView(inRect, ref settingsScrollPosition, viewRect);
         var listing = new Listing_Standard();
-        listing.Begin(inRect);
+        listing.Begin(viewRect);
+        listing.Label("NekoRimWorld_ConnectionHelp".Translate());
+        listing.Gap();
         listing.CheckboxLabeled(
-            "Enable local N.E.K.O bridge",
+            "NekoRimWorld_EnableConnection".Translate(),
             ref settings.Enabled,
-            "Connects only to 127.0.0.1. Enabling requires a pairing token of at least 32 characters.");
+            "NekoRimWorld_EnableConnectionHelp".Translate());
         listing.TextFieldNumericLabeled(
-            "Port",
+            "NekoRimWorld_Port".Translate(),
             ref settings.Port,
             ref portBuffer,
             1,
             65_535);
         var enteredToken = listing.TextEntryLabeled(
-            "Pairing token",
+            "NekoRimWorld_PairingCode".Translate(),
             settings.PairingToken ?? string.Empty,
             lineCount: 1).Trim();
         settings.PairingToken = enteredToken.Length > NekoRimWorldSettings.MaxPairingTokenLength
             ? enteredToken.Substring(0, NekoRimWorldSettings.MaxPairingTokenLength)
             : enteredToken;
-        if (listing.ButtonText("Generate new pairing token"))
+        if (listing.ButtonText("NekoRimWorld_GeneratePairingCode".Translate()))
         {
             settings.PairingToken = Guid.NewGuid().ToString("N");
         }
 
         listing.Gap();
-        listing.Label($"Endpoint: 127.0.0.1:{settings.Port}");
-        listing.Label($"Runtime: {Runtime.State}");
-        listing.Label("Generate creates a 32-character random token; custom tokens must be 32-128 characters.");
+        listing.Label("NekoRimWorld_LocalAddress".Translate(settings.Port));
+        listing.Label("NekoRimWorld_ConnectionState".Translate(
+            ("NekoRimWorld_State_" + Runtime.State).Translate()));
+        listing.Label("NekoRimWorld_PairingCodeHelp".Translate(
+            NekoRimWorldSettings.MinPairingTokenLength, NekoRimWorldSettings.MaxPairingTokenLength));
         if (settings.Enabled &&
             settings.PairingToken.Length < NekoRimWorldSettings.MinPairingTokenLength)
         {
-            listing.Label("The bridge will be disabled when settings are saved because this token is too short.");
+            listing.Label("NekoRimWorld_PairingCodeTooShort".Translate());
         }
-        listing.Label("The token is local authentication material. Do not paste it into logs or chat.");
+        listing.Label("NekoRimWorld_SaveHelp".Translate());
+        listing.Label("NekoRimWorld_PairingCodePrivacy".Translate());
+        settingsContentHeight = listing.CurHeight + 8f;
         listing.End();
+        Widgets.EndScrollView();
     }
 
     public override void WriteSettings()

@@ -7,3 +7,5 @@ Tests/**/obj/
 *.suo
 1.6/Assemblies/*
 !1.6/Assemblies/.gitkeep
+artifacts/
+__pycache__/

@@ -1,7 +1,43 @@
-# N.E.K.O RimWorld Bridge v3.2
+# N.E.K.O RimWorld Bridge v3.2.0
 
-Product version: **3.2.0**. This is the current local source version, not a
-published or deployed release. v3.2 includes the selected native situation
+Players: [中文安装与使用](README.zh-CN.md) · [English installation and use](README.en.md).
+
+Installable packages, checksums and validation status are listed on the
+[GitHub Releases page](https://github.com/wislap/NekoRimWorld/releases).
+Use the `NekoRimWorld-<version>.zip` asset for installation. GitHub's automatic
+source archives contain the development sources. Harmony and the matching
+N.E.K.O RimWorld plugin are installed separately; see the user guides above.
+
+Maintainers: build an installable package from this repository using PowerShell 7.2+
+and a .NET SDK capable of building net8.0 and net472:
+
+```powershell
+pwsh -NoProfile -File Tools/Build-Package.ps1
+```
+
+The script performs locked restore, an isolated Release build and net8.0 bridge
+smoke tests. It writes `artifacts/packages/NekoRimWorld-3.2.0/` containing the Mod
+ZIP, SHA-256, file manifest and validation logs. Use `-OutputDirectory <directory>`
+to choose another parent directory. Existing version directories are rejected;
+failed attempts keep their logs and work files for inspection. It does not change
+`1.6/Assemblies`, deploy to a game installation, commit, upload or publish.
+
+Only reviewed runtime DLLs, metadata, English/Simplified Chinese language files,
+user guides and license/provenance records enter the ZIP. Game/framework/Harmony
+reference assemblies, test runners, personal configuration, source and bench are
+excluded. Dependency upgrades require reviewing `Tools/RuntimeDependencies.json`;
+licenses are copied from NuGet, with the GraphQL-Parser license pinned in
+`ThirdParty/`. Optional `About/Preview.png` and `About/ModIcon.png` are included
+when present. A preview image is optional; the game recommends an aspect ratio of
+2.468:1. See the game's bundled `ModUpdating.txt` for its folder and metadata rules.
+
+Run `python -m unittest discover -s Tests/Package -v` for standalone packaging
+acceptance, archive hashes/dependencies/licenses, and rejection of invalid
+translations, missing dependency links/licenses or existing output. It requires
+only Python's standard library alongside the build tools, retains evidence and
+prints its location; `NEKO_MOD_PACKAGE_TEST_OUTPUT` selects a new evidence folder.
+
+Product version: **3.2.0**. v3.2 includes the selected native situation
 background, world/faction/quest/trade/research consultation, and the exact-read,
 resource-source and loaded-journey improvements. Product and protocol versions
 are independent; the supported wire contracts below retain their meanings.

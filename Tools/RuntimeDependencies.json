@@ -1,0 +1,18 @@
+[
+  { "assembly": "GraphQL.dll", "package": "GraphQL" },
+  {
+    "assembly": "GraphQLParser.dll",
+    "package": "GraphQL-Parser",
+    "licenseFile": "ThirdParty/GraphQL-Parser/LICENSE.md",
+    "licenseVersion": "9.5.0",
+    "licenseSource": "https://raw.githubusercontent.com/graphql-dotnet/parser/c2583a5060200842a1ed0592604af0967d1a671a/LICENSE.md"
+  },
+  { "assembly": "Microsoft.Bcl.AsyncInterfaces.dll", "package": "Microsoft.Bcl.AsyncInterfaces" },
+  { "assembly": "Newtonsoft.Json.dll", "package": "Newtonsoft.Json" },
+  { "assembly": "System.Buffers.dll", "package": "System.Buffers" },
+  { "assembly": "System.ComponentModel.Annotations.dll", "package": "System.ComponentModel.Annotations" },
+  { "assembly": "System.Memory.dll", "package": "System.Memory" },
+  { "assembly": "System.Numerics.Vectors.dll", "package": "System.Numerics.Vectors" },
+  { "assembly": "System.Runtime.CompilerServices.Unsafe.dll", "package": "System.Runtime.CompilerServices.Unsafe" },
+  { "assembly": "System.Threading.Tasks.Extensions.dll", "package": "System.Threading.Tasks.Extensions" }
+]

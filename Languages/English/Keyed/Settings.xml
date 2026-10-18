@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+  <NekoRimWorld_SettingsTitle>N.E.K.O RimWorld Bridge</NekoRimWorld_SettingsTitle>
+  <NekoRimWorld_ConnectionHelp>Connect this game to the RimWorld plugin in N.E.K.O. Enter the same port and pairing code in the plugin, then load your colony.</NekoRimWorld_ConnectionHelp>
+  <NekoRimWorld_EnableConnection>Enable N.E.K.O connection</NekoRimWorld_EnableConnection>
+  <NekoRimWorld_EnableConnectionHelp>Connects to the N.E.K.O plugin on this computer only (127.0.0.1). Generate a pairing code first, then save the same port and code in the plugin settings.</NekoRimWorld_EnableConnectionHelp>
+  <NekoRimWorld_Port>Connection port</NekoRimWorld_Port>
+  <NekoRimWorld_PairingCode>Pairing code</NekoRimWorld_PairingCode>
+  <NekoRimWorld_GeneratePairingCode>Generate new pairing code</NekoRimWorld_GeneratePairingCode>
+  <NekoRimWorld_LocalAddress>Local address: 127.0.0.1:{0}</NekoRimWorld_LocalAddress>
+  <NekoRimWorld_ConnectionState>Connection status: {0}</NekoRimWorld_ConnectionState>
+  <NekoRimWorld_PairingCodeHelp>The button generates a random pairing code. If you enter your own, use {0}–{1} characters.</NekoRimWorld_PairingCodeHelp>
+  <NekoRimWorld_PairingCodeTooShort>The pairing code is too short. Generate a code before enabling the connection. Closing this window with a short code will leave the connection disabled.</NekoRimWorld_PairingCodeTooShort>
+  <NekoRimWorld_SaveHelp>Close this settings window to save and apply your changes. After generating a new code, update the plugin settings too.</NekoRimWorld_SaveHelp>
+  <NekoRimWorld_PairingCodePrivacy>The pairing code links your game with N.E.K.O. Keep it private and leave it out of screenshots and shared logs.</NekoRimWorld_PairingCodePrivacy>
+  <NekoRimWorld_State_Stopped>Connection stopped</NekoRimWorld_State_Stopped>
+  <NekoRimWorld_State_Disabled>Connection disabled</NekoRimWorld_State_Disabled>
+  <NekoRimWorld_State_Connecting>Connecting to N.E.K.O…</NekoRimWorld_State_Connecting>
+  <NekoRimWorld_State_Handshaking>Checking the pairing code…</NekoRimWorld_State_Handshaking>
+  <NekoRimWorld_State_Ready>Connected to N.E.K.O</NekoRimWorld_State_Ready>
+  <NekoRimWorld_State_Backoff>Connection interrupted; reconnecting…</NekoRimWorld_State_Backoff>
+</LanguageData>

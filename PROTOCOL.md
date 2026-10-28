@@ -133,9 +133,11 @@ progress still meets cost yields null (unknown).
 until a native executor and required transaction guarantees are implemented.
 Authenticated `write_request` uses `mode` and `arguments`, and carries the usual
 session and request identity. `dry_run` and `commit` carry a changeset directly;
-`undo` takes `token`, and `set_paused` takes `paused` and `role`. The current Mod
-responds with correlated `write_result`: `unsupported`, or `stale_session` with
-`stale_epoch` when the envelope session is stale. No operation is performed.
+`undo` takes `token`, and `set_paused` takes `paused` and `role`. A current
+game session with a valid ledger accepts the first three modes through the
+authenticated queue as a staged interface; `set_paused` remains unsupported.
+The normal plugin does not send writes because HELLO does not advertise this
+capability. Stale sessions are rejected and a full queue returns `busy`.
 The operation-specific target and value grammar remains for the native operation
 catalog; the staging parser validates only the common bounded structure.
 
@@ -151,8 +153,7 @@ preference describes eligibility now, not the historical cause of a pause.
 Successful wire results carry the game-port receipt directly in `data`: pause
 returns `{paused, role}`; undo can return `unknown_token`, `already_undone`, or
 `stale_epoch` with its current `load_epoch`. Conflict `last_writer` and `at_tick`
-may be null when provenance is unknown. These shapes do not imply a native
-executor or undo ledger exists yet.
+may be null when provenance is unknown.
 
 Preview rows contain exactly `op`, `object`, `field`, `expect`, and `value`;
 readback rows contain exactly `object`, `field`, and `value`. Values may be JSON
@@ -160,12 +161,18 @@ null. Arrays may be empty: the wire contract does not assert how many physical
 fields a future executor expands from an operation, and the port already permits
 empty arrays. This is not a claim that any operation was executed.
 
-The internal B3 transaction core implements one synchronous `Advance`, resolves
+The transaction core implements one synchronous `Advance`, resolves
 all fields and validates their expected values before writing, and restores
-written fields in reverse order on a setter or readback failure. Its internal
-`validated` / `applied` outcome is not a wire receipt and has no undo token.
-The production queue and HELLO remain unchanged: this core is not connected to
-the game component's frame scheduler or to authenticated write dispatch yet.
+written fields in reverse order on a setter, readback, or metadata publication
+failure. The existing game-thread frame scheduler runs the coordinated write.
+The ledger keeps each field's latest AI value, author, changeset and tick in the
+save; receipt and undo state is confined to the current load epoch. Undo first
+compares all fields against the values it wrote. Save-scoped identity references
+allow confirmed destroyed objects to be pruned after loading as well as before
+saving or handling a request; unresolved references and off-map objects are not
+assumed destroyed. Old saves without these references retain unknown entries.
+A malformed saved ledger disables
+writing and preserves the original stored data.
 
 The internal Verse directory covers work priority, medical care, allowed area,
 forbidden flags, existing production-bill fields, ordinary research, and storage
@@ -177,8 +184,8 @@ require no current job. Item filters reject nonofficial definitions, virtual
 descendants and items excluded by the parent's filter. These restrictions avoid
 native side effects that restoring one field cannot undo.
 
-New production bills, an advertised schema, scheduler integration, save-scoped
-ledger, deduplication and undo remain pending. Smoke tests cover transaction and
-preflight policy semantics with fake fields; they do not establish the actual
-Verse setters' in-game behavior or frame time. No native writing capability is
-available to callers in this staged implementation.
+New production bills, an advertised operation schema, pause control and events
+remain pending. Smoke tests cover transaction, persistence adapter, authenticated
+loopback and preflight policy semantics with fake fields; they do not establish
+actual Verse setter behavior, real Scribe roundtrips or frame time. The staged
+three-mode interface is not an advertised or complete automatic-play capability.

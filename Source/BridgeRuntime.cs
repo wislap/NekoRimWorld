@@ -51,6 +51,7 @@ public sealed class BridgeRuntime
     private long configGeneration;
     private string connectionEpoch = string.Empty;
     private SessionDescriptor? session;
+    private bool nativeWriterReady;
     private long sessionGeneration;
     private long lastSessionTouch;
     private bool sessionStale;
@@ -201,13 +202,14 @@ public sealed class BridgeRuntime
             inbound.Clear();
             control.Clear();
             telemetry.Clear();
+            nativeWriterReady = false;
         }
         ClearConnection();
         SetState(BridgeConnectionState.Stopped, "Bridge stopped.");
         return true;
     }
     /// <summary>Replaces the active loaded-game identity.</summary>
-    public void AttachSession(SessionDescriptor descriptor)
+    public void AttachSession(SessionDescriptor descriptor, bool writerReady = false)
     {
         if (descriptor is null || string.IsNullOrWhiteSpace(descriptor.ColonyId) ||
             string.IsNullOrWhiteSpace(descriptor.LoadEpoch))
@@ -222,6 +224,7 @@ public sealed class BridgeRuntime
             control.Clear();
             telemetry.Clear();
             session = Copy(descriptor);
+            nativeWriterReady = writerReady;
             lastSessionTouch = Stopwatch.GetTimestamp();
             sessionStale = false;
             sessionGeneration++;
@@ -516,8 +519,16 @@ public sealed class BridgeRuntime
                 case ProtocolMessageTypes.WriteRequest:
                     ReadSession(Stopwatch.GetTimestamp(), out var writeSession, out _, out bool writeStale);
                     var responseSession = writeSession ?? new SessionDescriptor(message.ColonyId, message.LoadEpoch, message.GameTick, message.SnapshotSequence);
-                    var response = ColonyWriteContract.UnavailableResult(message, responseSession, writeSession == null || writeStale);
-                    Write(stream, response, epoch, ref sendSequence);
+                    bool writerReady; lock (sessionGate) writerReady = nativeWriterReady;
+                    if (writeSession == null || writeStale || message.ColonyId != responseSession.ColonyId || message.LoadEpoch != responseSession.LoadEpoch || message.Payload.Mode == "set_paused" || !writerReady) {
+                        Write(stream, ColonyWriteContract.UnavailableResult(message, responseSession, writeSession == null || writeStale), epoch, ref sendSequence);
+                        break;
+                    }
+                    if (!TryEnqueueCurrent(message, epoch, inbound, out bool writeQueueFull, true)) {
+                        var payload = new ProtocolPayload { Status = writeQueueFull ? ProtocolStatuses.Busy : ProtocolStatuses.StaleSession,
+                            ErrorCode = writeQueueFull ? "busy" : "stale_epoch", Message = writeQueueFull ? "The game request queue is full." : "The requested colony load is no longer active.", Issues = Array.Empty<QueryIssue>() };
+                        Write(stream, ProtocolEnvelope.Create(ProtocolMessageTypes.WriteResult, epoch, 0, payload, responseSession, message.RequestId), epoch, ref sendSequence);
+                    }
                     break;
                 case ProtocolMessageTypes.QueryRequest:
                     if (!TryEnqueueCurrent(message, epoch, inbound, out bool queueFull) && queueFull)
@@ -614,7 +625,7 @@ public sealed class BridgeRuntime
         wake.Set();
         return true;
     }
-    private bool TryEnqueueCurrent(ProtocolEnvelope message, string epoch, BoundedQueue queue, out bool queueFull)
+    private bool TryEnqueueCurrent(ProtocolEnvelope message, string epoch, BoundedQueue queue, out bool queueFull, bool requireWriter = false)
     {
         queueFull = false;
         if (!string.Equals(message.ConnectionEpoch, epoch, StringComparison.Ordinal))
@@ -623,7 +634,7 @@ public sealed class BridgeRuntime
         }
         lock (sessionGate)
         {
-            if (!IsSessionCurrent(message))
+            if (!IsSessionCurrent(message) || (requireWriter && !nativeWriterReady))
             {
                 return false;
             }

@@ -22,6 +22,11 @@ public sealed class NekoGameComponent : GameComponent
     private IFrameQueryOperation? activeOperation;
     private ProtocolEnvelope? activeRequest;
     private SessionDescriptor? activeSession;
+    private readonly WriteLedgerSaveState writeLedgerSave = new();
+    private readonly WriteLedger writeLedger = new();
+    private readonly WriteTargetIndex writeTargets = new(WriteTargetReferences.Destroyed);
+    private readonly WriteTargetReferences writeTargetReferences = new();
+    private WriteCoordinator? writeCoordinator;
 
 
     // RimWorld discovers GameComponents with this exact constructor signature.
@@ -34,6 +39,18 @@ public sealed class NekoGameComponent : GameComponent
     public override void ExposeData()
     {
         Scribe_Values.Look(ref colonyId, "nekoColonyId", string.Empty);
+        if (Scribe.mode == LoadSaveMode.Saving) {
+            if (writeLedgerSave.Valid) writeTargets.Prune(writeLedger);
+            writeLedgerSave.PrepareSave(writeLedger);
+        }
+        Scribe_Values.Look(ref writeLedgerSave.Data, "nekoWriteLedger", string.Empty);
+        if (Scribe.mode == LoadSaveMode.LoadingVars) {
+            writeLedgerSave.Loaded(writeLedger);
+            if (!writeLedgerSave.Valid) {
+                Log.Warning("[N.E.K.O RimWorld] Invalid write ledger; writing is disabled for this save.");
+            }
+        }
+        writeTargetReferences.ExposeData(writeTargets);
     }
 
     public override void StartedNewGame()
@@ -67,6 +84,8 @@ public sealed class NekoGameComponent : GameComponent
                 var completed = activeOperation;
                 var request = activeRequest!;
                 var sample = activeSession!;
+                if (request.Type == ProtocolMessageTypes.WriteRequest)
+                    sample = WriteReceiptSession.AtTick(sample, Find.TickManager?.TicksGame ?? sample.GameTick);
                 // Completion owns no queue slot during delivery. Even an
                 // unexpected publication error cannot replay it every frame.
                 activeOperation = null; activeRequest = null; activeSession = null;
@@ -97,8 +116,10 @@ public sealed class NekoGameComponent : GameComponent
         NormalizeOrCreateColonyId();
 
         loadEpoch = Guid.NewGuid().ToString("N");
+        writeCoordinator = new WriteCoordinator(writeLedger, writeTargets);
+        writeCoordinator.StartEpoch(loadEpoch);
         snapshotSequence = 0;
-        NekoRimWorldMod.Runtime.AttachSession(CurrentSession());
+        NekoRimWorldMod.Runtime.AttachSession(CurrentSession(), writerReady: writeLedgerSave.Valid);
         Log.Message($"[N.E.K.O RimWorld] Game session attached ({source}).");
     }
 
@@ -107,8 +128,10 @@ public sealed class NekoGameComponent : GameComponent
         ProtocolEnvelope request)
     {
         var session = CurrentSession();
+        if (writeLedgerSave.Valid) writeTargets.Prune(writeLedger);
 
-        if (!string.Equals(request.Type, ProtocolMessageTypes.QueryRequest, StringComparison.Ordinal))
+        bool writing = string.Equals(request.Type, ProtocolMessageTypes.WriteRequest, StringComparison.Ordinal);
+        if (!writing && !string.Equals(request.Type, ProtocolMessageTypes.QueryRequest, StringComparison.Ordinal))
         {
             EnqueueProtocolError(
                 runtime,
@@ -133,6 +156,10 @@ public sealed class NekoGameComponent : GameComponent
         if (!string.Equals(request.ColonyId, colonyId, StringComparison.Ordinal) ||
             !string.Equals(request.LoadEpoch, loadEpoch, StringComparison.Ordinal))
         {
+            if (writing) {
+                runtime.EnqueueControl(ColonyWriteContract.UnavailableResult(request, session, true));
+                return;
+            }
             runtime.EnqueueControl(ProtocolEnvelope.CreateQueryResult(
                 request,
                 request.ConnectionEpoch,
@@ -146,6 +173,16 @@ public sealed class NekoGameComponent : GameComponent
 
         var next = checked(snapshotSequence + 1);
         var sampledSession = new SessionDescriptor(colonyId, loadEpoch, session.GameTick, next);
+        if (writing) {
+            var args = (Newtonsoft.Json.Linq.JObject)request.Payload.Arguments!.DeepClone();
+            var mode = request.Payload.Mode!;
+            var coordinator = writeCoordinator!;
+            activeOperation = new CoordinatedWriteOperation(() => coordinator.Execute(mode, args, new VerseWriteFieldResolver(new VerseGameData()), () => loadEpoch,
+                () => writeLedgerSave.Valid && UnityData.IsInMainThread && Current.ProgramState == ProgramState.Playing && !LongEventHandler.AnyEventNowOrWaiting,
+                Find.TickManager?.TicksGame ?? 0));
+            activeRequest = request; activeSession = sampledSession;
+            return;
+        }
         if (Array.IndexOf(ColonyReadContract.Operations, request.Payload.Operation) >= 0 || request.Payload.Operation == SituationSnapshotContract.Operation || request.Payload.Operation == "query" || Array.IndexOf(WorldObservationContract.Operations, request.Payload.Operation) >= 0 || Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0) {
             activeOperation = request.Payload.Operation == SituationSnapshotContract.Operation ? new SituationSnapshot(request.Payload.Arguments!, sampledSession)
                 : Array.IndexOf(ColonyReadContract.Operations, request.Payload.Operation) >= 0 ? new ColonyReadOperation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession)
@@ -173,7 +210,17 @@ public sealed class NekoGameComponent : GameComponent
         var next = sampledSession.SnapshotSequence;
         snapshotSequence = next;
         runtime.TouchSession(loadEpoch, sampledSession.GameTick, next);
-        var response = QueryResultDelivery.Build(request, sampledSession, outcome);
+        ProtocolEnvelope response;
+        if (request.Type == ProtocolMessageTypes.WriteRequest) {
+            try {
+                response = ProtocolEnvelope.Create(ProtocolMessageTypes.WriteResult, request.ConnectionEpoch, 0,
+                    new ProtocolPayload { Status = outcome.Status, Data = outcome.Data, Issues = outcome.Issues, ErrorCode = outcome.ErrorCode, Message = outcome.Message }, sampledSession, request.RequestId);
+                ProtocolCodec.Serialize(response);
+            } catch (ProtocolException error) {
+                response = ProtocolEnvelope.Create(ProtocolMessageTypes.WriteResult, request.ConnectionEpoch, 0,
+                    new ProtocolPayload { Status = ProtocolStatuses.Failed, ErrorCode = error.ErrorCode, Message = "The write result could not be encoded.", Issues = Array.Empty<QueryIssue>() }, sampledSession, request.RequestId);
+            }
+        } else response = QueryResultDelivery.Build(request, sampledSession, outcome);
         runtime.EnqueueControl(response);
     }
 

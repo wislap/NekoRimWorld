@@ -8,6 +8,8 @@ internal static class AtomicWriteOperationTests
 {
     private sealed class FieldProbe : IPreparedWriteField {
         public string ObjectId { get; set; } = ""; public string Field => "value"; public bool MayChangeByGame => false;
+        public bool IsDestroyed => false;
+        public object? NativeTarget => this;
         public int Value, Writes; public bool FailWrite, FailValidation, FailRestore, IgnoreWrite; public Action<JToken>? Guard;
         public JToken Read() => new JValue(Value);
         public void Validate(JToken value) { Guard?.Invoke(value); if (FailValidation) throw new ArgumentException("invalid"); }
@@ -55,6 +57,9 @@ internal static class AtomicWriteOperationTests
         using (var op = new AtomicWriteOperation(resolver, Request(), () => "epoch", false, () => false)) { Require(op.Advance() && op.Outcome!.ErrorCode == "world_unavailable" && a.Value == 1 && b.Value == 2, "World guard wrote fields."); }
         using (var op = new AtomicWriteOperation(resolver, Request(), () => "other", false)) { Require(op.Advance() && op.Outcome!.ErrorCode == "stale_epoch" && a.Value == 1 && b.Value == 2, "Epoch mismatch wrote fields."); }
         using (var op = new AtomicWriteOperation(resolver, Request(), () => "epoch", false)) { Require(op.Advance() && a.Value == 3 && b.Value == 4, "Success did not complete in one advance."); }
+        a.Value = 1; b.Value = 2;
+        using (var op = new AtomicWriteOperation(resolver, Request(), () => "epoch", false, completed: _ => throw new InvalidOperationException("metadata publication failed"))) { Require(op.Advance() && a.Value == 1 && b.Value == 2 && op.Outcome!.ErrorCode == "write_failed", "Completion failure did not roll back fields."); }
+        a.Value = 3; b.Value = 4;
         var wrongThread = new AtomicWriteOperation(resolver, Request(), () => "epoch", false);
         var thread = new System.Threading.Thread(() => wrongThread.Advance()); thread.Start(); thread.Join();
         Require(wrongThread.Outcome!.ErrorCode == "write_failed" && a.Value == 3 && b.Value == 4, "Wrong thread executed transaction.");

@@ -6,13 +6,15 @@ namespace Neko.RimWorld;
 
 // A prepared field owns the native target only for the duration of one Advance.
 // Implementations must validate without mutation and Restore must tolerate a Write
-// that mutated the field before throwing. This core is deliberately not wired to
-// the protocol until native adapters and the save-scoped ledger are complete.
+// that mutated the field before throwing. The staged coordinator uses this core
+// through the existing game-thread scheduler; HELLO does not advertise writes.
 internal interface IPreparedWriteField
 {
     string ObjectId { get; }
     string Field { get; }
     bool MayChangeByGame { get; }
+    bool IsDestroyed { get; }
+    object? NativeTarget { get; }
     JToken Read();
     void Validate(JToken value);
     void Write(JToken value);
@@ -24,6 +26,15 @@ internal sealed class ResolvedWriteField
     internal ResolvedWriteField(IPreparedWriteField field, JToken expected, JToken value) { Field = field; Expected = expected; Value = value; }
     internal IPreparedWriteField Field { get; }
     internal JToken Expected { get; }
+    internal JToken Value { get; }
+}
+internal sealed class AppliedWriteField
+{
+    internal AppliedWriteField(int index, IPreparedWriteField field, JToken original, JToken value)
+    { Index = index; Field = field; Original = original.DeepClone(); Value = value.DeepClone(); }
+    internal int Index { get; }
+    internal IPreparedWriteField Field { get; }
+    internal JToken Original { get; }
     internal JToken Value { get; }
 }
 internal interface IWriteFieldResolver
@@ -38,12 +49,13 @@ internal sealed class AtomicWriteOperation : IFrameQueryOperation
     private readonly Func<string> currentEpoch;
     private readonly bool dryRun;
     private readonly Func<bool> canExecute;
+    private readonly Func<IReadOnlyList<AppliedWriteField>, QueryOutcome>? completed;
     private readonly int ownerThread = System.Threading.Thread.CurrentThread.ManagedThreadId;
     private bool disposed;
     public QueryOutcome? Outcome { get; private set; }
 
-    internal AtomicWriteOperation(IWriteFieldResolver resolver, JObject request, Func<string> currentEpoch, bool dryRun, Func<bool>? canExecute = null)
-    { this.resolver = resolver; this.request = request; this.currentEpoch = currentEpoch; this.dryRun = dryRun; this.canExecute = canExecute ?? (() => true); }
+    internal AtomicWriteOperation(IWriteFieldResolver resolver, JObject request, Func<string> currentEpoch, bool dryRun, Func<bool>? canExecute = null, Func<IReadOnlyList<AppliedWriteField>, QueryOutcome>? completed = null)
+    { this.resolver = resolver; this.request = request; this.currentEpoch = currentEpoch; this.dryRun = dryRun; this.canExecute = canExecute ?? (() => true); this.completed = completed; }
 
     public bool Advance()
     {
@@ -74,6 +86,7 @@ internal sealed class AtomicWriteOperation : IFrameQueryOperation
                         return true;
                     }
                     prepared.Add((i, field, observed, value));
+                    if (prepared.Count > 64) throw new ArgumentException("A transaction may contain at most 64 fields.");
                 }
             }
             if ((string?)request["load_epoch"] != currentEpoch()) throw new InvalidOperationException("The load epoch changed during validation.");
@@ -88,7 +101,9 @@ internal sealed class AtomicWriteOperation : IFrameQueryOperation
             }
             if (!dryRun) foreach (var item in prepared) if (!JToken.DeepEquals(item.Field.Read(), item.Value)) throw new InvalidOperationException("Readback differs from the requested value.");
             if ((string?)request["load_epoch"] != currentEpoch()) throw new InvalidOperationException("The load epoch changed during execution.");
-            Outcome = new QueryOutcome { Data = new JObject { ["status"] = dryRun ? "validated" : "applied", ["fields"] = rows } };
+            Outcome = completed != null
+                ? completed(prepared.ConvertAll(item => new AppliedWriteField(item.Index, item.Field, item.Original, item.Value)))
+                : new QueryOutcome { Data = new JObject { ["status"] = dryRun ? "validated" : "applied", ["fields"] = rows } };
         } catch (Exception error) when (ReadContext.Recoverable(error)) {
             var rollbackFailed = false;
             for (var i = written.Count - 1; i >= 0; i--) {

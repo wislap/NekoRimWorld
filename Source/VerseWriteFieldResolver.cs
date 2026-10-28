@@ -84,6 +84,8 @@ internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
     private sealed class ResearchField : IPreparedWriteField
     {
         public string ObjectId => "research:current";
+        public bool IsDestroyed => false;
+        public object? NativeTarget => null;
         public string Field => "current_project";
         public bool MayChangeByGame => true;
         public JToken Read() => Find.ResearchManager.GetProject() is ResearchProjectDef project ? new JValue(project.defName) : JValue.CreateNull();
@@ -117,6 +119,8 @@ internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
         private readonly Pawn pawn;
         internal AreaField(Pawn pawn) { this.pawn = pawn; }
         public string ObjectId => pawn.GetUniqueLoadID();
+        public bool IsDestroyed => pawn.Destroyed;
+        public object? NativeTarget => pawn;
         public string Field => "allowed_area";
         public bool MayChangeByGame => true;
         public JToken Read() {
@@ -165,21 +169,25 @@ internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
         Func<bool> valid = () => thing != null ? !thing.Destroyed : zone != null && zone.Map != null && zone.Map.zoneManager.AllZones.Contains(zone);
         if (kind == "set_storage_priority") {
             if (operation["item"] != null) throw new ArgumentException("Priority does not take item.");
-            return new StoragePriorityField(id!, valid, settings);
+            return new StoragePriorityField(id!, valid, () => thing != null ? thing.Destroyed : zone?.zoneManager != null && !zone.zoneManager.AllZones.Contains(zone), (object?)thing ?? zone!, settings);
         }
         var name = (string?)operation["item"];
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Item definition required.");
         var item = DefDatabase<ThingDef>.GetNamedSilentFail(name) ?? throw new ArgumentException("Item definition not found.");
-        return new StorageAllowField(id!, valid, settings, item);
+        return new StorageAllowField(id!, valid, () => thing != null ? thing.Destroyed : zone?.zoneManager != null && !zone.zoneManager.AllZones.Contains(zone), (object?)thing ?? zone!, settings, item);
     }
 
     private sealed class StoragePriorityField : IPreparedWriteField
     {
         private readonly string id;
         private readonly Func<bool> valid;
+        private readonly Func<bool> destroyed;
+        private readonly object nativeTarget;
         private readonly StorageSettings settings;
-        internal StoragePriorityField(string id, Func<bool> valid, StorageSettings settings) { this.id = id; this.valid = valid; this.settings = settings; }
+        internal StoragePriorityField(string id, Func<bool> valid, Func<bool> destroyed, object nativeTarget, StorageSettings settings) { this.id = id; this.valid = valid; this.destroyed = destroyed; this.nativeTarget = nativeTarget; this.settings = settings; }
         public string ObjectId => id;
+        public bool IsDestroyed => destroyed();
+        public object? NativeTarget => nativeTarget;
         public string Field => "storage_priority";
         public bool MayChangeByGame => false;
         public JToken Read() => new JValue(settings.Priority.ToString());
@@ -192,10 +200,14 @@ internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
     {
         private readonly string id;
         private readonly Func<bool> valid;
+        private readonly Func<bool> destroyed;
+        private readonly object nativeTarget;
         private readonly StorageSettings settings;
         private readonly ThingDef item;
-        internal StorageAllowField(string id, Func<bool> valid, StorageSettings settings, ThingDef item) { this.id = id; this.valid = valid; this.settings = settings; this.item = item; }
+        internal StorageAllowField(string id, Func<bool> valid, Func<bool> destroyed, object nativeTarget, StorageSettings settings, ThingDef item) { this.id = id; this.valid = valid; this.destroyed = destroyed; this.nativeTarget = nativeTarget; this.settings = settings; this.item = item; }
         public string ObjectId => id;
+        public bool IsDestroyed => destroyed();
+        public object? NativeTarget => nativeTarget;
         public string Field => "storage_allow:" + item.defName;
         public bool MayChangeByGame => false;
         public JToken Read() => new JValue(settings.filter.Allows(item));
@@ -230,6 +242,8 @@ internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
         private readonly string[] fields;
         internal BillField(Building_WorkTable table, Bill_Production bill, string[] fields) { this.table = table; this.bill = bill; this.fields = fields; }
         public string ObjectId => bill.GetUniqueLoadID();
+        public bool IsDestroyed => bill.deleted || table.Destroyed;
+        public object? NativeTarget => bill;
         public string Field => "bill:" + fields[0];
         public bool MayChangeByGame => fields[0] == "repeat_count" || fields[0] == "suspended";
         public JToken Read() => fields[0] switch { "suspended" => new JValue(bill.suspended), "repeat_mode" => new JValue(bill.repeatMode.defName), "repeat_count" => new JValue(bill.repeatCount), "target_count" => new JValue(bill.targetCount), _ => throw new ArgumentException("Unknown bill field.") };
@@ -251,6 +265,8 @@ internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
         private readonly Pawn pawn;
         internal MedicalField(Pawn pawn) { this.pawn = pawn; }
         public string ObjectId => pawn.GetUniqueLoadID();
+        public bool IsDestroyed => pawn.Destroyed;
+        public object? NativeTarget => pawn;
         public string Field => "medical_care";
         public bool MayChangeByGame => true;
         public JToken Read() => new JValue(pawn.playerSettings.medCare.ToString());
@@ -268,6 +284,8 @@ internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
         private readonly CompForbiddable comp;
         internal ForbiddenField(Thing thing, CompForbiddable comp) { this.thing = thing; this.comp = comp; }
         public string ObjectId => thing.GetUniqueLoadID();
+        public bool IsDestroyed => thing.Destroyed;
+        public object? NativeTarget => thing;
         public string Field => "forbidden_flag";
         public bool MayChangeByGame => true;
         public JToken Read() => new JValue(comp.Forbidden);
@@ -282,6 +300,8 @@ internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
         private readonly WorkTypeDef work;
         internal WorkPriorityField(Pawn pawn, WorkTypeDef work) { this.pawn = pawn; this.work = work; }
         public string ObjectId => pawn.GetUniqueLoadID();
+        public bool IsDestroyed => pawn.Destroyed;
+        public object? NativeTarget => pawn;
         public string Field => "work_priority:" + work.defName;
         public bool MayChangeByGame => true;
         public JToken Read() => new JValue(pawn.workSettings.GetPriority(work));

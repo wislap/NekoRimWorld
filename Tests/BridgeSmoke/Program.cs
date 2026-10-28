@@ -28,6 +28,7 @@ internal static class Program
             if (args.Length != 0) throw new ArgumentException("Expected --export-knowledge DIRECTORY or no arguments.");
             FrameQueryOperationTests.Run();
             AtomicWriteOperationTests.Run();
+            WriteLedgerTests.Run();
             SituationSnapshotContractTests.Run();
             ColonyReadContractTests.Run();
             ColonyWriteContractTests.Run();
@@ -54,6 +55,8 @@ internal static class Program
             FramingHonorsAbsoluteDeadline();
             MutualAuthenticationLoopback();
             WriteLoopback();
+            WriteLoopback(writerReady: true);
+            StagedWriteLoopback();
             Console.WriteLine("Bridge smoke tests passed.");
             return 0;
         }
@@ -352,7 +355,50 @@ internal static class Program
         if (serverFailure is not null) throw new InvalidOperationException("loopback server failed", serverFailure);
     }
 
-    private static void WriteLoopback()
+    private static void StagedWriteLoopback()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0); var runtime = BridgeRuntime.Instance;
+        var session = new SessionDescriptor(Id('5'), Id('6'), 99, 0); var done = new ManualResetEventSlim(false);
+        Exception? failure = null; Thread? server = null;
+        try {
+            listener.Start(); var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            server = new Thread(() => {
+                try {
+                    using var client = listener.AcceptTcpClient(); using var stream = client.GetStream();
+                    var hello = Read(stream); var nonce = new string('b', ProtocolAuthentication.HexLength);
+                    ProtocolCodec.WriteFrame(stream, ProtocolEnvelope.Create(ProtocolMessageTypes.Challenge, hello.ConnectionEpoch, 0,
+                        new ProtocolPayload { ClientNonce = hello.Payload.ClientNonce, ServerNonce = nonce, Proof = ProtocolAuthentication.ComputeServerProof(Token, hello.ConnectionEpoch, hello.Payload.ClientNonce!, nonce) }));
+                    Read(stream);
+                    ProtocolCodec.WriteFrame(stream, ProtocolEnvelope.Create(ProtocolMessageTypes.Welcome, hello.ConnectionEpoch, 1, new ProtocolPayload { Status = ProtocolStatuses.Ok }));
+                    ProtocolEnvelope incoming; do { incoming = Read(stream); } while (incoming.Type != ProtocolMessageTypes.SessionOpen);
+                    var args = new JObject { ["changeset_id"] = "cs", ["author"] = "planner", ["entry_id"] = "entry", ["load_epoch"] = session.LoadEpoch, ["idempotency_key"] = "key", ["ops"] = new JArray(new JObject { ["op"] = "set_forbidden", ["thing"] = "a", ["expect"] = 1, ["value"] = 3, ["evidence"] = "ev" }) };
+                    for (int i = 0; i < 2; i++) {
+                        var request = ProtocolEnvelope.Create(ProtocolMessageTypes.WriteRequest, hello.ConnectionEpoch, i + 2, new ProtocolPayload { Mode = "commit", Arguments = args }, session, (i + 1).ToString("x32"));
+                        ProtocolCodec.WriteFrame(stream, request);
+                        do { incoming = Read(stream); } while (incoming.Type != ProtocolMessageTypes.WriteResult);
+                        Require(incoming.RequestId == request.RequestId && (string?)incoming.Payload.Data?["status"] == "committed", "staged write receipt failed");
+                    }
+                } catch (Exception e) { failure = e; } finally { done.Set(); }
+            }) { IsBackground = true, Name = "NekoRimWorld.BridgeSmoke.StagedWrite" };
+            server.Start(); runtime.Configure(true, port, Token, "0.1.0-dev", "1.6.4871", new[] { "query.execute.v2" });
+            runtime.AttachSession(session, writerReady: true); var execute = WriteLedgerTests.CreatePump(out var writes);
+            var deadline = DateTime.UtcNow.AddSeconds(15);
+            while (!done.IsSet && DateTime.UtcNow < deadline) {
+                runtime.TouchSession(session.LoadEpoch, session.GameTick, session.SnapshotSequence);
+                if (runtime.TryDequeueInbound(out var request)) {
+                    using var op = new CoordinatedWriteOperation(() => execute(request)); Require(op.Advance(), "write yielded a frame");
+                    var outcome = op.Outcome!;
+                    runtime.EnqueueControl(ProtocolEnvelope.Create(ProtocolMessageTypes.WriteResult, request.ConnectionEpoch, 0,
+                        new ProtocolPayload { Status = outcome.Status, Data = outcome.Data, Issues = outcome.Issues, ErrorCode = outcome.ErrorCode, Message = outcome.Message }, session, request.RequestId));
+                }
+                Thread.Sleep(5);
+            }
+            Require(done.IsSet, "staged write loopback timed out"); if (failure != null) throw new InvalidOperationException("staged loopback failed", failure);
+            Require(writes() == 1, "repeated write applied twice");
+        } finally { listener.Stop(); runtime.Stop(); if (server != null) server.Join(TimeSpan.FromSeconds(6)); done.Dispose(); }
+    }
+
+    private static void WriteLoopback(bool writerReady = false)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         var runtime = BridgeRuntime.Instance;
@@ -388,15 +434,15 @@ internal static class Program
                     for (int i = 0; i < 2; i++) {
                         do { incoming = Read(stream); Require(incoming.Sequence > last, "response sequence did not advance"); last = incoming.Sequence; } while (incoming.Type != ProtocolMessageTypes.WriteResult);
                         Require(incoming.RequestId == (i == 0 ? current.RequestId : stale.RequestId), "write correlation failed");
-                        Require(incoming.Payload.Status == (i == 0 ? ProtocolStatuses.Unsupported : ProtocolStatuses.StaleSession), "wrong write status");
-                        Require(incoming.Payload.ErrorCode == (i == 0 ? "unsupported" : "stale_epoch"), "wrong write error");
+                        Require(incoming.Payload.Status == (i == 0 ? (writerReady ? ProtocolStatuses.Busy : ProtocolStatuses.Unsupported) : ProtocolStatuses.StaleSession), "wrong write status");
+                        Require(incoming.Payload.ErrorCode == (i == 0 ? (writerReady ? "busy" : "unsupported") : "stale_epoch"), "wrong write error");
                     }
                 } catch (Exception e) { failure = e; }
                 finally { done.Set(); }
             }) { IsBackground = true, Name = "NekoRimWorld.BridgeSmoke.WriteServer" };
             server.Start();
             runtime.Configure(true, port, Token, "0.1.0-dev", "1.6.4871", new[] { "query.execute.v2" });
-            runtime.AttachSession(session);
+            runtime.AttachSession(session, writerReady);
             var deadline = DateTime.UtcNow.AddSeconds(15);
             while (!done.IsSet && DateTime.UtcNow < deadline) { runtime.TouchSession(session.LoadEpoch, session.GameTick, session.SnapshotSequence); Thread.Sleep(10); }
             Require(done.IsSet, "write loopback timed out");

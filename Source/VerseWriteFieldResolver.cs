@@ -7,7 +7,7 @@ using Verse;
 
 namespace Neko.RimWorld;
 
-// Native fields are only reachable through the internal transaction factory.
+// Native field directory used by the save-scoped transaction coordinator.
 internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
 {
     private readonly IGameData data;
@@ -20,9 +20,6 @@ internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
     }
 
     internal VerseWriteFieldResolver(IGameData data) { this.data = data; }
-    internal static AtomicWriteOperation Begin(IGameData data, JObject request, Func<string> currentEpoch, bool dryRun) =>
-        new(new VerseWriteFieldResolver(data), request, currentEpoch, dryRun, () => UnityData.IsInMainThread && Current.ProgramState == ProgramState.Playing && !LongEventHandler.AnyEventNowOrWaiting);
-
     // Each entry is independently resolved and validated; the transaction engine
     // has no operation-specific branches.
     private static readonly IReadOnlyDictionary<string, Func<VerseWriteFieldResolver, JObject, IReadOnlyList<ResolvedWriteField>>> Catalog =

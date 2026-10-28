@@ -11,6 +11,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../../Source/NativeWriteSafety.cs" Link="NativeWriteSafety.cs" />
+    <Compile Include="../../Source/AtomicWriteOperation.cs" Link="AtomicWriteOperation.cs" />
     <Compile Include="../../Source/FrameQueryOperation.cs" Link="FrameQueryOperation.cs" />
     <Compile Include="../../Source/SituationSnapshotContract.cs" Link="SituationSnapshotContract.cs" />
     <Compile Include="../../Source/ColonyReadContract.cs" Link="ColonyReadContract.cs" />

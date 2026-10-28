@@ -19,6 +19,21 @@ internal static class ResearchReadings
         var values = State<Dictionary<ResearchProjectDef, float>>(Find.ResearchManager, project.baseCost > 0 ? "progress" : "anomalyKnowledge");
         return ObservationPolicies.Progress(values, project) >= project.Cost;
     }
+    // CanStartNow reaches GetProgress/GetTechprints, which insert absent keys.
+    // Substitute only those dictionary reads; keep native requirements for
+    // benches, mechanitors, analysis, visibility and grav-engine inspection.
+    internal static bool? CanStartReadOnly(ResearchProjectDef project) {
+        var manager = Find.ResearchManager;
+        if (manager == null) return null;
+        if (FinishedReadOnly(project) || Prerequisites(project).Any(p => !FinishedReadOnly(p))) return false;
+        var techprints = State<Dictionary<ResearchProjectDef, int>>(manager, "techprints");
+        var applied = techprints.TryGetValue(project, out var count) ? count : 0;
+        return applied >= project.TechprintCount
+            && (project.requiredResearchBuilding == null || project.PlayerHasAnyAppropriateResearchBench)
+            && project.PlayerMechanitorRequirementMet && project.AnalyzedThingsRequirementsMet
+            && (!ModsConfig.AnomalyActive || !Find.EntityCodex.Hidden(project))
+            && project.InspectionRequirementsMet;
+    }
     internal static bool? RecipeAvailableReadOnly(RecipeDef recipe) {
         var prerequisites = new[] { recipe.researchPrerequisite }.Where(p => p != null).Cast<ResearchProjectDef>().Concat(recipe.researchPrerequisites ?? new List<ResearchProjectDef>()).ToArray();
         if (prerequisites.Any(p => !FinishedReadOnly(p))) return false;

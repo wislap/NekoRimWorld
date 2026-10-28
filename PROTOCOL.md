@@ -159,3 +159,26 @@ readback rows contain exactly `object`, `field`, and `value`. Values may be JSON
 null. Arrays may be empty: the wire contract does not assert how many physical
 fields a future executor expands from an operation, and the port already permits
 empty arrays. This is not a claim that any operation was executed.
+
+The internal B3 transaction core implements one synchronous `Advance`, resolves
+all fields and validates their expected values before writing, and restores
+written fields in reverse order on a setter or readback failure. Its internal
+`validated` / `applied` outcome is not a wire receipt and has no undo token.
+The production queue and HELLO remain unchanged: this core is not connected to
+the game component's frame scheduler or to authenticated write dispatch yet.
+
+The internal Verse directory covers work priority, medical care, allowed area,
+forbidden flags, existing production-bill fields, ordinary research, and storage
+priority / individual item permission. Bill edits expand into distinct fields.
+Native writes require the Unity main thread, Playing state and no long event.
+Work settings must already be initialized. Priority changes involving zero are
+rejected when a current or queued job could be affected; area changes currently
+require no current job. Item filters reject nonofficial definitions, virtual
+descendants and items excluded by the parent's filter. These restrictions avoid
+native side effects that restoring one field cannot undo.
+
+New production bills, an advertised schema, scheduler integration, save-scoped
+ledger, deduplication and undo remain pending. Smoke tests cover transaction and
+preflight policy semantics with fake fields; they do not establish the actual
+Verse setters' in-game behavior or frame time. No native writing capability is
+available to callers in this staged implementation.

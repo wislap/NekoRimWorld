@@ -213,7 +213,25 @@ internal static class WorldObservation
                     else { geometry["shape"]="circle";geometry["distance_metric"]="euclidean_map_cells"; int radius = (int?)r["radius"] ?? 20; for (int x = -radius; x <= radius; x++) { for (int z = -radius; z <= radius; z++) { var c = center.Cell + new IntVec3(x, 0, z); if (x * x + z * z <= radius * radius && c.InBounds(map)) cells.Add(c); } yield return 0; } }
                 }
                 else if (r["rect"] is JObject rect) { int x0 = Math.Max(0, (int)rect["min_x"]!), x1 = Math.Min(map!.Size.x - 1, (int)rect["max_x"]!), z0 = Math.Max(0, (int)rect["min_z"]!), z1 = Math.Min(map.Size.z - 1, (int)rect["max_z"]!); for (int x = x0; x <= x1; x++) { for (int z = z0; z <= z1; z++) cells.Add(new IntVec3(x, 0, z)); yield return 0; } }
-                else if (r["area"] is JObject area) { var choices = new List<(string Id, string Name, string Kind, IEnumerable<IntVec3> Cells)>(); if ((string?)area["kind"] != "zone") choices.AddRange(map!.areaManager.AllAreas.Select(a => (a.GetUniqueLoadID(), a.Label, "area", a.ActiveCells))); if ((string?)area["kind"] != "area") choices.AddRange(map!.zoneManager.AllZones.Select(z => (z.GetUniqueLoadID(), z.label, "zone", (IEnumerable<IntVec3>)z.Cells))); var matches = choices.Where(c => area["id"] != null ? c.Id == (string?)area["id"] : string.Equals(c.Name, (string?)area["name"], StringComparison.OrdinalIgnoreCase)).ToList(); if (matches.Count != 1) { result["resolution"] = new JObject { ["status"] = matches.Count == 0 ? "not_found" : "ambiguous", ["candidates"] = new JArray(matches.Select(c => new JObject { ["id"] = c.Id, ["name"] = c.Name, ["kind"] = c.Kind })) }; throw ReadContext.Error("region_unresolved", "Select one area or zone"); } cells.AddRange(matches[0].Cells); geometry["resolved_id"] = matches[0].Id; }
+                else if (r["area"] is JObject area)
+                {
+                    var choices = new List<(string Id, string Name, string Kind, IEnumerable<IntVec3> Cells, int? AreaId)>();
+                    if ((string?)area["kind"] != "zone")
+                        choices.AddRange(map!.areaManager.AllAreas.Select(a => (a.GetUniqueLoadID(), a.Label, "area", a.ActiveCells, (int?)a.ID)));
+                    if ((string?)area["kind"] != "area")
+                        choices.AddRange(map!.zoneManager.AllZones.Select(z => (z.GetUniqueLoadID(), z.label, "zone", (IEnumerable<IntVec3>)z.Cells, (int?)null)));
+                    var matches = choices.Where(c => area["id"] != null ? c.Id == (string?)area["id"] : string.Equals(c.Name, (string?)area["name"], StringComparison.OrdinalIgnoreCase)).ToList();
+                    if (matches.Count != 1) {
+                        result["resolution"] = new JObject { ["status"] = matches.Count == 0 ? "not_found" : "ambiguous",
+                            ["candidates"] = new JArray(matches.Select(c => new JObject { ["id"] = c.Id, ["name"] = c.Name, ["kind"] = c.Kind,
+                                ["area_key"] = c.AreaId is int candidateId ? ObservationPolicies.AreaKey(map!.GetUniqueLoadID(), candidateId) : null })) };
+                        throw ReadContext.Error("region_unresolved", "Select one area or zone");
+                    }
+                    var match = matches[0];
+                    cells.AddRange(match.Cells);
+                    geometry["resolved_id"] = match.Id;
+                    geometry["resolved_area_key"] = match.AreaId is int areaId ? ObservationPolicies.AreaKey(map!.GetUniqueLoadID(), areaId) : null;
+                }
                 else { foreach (var c in map!.AllCells) { cells.Add(c); if ((cells.Count & 127) == 0) yield return 0; } }
             }
             if (actorRef != null && actorRef.Map != map) throw ReadContext.Error("invalid_arguments", "Actor and region map differ");
@@ -230,7 +248,7 @@ internal static class WorldObservation
             result["environment"] = environment.Result(true, threats, threatComplete);
             if (pathEnvironment != null) result["path_environment"] = pathEnvironment.Result(true, pathThreats!, threatComplete, "observed_path_cells");
             var areaCoverage = new JArray(); var footprintSet = new HashSet<IntVec3>(cells);
-            foreach (var area in map.areaManager.AllAreas) { int intersect = 0, total = 0; foreach (var c in area.ActiveCells) { total++; if (footprintSet.Contains(c)) intersect++; if ((total & 127) == 0) yield return 0; } if (intersect > 0) areaCoverage.Add(new JObject { ["kind"] = "area", ["id"] = area.GetUniqueLoadID(), ["name"] = area.Label, ["intersecting_cells"] = intersect, ["total_cells"] = total }); }
+            foreach (var area in map.areaManager.AllAreas) { int intersect = 0, total = 0; foreach (var c in area.ActiveCells) { total++; if (footprintSet.Contains(c)) intersect++; if ((total & 127) == 0) yield return 0; } if (intersect > 0) areaCoverage.Add(new JObject { ["kind"] = "area", ["id"] = area.GetUniqueLoadID(), ["area_key"] = ObservationPolicies.AreaKey(map.GetUniqueLoadID(), area.ID), ["name"] = area.Label, ["intersecting_cells"] = intersect, ["total_cells"] = total }); }
             foreach (var zone in map.zoneManager.AllZones) { int intersect = zone.Cells.Count(footprintSet.Contains); if (intersect > 0) areaCoverage.Add(new JObject { ["kind"] = "zone", ["id"] = zone.GetUniqueLoadID(), ["name"] = zone.label, ["intersecting_cells"] = intersect, ["total_cells"] = zone.Cells.Count }); yield return 0; }
             result["region"]!["area_zone_intersections"] = areaCoverage;
             result["object_state_scope"] = SpatialStatePolicy.Meaning;

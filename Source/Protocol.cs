@@ -19,6 +19,8 @@ public static class ProtocolMessageTypes
     public const string Heartbeat = "heartbeat";
     public const string QueryRequest = "query_request";
     public const string QueryResult = "query_result";
+    public const string WriteRequest = "write_request";
+    public const string WriteResult = "write_result";
     public const string ProtocolError = "protocol_error";
 }
 public static class ProtocolStatuses
@@ -156,6 +158,7 @@ public sealed class ProtocolPayload
     [DataMember(Name = "client_nonce", Order = 3, EmitDefaultValue = false)] public string? ClientNonce { get; set; }
     [DataMember(Name = "server_nonce", Order = 4, EmitDefaultValue = false)] public string? ServerNonce { get; set; }
     [DataMember(Name = "proof", Order = 5, EmitDefaultValue = false)] public string? Proof { get; set; }
+    [DataMember(Name = "mode", Order = 15, EmitDefaultValue = false)] public string? Mode { get; set; }
     [DataMember(Name = "operation", Order = 6, EmitDefaultValue = false)] public string? Operation { get; set; }
     [DataMember(Name = "arguments", Order = 12, EmitDefaultValue = false)] public JObject? Arguments { get; set; }
     [DataMember(Name = "issues", Order = 13, EmitDefaultValue = false)] public QueryIssue[]? Issues { get; set; }
@@ -328,7 +331,7 @@ public static class ProtocolCodec
     private const int CapabilitiesField = 1 << 2, ClientNonceField = 1 << 3;
     private const int ServerNonceField = 1 << 4, ProofField = 1 << 5, QueryField = 1 << 6;
     private const int StatusField = 1 << 7, DataField = 1 << 8, ErrorCodeField = 1 << 9;
-    private const int MessageField = 1 << 10, ReasonField = 1 << 11, ArgumentsField = 1 << 12, IssuesField = 1 << 13, ExecutionField = 1 << 14;
+    private const int MessageField = 1 << 10, ReasonField = 1 << 11, ArgumentsField = 1 << 12, IssuesField = 1 << 13, ExecutionField = 1 << 14, ModeField = 1 << 15;
     public static byte[] Serialize(ProtocolEnvelope envelope)
     {
         Validate(envelope);
@@ -500,6 +503,13 @@ public static class ProtocolCodec
                 Required(payload.Operation, "operation", 128);
                 if (payload.Arguments is null) throw Payload("arguments must be an object.");
                 break;
+            case ProtocolMessageTypes.WriteRequest:
+                ColonyWriteContract.ValidateRequest(payload.Mode, payload.Arguments);
+                break;
+            case ProtocolMessageTypes.WriteResult:
+                ValidateQueryResult(payload, envelope);
+                ColonyWriteContract.ValidateResult(payload);
+                break;
             case ProtocolMessageTypes.QueryResult:
                 ValidateQueryResult(payload, envelope);
                 break;
@@ -569,7 +579,7 @@ public static class ProtocolCodec
         Types(root, new[] { "v", "seq", "game_tick", "snapshot_sequence" }, JTokenType.Integer);
         Types(root, new[] { "type", "connection_epoch", "colony_id", "load_epoch", "request_id" }, JTokenType.String);
         if (root["payload"] is not JObject payload) throw Payload("payload must be an object.");
-        Types(payload, new[] { "operation", "status", "error_code", "message", "reason", "mod_version", "game_version", "client_nonce", "server_nonce", "proof" }, JTokenType.String);
+        Types(payload, new[] { "mode", "operation", "status", "error_code", "message", "reason", "mod_version", "game_version", "client_nonce", "server_nonce", "proof" }, JTokenType.String);
         Types(payload, new[] { "arguments", "data", "execution" }, JTokenType.Object);
         Types(payload, new[] { "issues", "capabilities" }, JTokenType.Array);
         if (payload["capabilities"] is JArray capabilities)
@@ -652,7 +662,7 @@ public static class ProtocolCodec
         type == ProtocolMessageTypes.Authenticate || type == ProtocolMessageTypes.Welcome ||
         type == ProtocolMessageTypes.SessionOpen || type == ProtocolMessageTypes.SessionStale ||
         type == ProtocolMessageTypes.Heartbeat || type == ProtocolMessageTypes.QueryRequest ||
-        type == ProtocolMessageTypes.QueryResult || type == ProtocolMessageTypes.ProtocolError;
+        type == ProtocolMessageTypes.QueryResult || type == ProtocolMessageTypes.WriteRequest || type == ProtocolMessageTypes.WriteResult || type == ProtocolMessageTypes.ProtocolError;
     private static int PresentFields(ProtocolPayload payload)
     {
         var fields = 0;
@@ -663,6 +673,7 @@ public static class ProtocolCodec
         if (payload.ServerNonce is not null) fields |= ServerNonceField;
         if (payload.Proof is not null) fields |= ProofField;
         if (payload.Operation is not null) fields |= QueryField;
+        if (payload.Mode is not null) fields |= ModeField;
         if (payload.Arguments is not null) fields |= ArgumentsField;
         if (payload.Issues is not null) fields |= IssuesField;
         if (payload.Execution is not null) fields |= ExecutionField;
@@ -682,6 +693,8 @@ public static class ProtocolCodec
         if (type == ProtocolMessageTypes.Welcome) return StatusField;
         if (type == ProtocolMessageTypes.SessionStale) return ReasonField;
         if (type == ProtocolMessageTypes.QueryRequest) return QueryField | ArgumentsField;
+        if (type == ProtocolMessageTypes.WriteRequest) return ModeField | ArgumentsField;
+        if (type == ProtocolMessageTypes.WriteResult) return StatusField | DataField | IssuesField | ErrorCodeField | MessageField;
         if (type == ProtocolMessageTypes.QueryResult)
             return StatusField | DataField | IssuesField | ExecutionField | ErrorCodeField | MessageField;
         if (type == ProtocolMessageTypes.ProtocolError)
@@ -718,12 +731,14 @@ public static class ProtocolCodec
     }
     private static bool NeedsSession(string type) =>
         type == ProtocolMessageTypes.SessionOpen || type == ProtocolMessageTypes.SessionStale ||
-        type == ProtocolMessageTypes.QueryRequest || type == ProtocolMessageTypes.QueryResult;
+        type == ProtocolMessageTypes.QueryRequest || type == ProtocolMessageTypes.QueryResult ||
+        type == ProtocolMessageTypes.WriteRequest || type == ProtocolMessageTypes.WriteResult;
     private static bool AllowsSession(string type) =>
         NeedsSession(type) || type == ProtocolMessageTypes.Heartbeat ||
         type == ProtocolMessageTypes.ProtocolError;
     private static bool NeedsRequestId(string type) =>
-        type == ProtocolMessageTypes.QueryRequest || type == ProtocolMessageTypes.QueryResult;
+        type == ProtocolMessageTypes.QueryRequest || type == ProtocolMessageTypes.QueryResult ||
+        type == ProtocolMessageTypes.WriteRequest || type == ProtocolMessageTypes.WriteResult;
     private static bool AllowsRequestId(string type) =>
         NeedsRequestId(type) || type == ProtocolMessageTypes.ProtocolError;
     private static void Required(string? value, string field, int maxLength)

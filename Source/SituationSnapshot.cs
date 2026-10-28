@@ -64,7 +64,12 @@ internal sealed class SituationSnapshot : FrameQueryOperation
         GameImplementation.RequireKnownBinary();
         map = GameWorldReferences.ResolveMap((string?)args["map"]);
         result["clock"] = new JObject { ["game_tick"] = startTick, ["absolute_tick"] = Find.TickManager.TicksAbs,
-            ["ticks_per_day"] = GenDate.TicksPerDay, ["source"] = "Verse.TickManager" };
+            ["ticks_per_day"] = GenDate.TicksPerDay, ["source"] = "Verse.TickManager",
+            ["paused"] = Find.TickManager.Paused, ["speed_paused"] = Find.TickManager.CurTimeSpeed == TimeSpeed.Paused,
+            ["force_paused"] = Find.TickManager.ForcePaused, ["windows_force_paused"] = Find.WindowStack.WindowsForcePause,
+            ["force_pause_window"] = Find.WindowStack.Windows.FirstOrDefault(w => w.forcePause)?.GetType().FullName,
+            ["automatic_pause_mode"] = Prefs.AutomaticPauseMode.ToString(),
+            ["pause_meaning"] = "paused is native Paused: speed_paused or force_paused. force_paused also covers long events, tile picking and gravship cutscenes besides force-pause windows. Letter auto-pause sets the speed to paused, so state alone cannot tell it from a user pause; a letter whose pauses_game is true paused the game on arrival." };
         result["map"] = new JObject { ["id"] = map.GetUniqueLoadID(), ["tile"] = map.Tile.ToString(), ["is_player_home"] = map.IsPlayerHome,
             ["biome"] = map.Biome?.defName, ["source"] = "Verse.Map" };
         foreach (var section in new[] { "conditions", "threats", "alerts", "quests", "events" }) {
@@ -185,6 +190,7 @@ internal sealed class SituationSnapshot : FrameQueryOperation
                     rows.Add(new JObject { ["id"] = letter?.GetUniqueLoadID() ?? message!.GetUniqueLoadID(), ["kind"] = letter != null ? "letter" : "message",
                         ["label"] = letter?.Label.ToString() ?? message!.text, ["description"] = (letter as ChoiceLetter)?.Text.ToString(),
                         ["def"] = letter?.def?.defName ?? message?.def?.defName, ["created_tick"] = item.CreatedTicksGame,
+                        ["auto_pause_mode"] = letter?.def?.pauseMode.ToString(), ["pauses_game"] = letter == null ? null : (JToken)ObservationPolicies.LetterPauses((int)Prefs.AutomaticPauseMode, (int)letter.def.pauseMode),
                         ["quest_id"] = quest?.GetUniqueLoadID(), ["quest_state"] = quest?.State.ToString(),
                         ["visible_letter"] = letter != null && Find.LetterStack.LettersListForReading.Contains(letter),
                         ["targets"] = SituationAlertObservations.Targets(letter?.lookTargets?.targets ?? message?.lookTargets?.targets),

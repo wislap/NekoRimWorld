@@ -415,7 +415,7 @@ public sealed class BridgeRuntime
         SetWorkerState(generation, BridgeConnectionState.Ready, "Bridge mutual authentication complete.");
         while (IsCurrentWorker(generation, cancellation) && ReadConfig().Generation == config.Generation)
         {
-            PumpIncoming(client, stream, epoch, ref receiveSequence, ref lastAuthenticatedInbound);
+            PumpIncoming(client, stream, epoch, ref receiveSequence, ref sendSequence, ref lastAuthenticatedInbound);
             long now = Stopwatch.GetTimestamp();
             if (ElapsedMilliseconds(lastAuthenticatedInbound, now) >= PeerHeartbeatTimeoutMilliseconds)
             {
@@ -495,7 +495,7 @@ public sealed class BridgeRuntime
         return ProtocolCodec.ReadFrame(stream, ProtocolCodec.MaxInboundFrameBytes, deadline);
     }
     private void PumpIncoming(TcpClient client, NetworkStream stream, string epoch, ref long lastSequence,
-                              ref long lastAuthenticatedInbound)
+                              ref long sendSequence, ref long lastAuthenticatedInbound)
     {
         Socket socket = client.Client;
         for (int received = 0; received < 32 && socket.Poll(0, SelectMode.SelectRead); received++)
@@ -512,6 +512,12 @@ public sealed class BridgeRuntime
             switch (message.Type)
             {
                 case ProtocolMessageTypes.Heartbeat:
+                    break;
+                case ProtocolMessageTypes.WriteRequest:
+                    ReadSession(Stopwatch.GetTimestamp(), out var writeSession, out _, out bool writeStale);
+                    var responseSession = writeSession ?? new SessionDescriptor(message.ColonyId, message.LoadEpoch, message.GameTick, message.SnapshotSequence);
+                    var response = ColonyWriteContract.UnavailableResult(message, responseSession, writeSession == null || writeStale);
+                    Write(stream, response, epoch, ref sendSequence);
                     break;
                 case ProtocolMessageTypes.QueryRequest:
                     if (!TryEnqueueCurrent(message, epoch, inbound, out bool queueFull) && queueFull)

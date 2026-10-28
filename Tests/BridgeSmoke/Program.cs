@@ -17,6 +17,7 @@ internal static class Program
     {
         try
         {
+            if (args.Length == 1 && args[0] == "--write-loopback") { ColonyWriteContractTests.Run(); WriteLoopback(); return 0; }
             if (args.Length == 2 && args[0] == "--export-native-behavior") { File.WriteAllText(args[1], ActionInspectionContract.Catalog().ToString()); return 0; }
             if (args.Length == 2 && args[0] == "--export-catalog") { QueryEngineTests.ExportCatalog(args[1]); return 0; }
             if (args.Length == 2 && args[0] == "--export-knowledge")
@@ -28,6 +29,7 @@ internal static class Program
             FrameQueryOperationTests.Run();
             SituationSnapshotContractTests.Run();
             ColonyReadContractTests.Run();
+            ColonyWriteContractTests.Run();
             SpatialRouteTests.Run();
             KnowledgeTests.Run();
             KnowledgeCompletenessTests.Run();
@@ -50,6 +52,7 @@ internal static class Program
             FramingRejectsOversizedInput();
             FramingHonorsAbsoluteDeadline();
             MutualAuthenticationLoopback();
+            WriteLoopback();
             Console.WriteLine("Bridge smoke tests passed.");
             return 0;
         }
@@ -346,6 +349,64 @@ internal static class Program
         listener.Stop();
         runtime.Stop();
         if (serverFailure is not null) throw new InvalidOperationException("loopback server failed", serverFailure);
+    }
+
+    private static void WriteLoopback()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        var runtime = BridgeRuntime.Instance;
+        var done = new ManualResetEventSlim(false);
+        var session = new SessionDescriptor(Id('5'), Id('6'), 99, 0);
+        Exception? failure = null;
+        Thread? server = null;
+        try {
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            server = new Thread(() => {
+                try {
+                    using var client = listener.AcceptTcpClient();
+                    using var stream = client.GetStream();
+                    var hello = Read(stream); long last = hello.Sequence;
+                    var nonce = new string('b', ProtocolAuthentication.HexLength);
+                    ProtocolCodec.WriteFrame(stream, ProtocolEnvelope.Create(ProtocolMessageTypes.Challenge, hello.ConnectionEpoch, 0,
+                        new ProtocolPayload { ClientNonce = hello.Payload.ClientNonce, ServerNonce = nonce, Proof = ProtocolAuthentication.ComputeServerProof(Token, hello.ConnectionEpoch, hello.Payload.ClientNonce!, nonce) }));
+                    var auth = Read(stream); Require(auth.Sequence > last, "authentication sequence did not advance"); last = auth.Sequence;
+                    Require(ProtocolAuthentication.FixedTimeEquals(ProtocolAuthentication.ComputeClientProof(Token, hello.ConnectionEpoch, hello.Payload.ClientNonce!, nonce), auth.Payload.Proof), "authentication failed");
+                    ProtocolCodec.WriteFrame(stream, ProtocolEnvelope.Create(ProtocolMessageTypes.Welcome, hello.ConnectionEpoch, 1, new ProtocolPayload { Status = ProtocolStatuses.Ok }));
+                    ProtocolEnvelope incoming;
+                    do { incoming = Read(stream); Require(incoming.Sequence > last, "outbound sequence did not advance"); last = incoming.Sequence; } while (incoming.Type != ProtocolMessageTypes.SessionOpen);
+                    for (int i = 0; i < 300; i++)
+                        ProtocolCodec.WriteFrame(stream, ProtocolEnvelope.Create(ProtocolMessageTypes.QueryRequest, hello.ConnectionEpoch, i + 2,
+                            new ProtocolPayload { Operation = "colony_snapshot", Arguments = new JObject() }, session, (i + 1).ToString("x32")));
+                    var staleSession = new SessionDescriptor(session.ColonyId, Id('8'), session.GameTick, session.SnapshotSequence);
+                    var current = ProtocolEnvelope.Create(ProtocolMessageTypes.WriteRequest, hello.ConnectionEpoch, 302,
+                        new ProtocolPayload { Mode = "undo", Arguments = new JObject { ["token"] = "undo-1" } }, session, Id('a'));
+                    var stale = ProtocolEnvelope.Create(ProtocolMessageTypes.WriteRequest, hello.ConnectionEpoch, 303,
+                        new ProtocolPayload { Mode = "undo", Arguments = new JObject { ["token"] = "undo-1" } }, staleSession, Id('b'));
+                    ProtocolCodec.WriteFrame(stream, current); ProtocolCodec.WriteFrame(stream, stale);
+                    for (int i = 0; i < 2; i++) {
+                        do { incoming = Read(stream); Require(incoming.Sequence > last, "response sequence did not advance"); last = incoming.Sequence; } while (incoming.Type != ProtocolMessageTypes.WriteResult);
+                        Require(incoming.RequestId == (i == 0 ? current.RequestId : stale.RequestId), "write correlation failed");
+                        Require(incoming.Payload.Status == (i == 0 ? ProtocolStatuses.Unsupported : ProtocolStatuses.StaleSession), "wrong write status");
+                        Require(incoming.Payload.ErrorCode == (i == 0 ? "unsupported" : "stale_epoch"), "wrong write error");
+                    }
+                } catch (Exception e) { failure = e; }
+                finally { done.Set(); }
+            }) { IsBackground = true, Name = "NekoRimWorld.BridgeSmoke.WriteServer" };
+            server.Start();
+            runtime.Configure(true, port, Token, "0.1.0-dev", "1.6.4871", new[] { "query.execute.v2" });
+            runtime.AttachSession(session);
+            var deadline = DateTime.UtcNow.AddSeconds(15);
+            while (!done.IsSet && DateTime.UtcNow < deadline) { runtime.TouchSession(session.LoadEpoch, session.GameTick, session.SnapshotSequence); Thread.Sleep(10); }
+            Require(done.IsSet, "write loopback timed out");
+            if (failure != null) throw new InvalidOperationException("write loopback failed", failure);
+            int queued = 0; while (runtime.TryDequeueInbound(out _)) queued++;
+            Require(queued == 256, "query queue did not saturate before write responses: " + queued);
+        } finally {
+            listener.Stop(); runtime.Stop();
+            if (server != null) server.Join(TimeSpan.FromSeconds(6));
+            done.Dispose();
+        }
     }
 
     private static ProtocolEnvelope Read(Stream stream) =>

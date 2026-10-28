@@ -14,6 +14,21 @@ internal static class ResearchReadings
     // GetProgress and its IsFinished/ProgressReal callers insert missing keys.
     // Read the version-bound dictionaries instead, preserving native zero defaults.
     private static T State<T>(ResearchManager manager, string name) => (T)typeof(ResearchManager).GetField(name, Fields)!.GetValue(manager)!;
+    // Direct loaded references, avoiding ThingDef.AllRecipes and its lazy cache.
+    internal static bool FinishedReadOnly(ResearchProjectDef project) {
+        var values = State<Dictionary<ResearchProjectDef, float>>(Find.ResearchManager, project.baseCost > 0 ? "progress" : "anomalyKnowledge");
+        return ObservationPolicies.Progress(values, project) >= project.Cost;
+    }
+    internal static bool? RecipeAvailableReadOnly(RecipeDef recipe) {
+        var prerequisites = new[] { recipe.researchPrerequisite }.Where(p => p != null).Cast<ResearchProjectDef>().Concat(recipe.researchPrerequisites ?? new List<ResearchProjectDef>()).ToArray();
+        if (prerequisites.Any(p => !FinishedReadOnly(p))) return false;
+        foreach (var project in prerequisites) {
+            var values = State<Dictionary<ResearchProjectDef, float>>(Find.ResearchManager, project.baseCost > 0 ? "progress" : "anomalyKnowledge");
+            if (!values.ContainsKey(project)) return null;
+        }
+        return recipe.AvailableNow;
+    }
+    internal static bool UsesRecipe(ThingDef bench, RecipeDef recipe) => bench.recipes?.Contains(recipe) == true || recipe.recipeUsers?.Contains(bench) == true;
     internal static JObject Read(JObject args, SessionDescriptor session)
     {
         var aspects = ColonyReadContract.Aspects(args, "progress");
@@ -26,7 +41,7 @@ internal static class ResearchReadings
         var regular = State<ResearchProjectDef?>(manager, "currentProj"); if (regular != null) selected.Add(regular);
         var anomaly = State<List<ResearchManager.KnowledgeCategoryProject>?>(manager, "currentAnomalyKnowledgeProjects");
         if (anomaly != null) foreach (var project in anomaly) if (project.project != null) selected.Add(project.project);
-        float Progress(ResearchProjectDef project) => (project.baseCost > 0 ? progress : knowledge).TryGetValue(project, out var value) ? value : 0;
+        float Progress(ResearchProjectDef project) => ObservationPolicies.Progress(project.baseCost > 0 ? progress : knowledge, project);
         bool Finished(ResearchProjectDef project) => Progress(project) >= project.Cost;
         bool Visible(ResearchProjectDef project) => Finished(project) || !ModsConfig.AnomalyActive || !Find.EntityCodex.Hidden(project);
         var itemNames = ColonyReadContract.Texts(args, "items");
@@ -46,7 +61,7 @@ internal static class ResearchReadings
             foreach (var recipe in DefDatabase<RecipeDef>.AllDefsListForReading.Where(r => r.products?.Any(p => p.thingDef == item) == true))
             {
                 // Read direct loaded references, avoiding ThingDef.AllRecipes and its lazy cache.
-                var benches = DefDatabase<ThingDef>.AllDefsListForReading.Where(d => d.recipes?.Contains(recipe) == true || recipe.recipeUsers?.Contains(d) == true).ToArray();
+                var benches = DefDatabase<ThingDef>.AllDefsListForReading.Where(d => UsesRecipe(d, recipe)).ToArray();
                 var research = new[] { recipe.researchPrerequisite }.Where(r => r != null).Cast<ResearchProjectDef>()
                     .Concat(recipe.researchPrerequisites ?? new List<ResearchProjectDef>())
                     .Concat(benches.SelectMany(b => b.researchPrerequisites ?? new List<ResearchProjectDef>())).Where(Visible).Distinct().ToArray();

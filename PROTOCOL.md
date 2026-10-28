@@ -99,3 +99,63 @@ The shared frame-operation lifecycle provides world invalidation, lifetime and
 release. A synchronous domain/path calculation cannot be hard-preempted. Software
 and provider-free pipeline checks establish contracts and wiring, not content
 quality or generalized cost improvement. No user assembly deployment is implied.
+
+## Extended pause and work fields (v3.3 B1)
+
+`SituationSnapshot` clock now includes pause source fields: `paused` (native
+Paused: speed_paused or force_paused), `speed_paused` (CurTimeSpeed==Paused),
+`force_paused` (ForcePaused: windows/events/tile-picker/cutscenes),
+`windows_force_paused` (WindowStack.WindowsForcePause), `automatic_pause_mode`
+(PrefsData setting), and optional `force_pause_window` (first forcePause window type).
+Letter auto-pause sets speed to paused; state alone cannot distinguish it from user pause.
+
+Event items now carry `auto_pause_mode` (LetterDef.pauseMode enum string or null for
+messages) and `pauses_game` (boolean or null: whether this letter's pauseMode would
+trigger auto-pause given the current AutomaticPauseMode pref).
+
+Work facet includes `use_work_priorities` (Game.playSettings.useWorkPriorities) and
+meaning: when false, GetPriority returns 3 for humanlike pawns and priority writes
+have no effect.
+
+Production facet now includes per-bill `bill_id` (GetUniqueLoadID) and
+`recipe_available_now` (RecipeDef.AvailableNow), and for Building_WorkTable owners
+`available_recipes` (array of {recipe, research_prerequisites_met, available_now})
+listing loaded recipe/workbench associations with research gates evaluated.
+Native `AvailableNow` also evaluates ideology and faction gates. To avoid inserting
+missing research progress, it is called only when every prerequisite dictionary key
+exists; an incomplete prerequisite yields false, while an absent key whose zero
+progress still meets cost yields null (unknown).
+
+
+## Write contract staging (v3.3)
+
+`colony_write.v1` is a reserved contract identifier, not an advertised capability
+until a native executor and required transaction guarantees are implemented.
+Authenticated `write_request` uses `mode` and `arguments`, and carries the usual
+session and request identity. `dry_run` and `commit` carry a changeset directly;
+`undo` takes `token`, and `set_paused` takes `paused` and `role`. The current Mod
+responds with correlated `write_result`: `unsupported`, or `stale_session` with
+`stale_epoch` when the envelope session is stale. No operation is performed.
+The operation-specific target and value grammar remains for the native operation
+catalog; the staging parser validates only the common bounded structure.
+
+The work facet also exposes `allowed_area_key` as `{map_id, area_id}` using native
+integer `Area.ID`. The existing `allowed_area` remains the native load ID.
+
+The native `pauseMode` is an automatic-pause threshold, not a general negative-event
+classification. Core `NegativeEvent` and `PositiveEvent` share `AnyLetter`;
+the existing `def` identifies those exact definitions, and modded definitions
+remain unclassified. Messages have no letter pause threshold. The current
+preference describes eligibility now, not the historical cause of a pause.
+
+Successful wire results carry the game-port receipt directly in `data`: pause
+returns `{paused, role}`; undo can return `unknown_token`, `already_undone`, or
+`stale_epoch` with its current `load_epoch`. Conflict `last_writer` and `at_tick`
+may be null when provenance is unknown. These shapes do not imply a native
+executor or undo ledger exists yet.
+
+Preview rows contain exactly `op`, `object`, `field`, `expect`, and `value`;
+readback rows contain exactly `object`, `field`, and `value`. Values may be JSON
+null. Arrays may be empty: the wire contract does not assert how many physical
+fields a future executor expands from an operation, and the port already permits
+empty arrays. This is not a claim that any operation was executed.

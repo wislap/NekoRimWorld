@@ -224,6 +224,10 @@ internal sealed class WorldStateReader
             WorldPresentation.NullField(work, "queued_jobs", "not_applicable", "job_tracker_absent");
             WorldPresentation.NullField(work, "allowed_area", "observed_none", "no_effective_area_restriction");
         }
+        if (facets["work"] is JObject writeWork && t is Pawn writePawn && writePawn.playerSettings != null && writePawn.MapHeld != null) {
+            var restricted = writePawn.playerSettings.AreaRestrictionInPawnCurrentMap;
+            writeWork["write_allowed_area_key"] = new JObject { ["map_id"] = writePawn.MapHeld.GetUniqueLoadID(), ["area_id"] = restricted == null ? JValue.CreateNull() : new JValue(restricted.ID) };
+        }
         if (detailLimit.HasValue) {
             if (facets["pawn"] is JObject pawnFacts) WorldPresentation.LimitRows(pawnFacts, detailLimit.Value, "skills", "capacities");
             if (facets["work"] is JObject workFacts) WorldPresentation.LimitRows(workFacts, detailLimit.Value, "work_types");

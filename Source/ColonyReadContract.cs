@@ -10,7 +10,7 @@ namespace Neko.RimWorld;
 internal static class ColonyReadContract
 {
     internal const string Version = "colony_state.v1";
-    internal static readonly string[] Operations = { "inspect_planet", "inspect_factions", "inspect_quests", "inspect_trade", "inspect_resources", "inspect_research", "evaluate_journey", "evaluate_trade" };
+    internal static readonly string[] Operations = { "inspect_planet", "inspect_factions", "inspect_quests", "inspect_trade", "inspect_resources", "inspect_research", "inspect_storage", "evaluate_journey", "evaluate_trade" };
     internal static JObject Catalog() => new() {
         ["version"] = Version,
         ["operations"] = new JArray(Operations.Select(op => new JObject { ["operation"] = op, ["parameters"] = Parameters(op) }))
@@ -45,6 +45,7 @@ internal static class ColonyReadContract
                 properties["near"] = new JObject { ["type"] = "object" };
             }
             if (op == "inspect_research") properties["items"] = Strings();
+            if (op == "inspect_storage") { properties["map"] = new JObject { ["type"] = "string", ["minLength"] = 1 }; properties["items"] = Strings(); required.Add("ids"); required.Add("map"); }
             if (op == "inspect_resources") { properties["map"] = new JObject { ["type"] = "string" }; properties["items"] = Strings(); required.Add("items"); }
             if (op == "inspect_trade") { properties["map"] = new JObject { ["type"] = "string" }; properties["items"] = Strings(); }
         }

@@ -10,7 +10,9 @@ internal static class ColonyReadContractTests
     internal static void Run()
     {
         var catalog = ColonyReadContract.Catalog();
-        Require((string?)catalog["version"] == "colony_state.v1" && ((JArray)catalog["operations"]!).Count == 8, "Complete additive native business catalog");
+        Require((string?)catalog["version"] == "colony_state.v1" && ((JArray)catalog["operations"]!).Count == 9, "Complete additive native business catalog");
+        ColonyReadContract.Validate("inspect_storage", JObject.Parse("{ids:['storage'],map:'map',items:['Steel']}"));
+        Invalid(() => ColonyReadContract.Validate("inspect_storage", JObject.Parse("{ids:['storage']}")), "invalid_arguments");
         Require(catalog["tools"] == null, "Native operations do not become extra public tools");
         ColonyReadContract.Validate("inspect_research", JObject.Parse("{\"names\":[\"MicroelectronicsBasics\"],\"aspects\":[\"progress\",\"requirements\"]}"));
         ColonyReadContract.Validate("evaluate_journey", JObject.Parse("{\"caravan\":{\"name\":\"采购队\"},\"destinations\":[{\"name\":\"据点\"}]}"));

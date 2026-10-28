@@ -20,6 +20,7 @@ internal static class Program
             if (args.Length == 1 && args[0] == "--write-loopback") { ColonyWriteContractTests.Run(); WriteLoopback(); return 0; }
             if (args.Length == 2 && args[0] == "--export-native-behavior") { File.WriteAllText(args[1], ActionInspectionContract.Catalog().ToString()); return 0; }
             if (args.Length == 2 && args[0] == "--export-catalog") { QueryEngineTests.ExportCatalog(args[1]); return 0; }
+            if (args.Length == 2 && args[0] == "--export-write-catalog") { File.WriteAllText(args[1], VerseWriteFieldResolver.DescribeCatalog().ToString() + "\n"); return 0; }
             if (args.Length == 2 && args[0] == "--export-knowledge")
             {
                 KnowledgePublicationFixture.Export(args[1]);
@@ -32,6 +33,7 @@ internal static class Program
             SituationSnapshotContractTests.Run();
             ColonyReadContractTests.Run();
             ColonyWriteContractTests.Run();
+            ColonyWriteCatalogTests.Run();
             SpatialRouteTests.Run();
             KnowledgeTests.Run();
             KnowledgeCompletenessTests.Run();

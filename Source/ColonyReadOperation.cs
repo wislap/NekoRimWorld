@@ -32,7 +32,7 @@ internal sealed class ColonyReadOperation : FrameQueryOperation
         }
         result = operation switch {
             "inspect_factions" => FactionReadings.Read(args, session), "inspect_quests" => QuestReadings.Read(args, session),
-            "inspect_research" => ResearchReadings.Read(args, session), "inspect_planet" => PlanetReadings.Read(args, session),
+            "inspect_research" => ResearchReadings.Read(args, session), "inspect_storage" => StorageReadings.Read(args), "inspect_planet" => PlanetReadings.Read(args, session),
             "inspect_trade" => TradeReadings.Read(args, session), "evaluate_journey" => JourneyEvaluation.Read(args, session),
             "evaluate_trade" => TradeReadings.Evaluate(args, session), _ => throw ReadContext.Error("invalid_arguments", "Unknown colony read.")
         };

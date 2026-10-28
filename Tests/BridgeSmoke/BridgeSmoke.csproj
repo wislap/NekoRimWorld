@@ -43,6 +43,8 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Compile Include="../../Source/ObservationPolicies.cs" Link="ObservationPolicies.cs" />
     <Compile Include="../../Source/ColonyWriteContract.cs" Link="ColonyWriteContract.cs" />
+    <Compile Include="../../Source/VerseWriteCatalog.cs" Link="VerseWriteCatalog.cs" />
+    <None Include="../fixtures/colony-write-v1/catalog.json" Link="colony-write-v1/catalog.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="..\..\Source\Protocol.cs" Link="Protocol.cs" />
     <Compile Include="..\..\Source\BridgeRuntime.cs" Link="BridgeRuntime.cs" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472"

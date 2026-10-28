@@ -17,6 +17,7 @@ public sealed class NekoRimWorldMod : Mod
         "native_behavior.v1",
         "situation_snapshot.v1",
         "colony_state.v1",
+        "colony_write.transactions.v1",
     };
 
     private readonly NekoRimWorldSettings settings;

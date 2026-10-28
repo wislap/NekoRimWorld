@@ -10,7 +10,7 @@ on loopback. The Mod is the client; Python is the listener.
 
 Mutual authentication uses hello/challenge/authenticate/welcome and HMAC-SHA256
 over connection epoch and nonces in the neko-rimworld-bridge/v2 domain. Hello
-advertises query.execute.v2, native_behavior.v1, situation_snapshot.v1 and colony_state.v1;
+advertises query.execute.v2, native_behavior.v1, situation_snapshot.v1, colony_state.v1 and colony_write.transactions.v1;
 the query catalog carries
 the detailed public and world contract versions.
 
@@ -129,20 +129,28 @@ progress still meets cost yields null (unknown).
 
 ## Write contract staging (v3.3)
 
-`colony_write.v1` is a reserved contract identifier, not an advertised capability
-until a native executor and required transaction guarantees are implemented.
+`colony_write.transactions.v1` advertises the dry_run, commit and undo subset of
+`colony_write.v1`. It does not advertise set_paused or event support. Native
+`query_catalog.colony_write` describes the registered operations and evidence
+extraction, with `catalog_id` as SHA-256 of its compact JSON before that field is
+added. The existing public query schema_id is unchanged. Query-only engines do
+not advertise the native write catalog.
 Authenticated `write_request` uses `mode` and `arguments`, and carries the usual
 session and request identity. `dry_run` and `commit` carry a changeset directly;
 `undo` takes `token`, and `set_paused` takes `paused` and `role`. A current
 game session with a valid ledger accepts the first three modes through the
 authenticated queue as a staged interface; `set_paused` remains unsupported.
-The normal plugin does not send writes because HELLO does not advertise this
-capability. Stale sessions are rejected and a full queue returns `busy`.
+The read-only frontend does not register write tools. Stale sessions are rejected and a full queue returns `busy`.
 The operation-specific target and value grammar remains for the native operation
 catalog; the staging parser validates only the common bounded structure.
 
 The work facet also exposes `allowed_area_key` as `{map_id, area_id}` using native
 integer `Area.ID`. The existing `allowed_area` remains the native load ID.
+`write_allowed_area_key` reads the raw restriction used by writes and is absent
+when player settings or map are unavailable. `inspect_research.current_regular_project`
+is an explicit nullable ordinary project ID. `inspect_storage` selects one player
+storage by ID and map and reads its priority and requested definition acceptance;
+missing definitions or unavailable targets are errors, not negative observations.
 
 The native `pauseMode` is an automatic-pause threshold, not a general negative-event
 classification. Core `NegativeEvent` and `PositiveEvent` share `AnyLetter`;

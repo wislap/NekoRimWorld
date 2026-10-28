@@ -8,7 +8,7 @@ using Verse;
 namespace Neko.RimWorld;
 
 // Native field directory used by the save-scoped transaction coordinator.
-internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
+internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver
 {
     private readonly IGameData data;
     private static bool Official(Def def)
@@ -20,29 +20,6 @@ internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
     }
 
     internal VerseWriteFieldResolver(IGameData data) { this.data = data; }
-    // Each entry is independently resolved and validated; the transaction engine
-    // has no operation-specific branches.
-    private static readonly IReadOnlyDictionary<string, Func<VerseWriteFieldResolver, JObject, IReadOnlyList<ResolvedWriteField>>> Catalog =
-        new Dictionary<string, Func<VerseWriteFieldResolver, JObject, IReadOnlyList<ResolvedWriteField>>>(StringComparer.Ordinal) {
-            ["set_work_priority"] = (r, o) => One(r.ResolveWorkPriority(o), o),
-            ["set_medical_care"] = (r, o) => One(r.ResolveMedical(o), o),
-            ["set_allowed_area"] = (r, o) => One(r.ResolveArea(o), o),
-            ["set_research"] = (r, o) => One(r.ResolveResearch(o), o),
-            ["set_forbidden"] = (r, o) => One(r.ResolveForbidden(o), o),
-            ["set_bill"] = (r, o) => r.ResolveBillFields(o),
-            ["set_storage_priority"] = (r, o) => One(r.ResolveStorage(o, "set_storage_priority"), o),
-            ["set_storage_allow"] = (r, o) => One(r.ResolveStorage(o, "set_storage_allow"), o),
-        };
-    public IReadOnlyList<ResolvedWriteField> Resolve(JObject operation)
-    {
-        var kind = (string?)operation["op"];
-        if (kind == null || !Catalog.TryGetValue(kind, out var resolve)) throw new ArgumentException("Unsupported write operation.");
-        return resolve(this, operation);
-    }
-
-    private static IReadOnlyList<ResolvedWriteField> One(IPreparedWriteField field, JObject operation) =>
-        new[] { new ResolvedWriteField(field, operation["expect"]!, operation["value"]!) };
-
     private IReadOnlyList<ResolvedWriteField> ResolveBillFields(JObject operation)
     {
         if (operation["value"] is not JObject values || operation["expect"] is not JObject expected ||
@@ -157,11 +134,11 @@ internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
     private IPreparedWriteField ResolveStorage(JObject operation, string kind)
     {
         var id = (string?)operation["storage"];
-        if (string.IsNullOrWhiteSpace(id) || operation.Properties().Any(p => p.Name != "op" && p.Name != "storage" && p.Name != "item" && p.Name != "expect" && p.Name != "value" && p.Name != "evidence")) throw new ArgumentException("Invalid storage target.");
-        var thing = Find.Maps.SelectMany(m => m.listerThings.AllThings).SingleOrDefault(t => t.GetUniqueLoadID() == id);
-        var zone = Find.Maps.SelectMany(m => m.zoneManager.AllZones).OfType<Zone_Stockpile>().SingleOrDefault(z => z.GetUniqueLoadID() == id);
-        ISlotGroupParent? storage = thing is ISlotGroupParent building && thing.Faction == Faction.OfPlayer ? building : zone;
-        if (storage == null) throw new ArgumentException("Target is not player storage.");
+        if (string.IsNullOrWhiteSpace(id) || operation.Properties().Any(p => p.Name != "op" && p.Name != "storage" && p.Name != "map" && p.Name != "item" && p.Name != "expect" && p.Name != "value" && p.Name != "evidence")) throw new ArgumentException("Invalid storage target.");
+        var mapId = (string?)operation["map"];
+        if (operation["map"] != null && string.IsNullOrWhiteSpace(mapId)) throw new ArgumentException("Invalid storage map.");
+        var target = StorageReadings.Resolve(id!, mapId);
+        var storage = target.storage; var thing = target.thing; var zone = target.zone;
         var settings = storage.GetStoreSettings() ?? throw new ArgumentException("Storage settings unavailable.");
         Func<bool> valid = () => thing != null ? !thing.Destroyed : zone != null && zone.Map != null && zone.Map.zoneManager.AllZones.Contains(zone);
         if (kind == "set_storage_priority") {
@@ -221,13 +198,14 @@ internal sealed class VerseWriteFieldResolver : IWriteFieldResolver
     private IPreparedWriteField ResolveBill(JObject operation)
     {
         var id = (string?)operation["bill"];
-        if (string.IsNullOrWhiteSpace(id) || operation.Properties().Any(p => p.Name != "op" && p.Name != "bill" && p.Name != "expect" && p.Name != "value" && p.Name != "evidence")) throw new ArgumentException("Invalid bill target.");
+        if (string.IsNullOrWhiteSpace(id) || operation.Properties().Any(p => p.Name != "op" && p.Name != "bill" && p.Name != "worktable" && p.Name != "expect" && p.Name != "value" && p.Name != "evidence")) throw new ArgumentException("Invalid bill target.");
         if (operation["value"] is not JObject value || !value.HasValues || value.Properties().Any(p => p.Name != "suspended" && p.Name != "repeat_mode" && p.Name != "repeat_count" && p.Name != "target_count")) throw new ArgumentException("Invalid bill fields.");
         if (operation["expect"] is not JObject expect || !expect.Properties().Select(p => p.Name).OrderBy(x => x).SequenceEqual(value.Properties().Select(p => p.Name).OrderBy(x => x))) throw new ArgumentException("Bill fields must match expected fields.");
         var pair = Find.Maps.SelectMany(m => m.listerBuildings.allBuildingsColonist).OfType<Building_WorkTable>()
             .SelectMany(table => table.BillStack.Bills.OfType<Bill_Production>().Select(bill => (table, bill)))
             .SingleOrDefault(x => x.bill.GetUniqueLoadID() == id);
         if (pair.bill == null) throw new ArgumentException("Production bill on a player worktable not found.");
+        if (operation["worktable"] != null && (string.IsNullOrWhiteSpace((string?)operation["worktable"]) || pair.table.GetUniqueLoadID() != (string?)operation["worktable"])) throw new ArgumentException("Bill worktable does not match.");
         if (!Official(pair.bill.recipe)) throw new ArgumentException("Only official recipes can be changed.");
         return new BillField(pair.table, pair.bill, value.Properties().Select(p => p.Name).ToArray());
     }

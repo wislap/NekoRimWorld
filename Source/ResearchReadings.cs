@@ -156,6 +156,7 @@ internal static class ResearchReadings
             return row;
         });
         var result = ColonyReadContract.Page(args, rows, itemNames.Length > 0 ? "Research connected to selected products through direct loaded recipes/workbenches." : ColonyReadContract.Targeted(args) ? "Selected visible loaded research definitions and actual player research state." : "Current regular and knowledge-category projects; no project selected is an empty result.", session);
+        result["current_regular_project"] = regular == null ? JValue.CreateNull() : new JValue(regular.defName);
         if (itemNames.Length > 0) result["production_paths"] = productionPaths;
         return result;
     }

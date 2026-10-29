@@ -50,6 +50,37 @@ public sealed class BridgeRuntime
     private string[] capabilities = Array.Empty<string>();
     private long configGeneration;
     private string connectionEpoch = string.Empty;
+    private long eventCursor;
+    private bool eventsEnabled;
+    public string ReadyConnectionEpoch {
+        get {
+            lock (connectionGate) {
+                if (State != BridgeConnectionState.Ready) return string.Empty;
+                lock (sessionGate) {
+                    if (session == null || sessionStale || ElapsedMilliseconds(lastSessionTouch, Stopwatch.GetTimestamp()) >= SessionLeaseMilliseconds) return string.Empty;
+                    return connectionEpoch;
+                }
+            }
+        }
+    }
+    public bool EnableEvents(ProtocolEnvelope request, out bool firstSubscription) {
+        firstSubscription = false;
+        lock (connectionGate) {
+            if (State != BridgeConnectionState.Ready || request.ConnectionEpoch != connectionEpoch) return false;
+            lock (sessionGate) {
+                if (!IsSessionCurrent(request)) return false;
+                firstSubscription = !eventsEnabled; eventsEnabled = true; return true;
+            }
+        }
+    }
+    public bool EmitEvent(SessionDescriptor session, Newtonsoft.Json.Linq.JObject data) {
+        lock (connectionGate) {
+            if (State != BridgeConnectionState.Ready || string.IsNullOrEmpty(connectionEpoch) || !eventsEnabled) return false;
+            data["cursor"] = ++eventCursor;
+            var message = ProtocolEnvelope.Create(ProtocolMessageTypes.GameEvent, connectionEpoch, 0, new ProtocolPayload { Data = data }, session);
+            return EnqueueTelemetry(message);
+        }
+    }
     private SessionDescriptor? session;
     private bool nativeWriterReady;
     private long sessionGeneration;
@@ -216,8 +247,10 @@ public sealed class BridgeRuntime
         {
             throw new ArgumentException("A session requires colony_id and load_epoch.", nameof(descriptor));
         }
+        lock (connectionGate)
         lock (sessionGate)
         {
+            eventCursor = 0; eventsEnabled = false;
             // Clear while the old identity is still published. Producers use the
             // same lock for validate+enqueue, so a new-session item cannot be lost.
             inbound.Clear();
@@ -406,6 +439,7 @@ public sealed class BridgeRuntime
                 return;
             }
             connectionEpoch = epoch;
+            eventCursor = 0; eventsEnabled = false;
         }
         using NetworkStream stream = client.GetStream();
         long sendSequence = 0;
@@ -443,8 +477,8 @@ public sealed class BridgeRuntime
                       ref sendSequence);
                 nextHeartbeat = After(HeartbeatMilliseconds);
             }
-            Flush(stream, control, 32, epoch, ref sendSequence);
-            Flush(stream, telemetry, 8, epoch, ref sendSequence);
+            Flush(stream, control, 32, epoch, currentSession, ref sendSequence);
+            Flush(stream, telemetry, 8, epoch, currentSession, ref sendSequence);
             wake.WaitOne(PollMilliseconds);
         }
     }
@@ -520,14 +554,22 @@ public sealed class BridgeRuntime
                     ReadSession(Stopwatch.GetTimestamp(), out var writeSession, out _, out bool writeStale);
                     var responseSession = writeSession ?? new SessionDescriptor(message.ColonyId, message.LoadEpoch, message.GameTick, message.SnapshotSequence);
                     bool writerReady; lock (sessionGate) writerReady = nativeWriterReady;
-                    if (writeSession == null || writeStale || message.ColonyId != responseSession.ColonyId || message.LoadEpoch != responseSession.LoadEpoch || message.Payload.Mode == "set_paused" || !writerReady) {
+                    if (writeSession == null || writeStale || message.ColonyId != responseSession.ColonyId || message.LoadEpoch != responseSession.LoadEpoch || (message.Payload.Mode != "set_paused" && !writerReady)) {
                         Write(stream, ColonyWriteContract.UnavailableResult(message, responseSession, writeSession == null || writeStale), epoch, ref sendSequence);
                         break;
                     }
-                    if (!TryEnqueueCurrent(message, epoch, inbound, out bool writeQueueFull, true)) {
+                    if (!TryEnqueueCurrent(message, epoch, inbound, out bool writeQueueFull, message.Payload.Mode != "set_paused")) {
                         var payload = new ProtocolPayload { Status = writeQueueFull ? ProtocolStatuses.Busy : ProtocolStatuses.StaleSession,
                             ErrorCode = writeQueueFull ? "busy" : "stale_epoch", Message = writeQueueFull ? "The game request queue is full." : "The requested colony load is no longer active.", Issues = Array.Empty<QueryIssue>() };
                         Write(stream, ProtocolEnvelope.Create(ProtocolMessageTypes.WriteResult, epoch, 0, payload, responseSession, message.RequestId), epoch, ref sendSequence);
+                    }
+                    break;
+                case ProtocolMessageTypes.PolicyRequest:
+                    ReadSession(Stopwatch.GetTimestamp(), out var policySession, out _, out bool policyStale);
+                    var policyResponseSession = policySession ?? new SessionDescriptor(message.ColonyId, message.LoadEpoch, message.GameTick, message.SnapshotSequence);
+                    bool policyQueueFull = false;
+                    if (policySession == null || policyStale || !TryEnqueueCurrent(message, epoch, inbound, out policyQueueFull)) {
+                        Write(stream, ProtocolEnvelope.Create(ProtocolMessageTypes.PolicyResult, epoch, 0, new ProtocolPayload { Status = policyQueueFull ? ProtocolStatuses.Busy : ProtocolStatuses.StaleSession, ErrorCode = policyQueueFull ? "busy" : "stale_epoch", Message = policyQueueFull ? "The game request queue is full." : "The policy session is no longer active.", Issues = Array.Empty<QueryIssue>() }, policyResponseSession, message.RequestId), epoch, ref sendSequence);
                     }
                     break;
                 case ProtocolMessageTypes.QueryRequest:
@@ -559,9 +601,11 @@ public sealed class BridgeRuntime
         }
         lastSequence = message.Sequence;
     }
-    private void Flush(NetworkStream stream, BoundedQueue queue, int limit, string epoch, ref long sequence)
+    private void Flush(NetworkStream stream, BoundedQueue queue, int limit, string epoch, SessionDescriptor? announcedSession, ref long sequence)
     {
-        for (int sent = 0; sent < limit && queue.TryDequeue(out ProtocolEnvelope message);)
+        // Leave messages for a newly attached session queued until its
+        // session_open has been sent, even if attachment races this flush.
+        for (int sent = 0; sent < limit && queue.TryDequeueAnnounced(announcedSession, out ProtocolEnvelope message);)
         {
             if (!IsCurrent(message, epoch))
             {
@@ -643,6 +687,7 @@ public sealed class BridgeRuntime
             return enqueued;
         }
     }
+    public bool IsActiveRequest(ProtocolEnvelope message) => State == BridgeConnectionState.Ready && IsCurrent(message);
     private bool IsCurrent(ProtocolEnvelope message)
     {
         string epoch;
@@ -870,6 +915,14 @@ public sealed class BridgeRuntime
                 }
                 items.Enqueue(message);
                 return true;
+            }
+        }
+        public bool TryDequeueAnnounced(SessionDescriptor? announced, out ProtocolEnvelope message) {
+            lock (gate) {
+                if (items.Count == 0) { message = null!; return false; }
+                var next = items.Peek();
+                if (!string.IsNullOrEmpty(next.LoadEpoch) && (announced == null || next.ColonyId != announced.ColonyId || next.LoadEpoch != announced.LoadEpoch)) { message = null!; return false; }
+                message = items.Dequeue(); return true;
             }
         }
         public bool TryDequeue(out ProtocolEnvelope message)

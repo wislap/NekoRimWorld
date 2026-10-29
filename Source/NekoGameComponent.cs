@@ -2,6 +2,9 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using Verse;
+using RimWorld;
+using Newtonsoft.Json.Linq;
+using System.Collections.Generic;
 
 namespace Neko.RimWorld;
 
@@ -27,6 +30,61 @@ public sealed class NekoGameComponent : GameComponent
     private readonly WriteTargetIndex writeTargets = new(WriteTargetReferences.Destroyed);
     private readonly WriteTargetReferences writeTargetReferences = new();
     private WriteCoordinator? writeCoordinator;
+    private string policyConnection = "";
+    private string sessionSource = "";
+    private long sessionStartTick;
+    private readonly PausePolicy pausePolicy = new();
+    private bool lastSpeedPaused;
+    private bool lastForcePaused;
+    private bool lastWindowPaused;
+    private long lastEventHeartbeat;
+
+    internal void ObserveUserPause(bool before) {
+        var tm = Find.TickManager; if (tm == null) return;
+        bool after = tm.CurTimeSpeed == TimeSpeed.Paused;
+        if (before != after) { pausePolicy.Observe(after ? "user" : "none"); lastSpeedPaused = after; EmitPause("user", tm); }
+    }
+    internal void ReceiveLetter(Letter letter) {
+        var tm = Find.TickManager; if (tm == null || letter?.def == null) return;
+        RefreshPolicy();
+        string level = letter.def.pauseMode.ToString();
+        bool matched = NativeEventHookSupport.Ready() && pausePolicy.Matches(letter.def.defName);
+        bool reflected = false;
+        if (matched && tm.CurTimeSpeed != TimeSpeed.Paused) { tm.TogglePaused(); if (tm.CurTimeSpeed == TimeSpeed.Paused) { reflected = true; pausePolicy.Observe("reflex"); lastSpeedPaused = true; EmitPause("reflex", tm); } }
+        Emit("letter", new JObject { ["letter_id"] = letter.GetUniqueLoadID(), ["def"] = letter.def.defName, ["auto_pause_mode"] = level, ["is_choice_letter"] = letter is ChoiceLetter, ["reflected"] = reflected });
+    }
+    internal void ObserveLetterPause(bool before) {
+        var tm = Find.TickManager; if (tm == null) return;
+        bool after = tm.CurTimeSpeed == TimeSpeed.Paused;
+        if (!before && after && !lastSpeedPaused) { pausePolicy.Observe("automatic_letter"); lastSpeedPaused = true; EmitPause("automatic_letter", tm); }
+    }
+    private void RefreshPolicy() { var connection = NekoRimWorldMod.Runtime.ReadyConnectionEpoch; if (policyConnection != connection) policyConnection = connection; pausePolicy.Bind(connection, colonyId, loadEpoch); }
+    private void Emit(string kind, JObject data) { data["kind"] = kind; NekoRimWorldMod.Runtime.EmitEvent(CurrentSession(), data); }
+    private void EmitPause(string source, TickManager tm) => Emit("pause_changed", new JObject {
+        ["paused"] = tm.Paused, ["speed_paused"] = tm.CurTimeSpeed == TimeSpeed.Paused,
+        ["force_paused"] = tm.ForcePaused, ["windows_force_paused"] = Find.WindowStack?.WindowsForcePause ?? false, ["source"] = source
+    });
+    private void ObservePause() {
+        var tm = Find.TickManager; if (tm == null) return;
+        bool speed = tm.CurTimeSpeed == TimeSpeed.Paused, force = tm.ForcePaused;
+        bool window = Find.WindowStack?.WindowsForcePause ?? false;
+        bool speedChanged = speed != lastSpeedPaused, windowChanged = window != lastWindowPaused;
+        if (speedChanged || force != lastForcePaused || windowChanged) {
+            if (speedChanged) pausePolicy.Observe(speed ? "unknown" : "none");
+            string source = PausePolicy.ObservedSource(speedChanged, windowChanged);
+            lastSpeedPaused = speed; lastForcePaused = force; lastWindowPaused = window; EmitPause(source, tm);
+        }
+    }
+    private QueryOutcome SetPaused(JObject args) {
+        if (!NativeEventHookSupport.Ready()) return QueryOutcome.Failure("unsupported", "Native pause hooks are unavailable.", ProtocolStatuses.Unsupported);
+        var tm = Find.TickManager; bool paused = (bool)args["paused"]!; string role = (string)args["role"]!;
+        if (tm == null || !UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing || LongEventHandler.AnyEventNowOrWaiting) return QueryOutcome.Failure("unavailable", "Pause control is unavailable.");
+        ObservePause(); bool before = tm.CurTimeSpeed == TimeSpeed.Paused;
+        if (!paused && tm.ForcePaused) return QueryOutcome.Failure("force_paused", "A native force pause is active.");
+        if (!paused && before && !pausePolicy.CanResume) return QueryOutcome.Failure("pause_owned", "A user or unknown pause cannot be released by an agent.");
+        if (before != paused) { tm.TogglePaused(); if ((tm.CurTimeSpeed == TimeSpeed.Paused) != paused) return QueryOutcome.Failure("pause_rejected", "Native pause control rejected the request."); pausePolicy.Observe(paused ? role : "none"); lastSpeedPaused = paused; EmitPause(role, tm); }
+        return new QueryOutcome { Data = new JObject { ["paused"] = paused, ["role"] = role } };
+    }
 
 
     // RimWorld discovers GameComponents with this exact constructor signature.
@@ -71,6 +129,10 @@ public sealed class NekoGameComponent : GameComponent
         }
 
         VerseKnowledge.Update();
+        NekoRimWorldMod.RefreshNativeCapabilities();
+        RefreshPolicy();
+        ObservePause();
+        if (Stopwatch.GetTimestamp() - lastEventHeartbeat >= Stopwatch.Frequency * 2) { lastEventHeartbeat = Stopwatch.GetTimestamp(); Emit("heartbeat", new JObject()); }
 
         var runtime = NekoRimWorldMod.Runtime;
         var tickManager = Find.TickManager;
@@ -80,6 +142,7 @@ public sealed class NekoGameComponent : GameComponent
             snapshotSequence);
 
         if (activeOperation != null) {
+            if (activeRequest!.Type == ProtocolMessageTypes.WriteRequest && !runtime.IsActiveRequest(activeRequest)) { activeOperation.Dispose(); activeOperation = null; activeRequest = null; activeSession = null; return; }
             if (activeOperation.Advance()) {
                 var completed = activeOperation;
                 var request = activeRequest!;
@@ -109,6 +172,8 @@ public sealed class NekoGameComponent : GameComponent
     private void StartSession(string source)
     {
         activeOperation?.Dispose(); activeOperation = null; activeRequest = null; activeSession = null;
+        sessionSource = source;
+        sessionStartTick = Find.TickManager?.TicksGame ?? 0;
         WorldObservation.Clear();
         SituationAlertObservations.Clear();
         VerseKnowledge.StartOnce();
@@ -119,6 +184,11 @@ public sealed class NekoGameComponent : GameComponent
         writeCoordinator = new WriteCoordinator(writeLedger, writeTargets);
         writeCoordinator.StartEpoch(loadEpoch);
         snapshotSequence = 0;
+        policyConnection = ""; pausePolicy.Bind("", colonyId, loadEpoch); pausePolicy.Observe("unknown");
+        lastSpeedPaused = Find.TickManager?.CurTimeSpeed == TimeSpeed.Paused;
+        lastForcePaused = Find.TickManager?.ForcePaused ?? false;
+        lastWindowPaused = Find.WindowStack?.WindowsForcePause ?? false;
+        lastEventHeartbeat = 0;
         NekoRimWorldMod.Runtime.AttachSession(CurrentSession(), writerReady: writeLedgerSave.Valid);
         Log.Message($"[N.E.K.O RimWorld] Game session attached ({source}).");
     }
@@ -131,7 +201,8 @@ public sealed class NekoGameComponent : GameComponent
         if (writeLedgerSave.Valid) writeTargets.Prune(writeLedger);
 
         bool writing = string.Equals(request.Type, ProtocolMessageTypes.WriteRequest, StringComparison.Ordinal);
-        if (!writing && !string.Equals(request.Type, ProtocolMessageTypes.QueryRequest, StringComparison.Ordinal))
+        bool policy = request.Type == ProtocolMessageTypes.PolicyRequest;
+        if (!writing && !policy && !string.Equals(request.Type, ProtocolMessageTypes.QueryRequest, StringComparison.Ordinal))
         {
             EnqueueProtocolError(
                 runtime,
@@ -156,6 +227,7 @@ public sealed class NekoGameComponent : GameComponent
         if (!string.Equals(request.ColonyId, colonyId, StringComparison.Ordinal) ||
             !string.Equals(request.LoadEpoch, loadEpoch, StringComparison.Ordinal))
         {
+            if (policy) { runtime.EnqueueControl(ProtocolEnvelope.Create(ProtocolMessageTypes.PolicyResult, request.ConnectionEpoch, 0, new ProtocolPayload { Status = ProtocolStatuses.StaleSession, ErrorCode = "stale_epoch", Message = "The requested colony load is no longer active.", Issues = Array.Empty<QueryIssue>() }, session, request.RequestId)); return; }
             if (writing) {
                 runtime.EnqueueControl(ColonyWriteContract.UnavailableResult(request, session, true));
                 return;
@@ -171,8 +243,23 @@ public sealed class NekoGameComponent : GameComponent
             return;
         }
 
+        if (policy) {
+            if (!NativeEventHookSupport.Ready()) {
+                runtime.EnqueueControl(ProtocolEnvelope.Create(ProtocolMessageTypes.PolicyResult, request.ConnectionEpoch, 0, new ProtocolPayload { Status = ProtocolStatuses.Unsupported, ErrorCode = "unsupported", Message = "Native event hooks are unavailable.", Issues = Array.Empty<QueryIssue>() }, session, request.RequestId)); return;
+            }
+            RefreshPolicy();
+            if (policyConnection != request.ConnectionEpoch || !runtime.EnableEvents(request, out bool firstSubscription)) return;
+            if (firstSubscription) Emit("session_snapshot", new JObject { ["origin"] = sessionSource, ["start_tick"] = sessionStartTick });
+            pausePolicy.Set(((JArray)request.Payload.Arguments!["pause_on_letter_defs"]!).Values<string>()!);
+            var data = (JObject)request.Payload.Arguments.DeepClone();
+            Emit("policy_changed", (JObject)data.DeepClone());
+            runtime.EnqueueControl(ProtocolEnvelope.Create(ProtocolMessageTypes.PolicyResult, request.ConnectionEpoch, 0, new ProtocolPayload { Status = ProtocolStatuses.Ok, Data = data, Issues = Array.Empty<QueryIssue>() }, session, request.RequestId)); return;
+        }
         var next = checked(snapshotSequence + 1);
         var sampledSession = new SessionDescriptor(colonyId, loadEpoch, session.GameTick, next);
+        if (writing && request.Payload.Mode == "set_paused") {
+            Publish(runtime, request, sampledSession, SetPaused(request.Payload.Arguments!)); return;
+        }
         if (writing) {
             var args = (Newtonsoft.Json.Linq.JObject)request.Payload.Arguments!.DeepClone();
             var mode = request.Payload.Mode!;
@@ -222,6 +309,8 @@ public sealed class NekoGameComponent : GameComponent
             }
         } else response = QueryResultDelivery.Build(request, sampledSession, outcome);
         runtime.EnqueueControl(response);
+        if (request.Type == ProtocolMessageTypes.WriteRequest && request.Payload.Mode != "set_paused" && !outcome.IsReplay && outcome.Status == ProtocolStatuses.Ok && (string?)outcome.Data?["status"] is "committed" or "undone")
+            Emit("write", new JObject { ["mode"] = request.Payload.Mode, ["request_id"] = request.RequestId, ["receipt"] = outcome.Data!.DeepClone() });
     }
 
     private static void EnqueueProtocolError(

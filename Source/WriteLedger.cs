@@ -94,7 +94,10 @@ internal sealed class WriteCoordinator
         if (mode != "commit" && mode != "dry_run") return QueryOutcome.Failure("unsupported", "Writing mode is unavailable.", ProtocolStatuses.Unsupported);
         if ((string?)request["author"] != "planner") return QueryOutcome.Failure("invalid_author", "Only planner may submit a changeset.");
         var key = (string?)request["idempotency_key"] ?? "";
-        if (mode == "commit" && receipts.TryGetValue(key, out var receipt)) return JToken.DeepEquals(receipt.Request, request) ? Copy(receipt.Outcome) : QueryOutcome.Failure("idempotency_key_reused", "Idempotency key belongs to another request.");
+        if (mode == "commit" && receipts.TryGetValue(key, out var receipt)) {
+            if (!JToken.DeepEquals(receipt.Request, request)) return QueryOutcome.Failure("idempotency_key_reused", "Idempotency key belongs to another request.");
+            var replay = Copy(receipt.Outcome); replay.IsReplay = true; return replay;
+        }
         if (!ready()) return QueryOutcome.Failure("world_unavailable", "The game is not ready for a transaction.");
         PruneConfirmedDestroyed();
         QueryOutcome Complete(IReadOnlyList<AppliedWriteField> fields) {

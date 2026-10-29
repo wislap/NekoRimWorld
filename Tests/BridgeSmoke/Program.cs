@@ -34,6 +34,7 @@ internal static class Program
             SituationSnapshotContractTests.Run();
             ColonyReadContractTests.Run();
             ColonyWriteContractTests.Run();
+            EventContractTests.Run();
             ColonyWriteCatalogTests.Run();
             SpatialRouteTests.Run();
             KnowledgeTests.Run();
@@ -60,6 +61,7 @@ internal static class Program
             WriteLoopback();
             WriteLoopback(writerReady: true);
             StagedWriteLoopback();
+            EventLoopback();
             Console.WriteLine("Bridge smoke tests passed.");
             return 0;
         }
@@ -457,6 +459,56 @@ internal static class Program
             if (server != null) server.Join(TimeSpan.FromSeconds(6));
             done.Dispose();
         }
+    }
+
+    private static void EventLoopback()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        var runtime = BridgeRuntime.Instance;
+        var done = new ManualResetEventSlim(false);
+        var receivedRequest = new ManualResetEventSlim(false);
+        var receivedEvent = new ManualResetEventSlim(false);
+        var session = new SessionDescriptor(Id('5'), Id('6'), 99, 0);
+        var next = new SessionDescriptor(session.ColonyId, Id('7'), 100, 0);
+        Exception? failure = null;
+        Thread? server = null;
+        try {
+            listener.Start();
+            server = new Thread(() => {
+                try {
+                    using var client = listener.AcceptTcpClient(); using var stream = client.GetStream();
+                    var hello = Read(stream); var nonce = new string('b', ProtocolAuthentication.HexLength);
+                    ProtocolCodec.WriteFrame(stream, ProtocolEnvelope.Create(ProtocolMessageTypes.Challenge, hello.ConnectionEpoch, 0,
+                        new ProtocolPayload { ClientNonce = hello.Payload.ClientNonce, ServerNonce = nonce, Proof = ProtocolAuthentication.ComputeServerProof(Token, hello.ConnectionEpoch, hello.Payload.ClientNonce!, nonce) }));
+                    Read(stream);
+                    ProtocolCodec.WriteFrame(stream, ProtocolEnvelope.Create(ProtocolMessageTypes.Welcome, hello.ConnectionEpoch, 1, new ProtocolPayload { Status = ProtocolStatuses.Ok }));
+                    ProtocolEnvelope incoming; do { incoming = Read(stream); } while (incoming.Type != ProtocolMessageTypes.SessionOpen);
+                    var args = JObject.Parse("{'source':'frontdesk','pause_on_letter_defs':['ThreatBig']}");
+                    ProtocolCodec.WriteFrame(stream, ProtocolEnvelope.Create(ProtocolMessageTypes.PolicyRequest, hello.ConnectionEpoch, 2, new ProtocolPayload { Arguments = args }, session, Id('a')));
+                    receivedRequest.Set();
+                    do { incoming = Read(stream); } while (incoming.Type != ProtocolMessageTypes.GameEvent);
+                    Require((long?)incoming.Payload.Data!["cursor"] == 1, "first event cursor failed"); receivedEvent.Set();
+                    do { incoming = Read(stream); } while (incoming.Type != ProtocolMessageTypes.SessionOpen || incoming.LoadEpoch != next.LoadEpoch);
+                    do { incoming = Read(stream); if (incoming.Type == ProtocolMessageTypes.GameEvent && incoming.LoadEpoch == next.LoadEpoch) break; } while (true);
+                    Require((string?)incoming.Payload.Data!["kind"] == "session_snapshot" && (long?)incoming.Payload.Data["cursor"] == 1, "load event cursor or ordering failed");
+                } catch (Exception e) { failure = e; } finally { done.Set(); }
+            }) { IsBackground = true };
+            server.Start(); runtime.Configure(true, ((IPEndPoint)listener.LocalEndpoint).Port, Token, "test", "test", new[] { "colony_events.v1" }); runtime.AttachSession(session);
+            Require(receivedRequest.Wait(TimeSpan.FromSeconds(5)), "policy request not received");
+            var deadline = DateTime.UtcNow.AddSeconds(5); ProtocolEnvelope request = null!;
+            while (!runtime.TryDequeueInbound(out request) && DateTime.UtcNow < deadline) { runtime.TouchSession(session.LoadEpoch); Thread.Sleep(10); }
+            Require(request != null && request.Type == ProtocolMessageTypes.PolicyRequest, "policy request not queued");
+            Require(!runtime.EmitEvent(session, new JObject { ["kind"] = "heartbeat" }), "events enabled without subscription");
+            Require(runtime.EnableEvents(request, out _), "subscription rejected");
+            Require(runtime.EmitEvent(session, new JObject { ["kind"] = "heartbeat" }), "heartbeat not queued");
+            Require(receivedEvent.Wait(TimeSpan.FromSeconds(5)), "first event not delivered");
+            runtime.AttachSession(next);
+            Require(!runtime.EmitEvent(next, new JObject { ["kind"] = "heartbeat" }), "subscription survived epoch change");
+            var nextRequest = ProtocolEnvelope.Create(ProtocolMessageTypes.PolicyRequest, request.ConnectionEpoch, 0, new ProtocolPayload { Arguments = request.Payload.Arguments }, next, Id('b'));
+            Require(runtime.EnableEvents(nextRequest, out _), "new session subscription rejected");
+            Require(runtime.EmitEvent(next, new JObject { ["kind"] = "session_snapshot", ["origin"] = "loaded_game", ["start_tick"] = 100 }), "load event not queued");
+            Require(done.Wait(TimeSpan.FromSeconds(5)), "event loopback timed out"); if (failure != null) throw new InvalidOperationException("event loopback failed", failure);
+        } finally { listener.Stop(); runtime.Stop(); server?.Join(TimeSpan.FromSeconds(6)); done.Dispose(); receivedRequest.Dispose(); receivedEvent.Dispose(); }
     }
 
     private static ProtocolEnvelope Read(Stream stream) =>

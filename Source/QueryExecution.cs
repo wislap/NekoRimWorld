@@ -5,6 +5,7 @@ namespace Neko.RimWorld;
 
 internal sealed class QueryOutcome
 {
+    internal bool IsReplay { get; set; }
     public string Status { get; set; } = ProtocolStatuses.Ok;
     public JObject? Data { get; set; }
     public JObject? Execution { get; set; }

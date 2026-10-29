@@ -36,7 +36,8 @@ internal static class WriteLedgerTests {
         var receiptSession = WriteReceiptSession.AtTick(queuedSession, 42);
         Check(receiptSession.GameTick == (long)ledger.Find("a", "value")!["tick"]! && receiptSession.SnapshotSequence == 7 && receiptSession.LoadEpoch == queuedSession.LoadEpoch && queuedSession.GameTick == 41, "write receipt did not use execution tick");
         Check(a.Value == 3 && b.Value == 4 && ledger.Count == 2, "commit failed");
-        Check(JToken.DeepEquals(result.Data, Call("commit", request).Data) && a.Writes == 1 && b.Writes == 1, "duplicate wrote twice");
+        var replay = Call("commit", request);
+        Check(!result.IsReplay && replay.IsReplay && JToken.DeepEquals(result.Data, replay.Data) && a.Writes == 1 && b.Writes == 1, "duplicate wrote twice or lost replay identity");
         Check(JToken.DeepEquals(result.Data, coordinator.Execute("commit", request, resolver, () => "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", () => false, 44).Data), "cached receipt depends on world readiness");
         Check(Call("commit", Request("key", 3, 4)).ErrorCode == "idempotency_key_reused", "key reuse accepted");
         var copy = new WriteLedger(); copy.Load(ledger.Serialize()); Check(copy.Count == 2 && (int)copy.Find("a", "value")!["value"]! == 3, "ledger roundtrip");

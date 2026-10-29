@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.Serialization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -21,6 +22,9 @@ public static class ProtocolMessageTypes
     public const string QueryResult = "query_result";
     public const string WriteRequest = "write_request";
     public const string WriteResult = "write_result";
+    public const string PolicyRequest = "policy_request";
+    public const string PolicyResult = "policy_result";
+    public const string GameEvent = "game_event";
     public const string ProtocolError = "protocol_error";
 }
 public static class ProtocolStatuses
@@ -510,6 +514,16 @@ public static class ProtocolCodec
                 ValidateQueryResult(payload, envelope);
                 ColonyWriteContract.ValidateResult(payload);
                 break;
+            case ProtocolMessageTypes.PolicyRequest:
+                ValidatePolicy(payload.Arguments);
+                break;
+            case ProtocolMessageTypes.PolicyResult:
+                ValidateQueryResult(payload, envelope);
+                if (payload.Status == ProtocolStatuses.Ok) ValidatePolicy(payload.Data);
+                break;
+            case ProtocolMessageTypes.GameEvent:
+                if (payload.Data == null || payload.Data["cursor"]?.Type != JTokenType.Integer || (long)payload.Data["cursor"]! < 1 || payload.Data["kind"]?.Type != JTokenType.String || string.IsNullOrWhiteSpace((string?)payload.Data["kind"])) throw Payload("Invalid game event.");
+                break;
             case ProtocolMessageTypes.QueryResult:
                 ValidateQueryResult(payload, envelope);
                 break;
@@ -517,6 +531,14 @@ public static class ProtocolCodec
                 Required(payload.ErrorCode, "error_code", 128);
                 Required(payload.Message, "message", 2048);
                 break;
+        }
+    }
+    private static void ValidatePolicy(JObject? value)
+    {
+        if (value == null || value.Properties().Count() != 2 || (string?)value["source"] != "frontdesk" || value["pause_on_letter_defs"] is not JArray levels || levels.Count > 128) throw Payload("Invalid policy.");
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in levels) {
+            if (item.Type != JTokenType.String || (string.IsNullOrWhiteSpace((string?)item) || ((string)item!).Length > 128) || !seen.Add((string)item!)) throw Payload("Invalid letter definition.");
         }
     }
     private static void ValidateQueryResult(ProtocolPayload payload, ProtocolEnvelope envelope)
@@ -662,7 +684,7 @@ public static class ProtocolCodec
         type == ProtocolMessageTypes.Authenticate || type == ProtocolMessageTypes.Welcome ||
         type == ProtocolMessageTypes.SessionOpen || type == ProtocolMessageTypes.SessionStale ||
         type == ProtocolMessageTypes.Heartbeat || type == ProtocolMessageTypes.QueryRequest ||
-        type == ProtocolMessageTypes.QueryResult || type == ProtocolMessageTypes.WriteRequest || type == ProtocolMessageTypes.WriteResult || type == ProtocolMessageTypes.ProtocolError;
+        type == ProtocolMessageTypes.QueryResult || type == ProtocolMessageTypes.WriteRequest || type == ProtocolMessageTypes.WriteResult || type == ProtocolMessageTypes.PolicyRequest || type == ProtocolMessageTypes.PolicyResult || type == ProtocolMessageTypes.GameEvent || type == ProtocolMessageTypes.ProtocolError;
     private static int PresentFields(ProtocolPayload payload)
     {
         var fields = 0;
@@ -694,6 +716,9 @@ public static class ProtocolCodec
         if (type == ProtocolMessageTypes.SessionStale) return ReasonField;
         if (type == ProtocolMessageTypes.QueryRequest) return QueryField | ArgumentsField;
         if (type == ProtocolMessageTypes.WriteRequest) return ModeField | ArgumentsField;
+        if (type == ProtocolMessageTypes.PolicyRequest) return ArgumentsField;
+        if (type == ProtocolMessageTypes.PolicyResult) return StatusField | DataField | IssuesField | ErrorCodeField | MessageField;
+        if (type == ProtocolMessageTypes.GameEvent) return DataField;
         if (type == ProtocolMessageTypes.WriteResult) return StatusField | DataField | IssuesField | ErrorCodeField | MessageField;
         if (type == ProtocolMessageTypes.QueryResult)
             return StatusField | DataField | IssuesField | ExecutionField | ErrorCodeField | MessageField;
@@ -732,13 +757,13 @@ public static class ProtocolCodec
     private static bool NeedsSession(string type) =>
         type == ProtocolMessageTypes.SessionOpen || type == ProtocolMessageTypes.SessionStale ||
         type == ProtocolMessageTypes.QueryRequest || type == ProtocolMessageTypes.QueryResult ||
-        type == ProtocolMessageTypes.WriteRequest || type == ProtocolMessageTypes.WriteResult;
+        type == ProtocolMessageTypes.WriteRequest || type == ProtocolMessageTypes.WriteResult || type == ProtocolMessageTypes.PolicyRequest || type == ProtocolMessageTypes.PolicyResult || type == ProtocolMessageTypes.GameEvent;
     private static bool AllowsSession(string type) =>
         NeedsSession(type) || type == ProtocolMessageTypes.Heartbeat ||
         type == ProtocolMessageTypes.ProtocolError;
     private static bool NeedsRequestId(string type) =>
         type == ProtocolMessageTypes.QueryRequest || type == ProtocolMessageTypes.QueryResult ||
-        type == ProtocolMessageTypes.WriteRequest || type == ProtocolMessageTypes.WriteResult;
+        type == ProtocolMessageTypes.WriteRequest || type == ProtocolMessageTypes.WriteResult || type == ProtocolMessageTypes.PolicyRequest || type == ProtocolMessageTypes.PolicyResult;
     private static bool AllowsRequestId(string type) =>
         NeedsRequestId(type) || type == ProtocolMessageTypes.ProtocolError;
     private static void Required(string? value, string field, int maxLength)

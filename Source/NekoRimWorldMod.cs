@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using System.Linq;
 using HarmonyLib;
 using UnityEngine;
 using Verse;
@@ -20,6 +21,8 @@ public sealed class NekoRimWorldMod : Mod
         "colony_write.transactions.v1",
     };
 
+    private static NekoRimWorldMod? activeMod;
+    private bool hooksReady;
     private readonly NekoRimWorldSettings settings;
     private string portBuffer;
     private Vector2 settingsScrollPosition;
@@ -35,6 +38,8 @@ public sealed class NekoRimWorldMod : Mod
         portBuffer = settings.Port.ToString();
 
         new Harmony(PackageId).PatchAll(Assembly.GetExecutingAssembly());
+        activeMod = this;
+        hooksReady = NativeEventHookSupport.Ready();
         ApplyRuntimeConfiguration();
         Log.Message("[N.E.K.O RimWorld] Bridge mod loaded; enable and pair it in Mod Settings to connect.");
     }
@@ -102,6 +107,15 @@ public sealed class NekoRimWorldMod : Mod
         ApplyRuntimeConfiguration();
     }
 
+    internal static void RefreshNativeCapabilities() {
+        var mod = activeMod; if (mod == null) return;
+        bool ready = NativeEventHookSupport.Ready();
+        if (ready != mod.hooksReady) { mod.hooksReady = ready; mod.ApplyRuntimeConfiguration(); }
+    }
+
+    private string[] AdvertisedCapabilities() => hooksReady
+        ? Capabilities.Concat(new[] { "colony_events.v1", "colony_pause.v1" }).ToArray() : Capabilities;
+
     private void ApplyRuntimeConfiguration()
     {
         try
@@ -112,7 +126,7 @@ public sealed class NekoRimWorldMod : Mod
                 settings.PairingToken,
                 ModVersion,
                 global::RimWorld.VersionControl.CurrentVersionStringWithRev,
-                Capabilities);
+                AdvertisedCapabilities());
         }
         catch (Exception exception)
         {
@@ -124,7 +138,7 @@ public sealed class NekoRimWorldMod : Mod
                 string.Empty,
                 ModVersion,
                 global::RimWorld.VersionControl.CurrentVersionStringWithRev,
-                Capabilities);
+                AdvertisedCapabilities());
         }
     }
 

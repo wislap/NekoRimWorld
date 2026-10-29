@@ -13,6 +13,7 @@ internal sealed partial class VerseWriteFieldResolver
     private IPreparedWriteField ResolveArea(JObject o) => throw new NotSupportedException();
     private IPreparedWriteField ResolveResearch(JObject o) => throw new NotSupportedException();
     private IPreparedWriteField ResolveForbidden(JObject o) => throw new NotSupportedException();
+    private IPreparedWriteField ResolveProductionBill(JObject o) => throw new NotSupportedException();
     private IPreparedWriteField ResolveStorage(JObject o, string kind) => throw new NotSupportedException();
     private IReadOnlyList<ResolvedWriteField> ResolveBillFields(JObject o) => throw new NotSupportedException();
 }

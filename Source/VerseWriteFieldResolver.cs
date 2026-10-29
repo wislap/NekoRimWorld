@@ -210,7 +210,7 @@ internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver
         return new BillField(pair.table, pair.bill, value.Properties().Select(p => p.Name).ToArray());
     }
 
-    private sealed class BillField : IPreparedWriteField
+    private sealed class BillField : IPreparedWriteField, IWriteAggregateScope
     {
         private readonly Building_WorkTable table;
         private readonly Bill_Production bill;
@@ -220,6 +220,8 @@ internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver
         public bool IsDestroyed => bill.deleted || table.Destroyed;
         public object? NativeTarget => bill;
         public string Field => "bill:" + fields[0];
+        public string AggregateScope => table.GetUniqueLoadID();
+        public bool ChangesStructure => false;
         public bool MayChangeByGame => fields[0] == "repeat_count" || fields[0] == "suspended";
         public JToken Read() => fields[0] switch { "suspended" => new JValue(bill.suspended), "repeat_mode" => new JValue(bill.repeatMode.defName), "repeat_count" => new JValue(bill.repeatCount), "target_count" => new JValue(bill.targetCount), _ => throw new ArgumentException("Unknown bill field.") };
         public void Validate(JToken value) {

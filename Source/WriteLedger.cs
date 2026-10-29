@@ -67,7 +67,9 @@ internal sealed class WriteCoordinator
         internal UndoResolver(List<AppliedWriteField> fields) { this.fields = fields; }
         public IReadOnlyList<ResolvedWriteField> Resolve(JObject op) {
             var field = fields[(int)op["index"]!];
-            return new[] { new ResolvedWriteField(field.Field, field.Value, field.Original) };
+            var structural = field.Field as IPreparedStructuralWrite;
+            var target = structural != null ? structural.CreateUndo() : field.Field;
+            return new[] { new ResolvedWriteField(target, structural != null ? structural.UndoExpected() : field.Value, field.Original) };
         }
     }
     private readonly WriteLedger ledger;

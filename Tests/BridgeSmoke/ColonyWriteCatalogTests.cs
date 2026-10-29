@@ -13,7 +13,7 @@ internal static class ColonyWriteCatalogTests
         var id = (string?)catalog["catalog_id"]; catalog.Remove("catalog_id");
         if (id != GameQueryEngine.Hash(catalog.ToString(Newtonsoft.Json.Formatting.None))) throw new Exception("Write catalog hash differs.");
         var ops = (JArray)catalog["operations"]!;
-        if (ops.Count != 8 || ops.Select(o => (string?)o["op"]).Distinct().Count() != 8) throw new Exception("Write catalog operation list is invalid.");
+        if (ops.Count != 9 || ops.Select(o => (string?)o["op"]).Distinct().Count() != 9) throw new Exception("Write catalog operation list is invalid.");
         foreach (var op in ops) {
             var properties = (JObject)op["schema"]!["properties"]!;
             if (properties["expect"] != null || properties["evidence"] != null || properties["value"] == null || properties["op"] == null) throw new Exception("Model schema contains wrong fields.");

@@ -8,6 +8,7 @@ namespace Neko.RimWorld;
 public static class ColonyWriteContract
 {
     public const string Capability = "colony_write.v1";
+    private static bool Identifier(JToken? value) => value?.Type == JTokenType.String && value.Value<string>() is string text && !string.IsNullOrWhiteSpace(text) && text.Length <= 256;
     private static bool CanonicalEpoch(JToken? value) => value?.Type == JTokenType.String &&
         Guid.TryParseExact((string?)value, "N", out var parsed) && (string?)value == parsed.ToString("N");
     public static ProtocolEnvelope UnavailableResult(ProtocolEnvelope request, SessionDescriptor current, bool sessionUnavailable) {
@@ -80,7 +81,9 @@ public static class ColonyWriteContract
                 if (op["expect"] == null || op["value"] == null) Bad("operation needs expect and value.");
                 var targets = op.Properties().Where(p => p.Name != "op" && p.Name != "evidence" && p.Name != "expect" && p.Name != "value").ToArray();
                 if (!targets.Any(p => new[] { "pawn", "bill", "thing", "worktable", "storage", "research", "map" }.Contains(p.Name)) || targets.Any(p => p.Value.Type != JTokenType.String || string.IsNullOrWhiteSpace((string?)p.Value))) Bad("operation target must contain nonempty text fields.");
-                if (op["expect"] is JObject expected || op["value"] is JObject) {
+                if ((string?)op["op"] == "add_production_bill") {
+                    if (op.Properties().Count() != 5 || !Identifier(op["worktable"]) || op["expect"] is not JObject order || order.Properties().Count() != 1 || order["bill_ids"] is not JArray ids || ids.Any(id => !Identifier(id)) || ids.Select(id => id.Value<string>()).Distinct(StringComparer.Ordinal).Count() != ids.Count || op["value"] is not JObject recipe || recipe.Properties().Count() != 1 || !Identifier(recipe["recipe"])) Bad("Invalid production bill operation.");
+                } else if (op["expect"] is JObject || op["value"] is JObject) {
                     if (op["expect"] is not JObject e || op["value"] is not JObject v || !e.HasValues || !e.Properties().Select(p => p.Name).OrderBy(x => x).SequenceEqual(v.Properties().Select(p => p.Name).OrderBy(x => x))) Bad("expect and value object fields must match.");
                 }
                 if (op.Properties().Count() > 16) Bad("Too many operation fields.");

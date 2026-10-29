@@ -21,6 +21,22 @@ internal interface IPreparedWriteField
     void Restore(JToken original);
 }
 
+// Structural writes have a game-assigned result, rather than a requested field
+// value. Their undo adapter compares that result before removing the object.
+internal interface IPreparedStructuralWrite : IPreparedWriteField
+{
+    JToken AppliedValue();
+    JToken UndoExpected();
+    IPreparedWriteField CreateUndo();
+}
+
+// Reject structure changes that overlap any field of the same aggregate.
+internal interface IWriteAggregateScope
+{
+    string AggregateScope { get; }
+    bool ChangesStructure { get; }
+}
+
 internal sealed class ResolvedWriteField
 {
     internal ResolvedWriteField(IPreparedWriteField field, JToken expected, JToken value) { Field = field; Expected = expected; Value = value; }
@@ -71,6 +87,7 @@ internal sealed class AtomicWriteOperation : IFrameQueryOperation
             }
             if (request["ops"] is not JArray ops || ops.Count < 1 || ops.Count > 64) throw new ArgumentException("Expected 1-64 operations.");
             var keys = new HashSet<string>(StringComparer.Ordinal);
+            var aggregates = new Dictionary<string, bool>(StringComparer.Ordinal);
             for (var i = 0; i < ops.Count; i++) {
                 if (ops[i] is not JObject op || op["expect"] == null || op["value"] == null) throw new ArgumentException("Malformed operation.");
                 var fields = resolver.Resolve(op);
@@ -78,6 +95,11 @@ internal sealed class AtomicWriteOperation : IFrameQueryOperation
                 foreach (var resolved in fields) {
                     var field = resolved.Field;
                     if (!keys.Add(field.ObjectId + "\0" + field.Field)) throw new ArgumentException("Duplicate target field.");
+                    if (field is IWriteAggregateScope scoped) {
+                        if (aggregates.TryGetValue(scoped.AggregateScope, out var structural) && (structural || scoped.ChangesStructure))
+                            throw new ArgumentException("A structural change overlaps another operation on the same aggregate.");
+                        aggregates[scoped.AggregateScope] = scoped.ChangesStructure;
+                    }
                     var value = resolved.Value.DeepClone();
                     field.Validate(value);
                     var observed = field.Read().DeepClone();
@@ -91,11 +113,16 @@ internal sealed class AtomicWriteOperation : IFrameQueryOperation
             }
             if ((string?)request["load_epoch"] != currentEpoch()) throw new InvalidOperationException("The load epoch changed during validation.");
             var rows = new JArray();
-            foreach (var item in prepared) {
+            for (var i = 0; i < prepared.Count; i++) {
+                var item = prepared[i];
                 if (!dryRun) {
                     // Include the current field before Write: a setter may throw after mutation.
                     written.Add((item.Field, item.Original));
                     item.Field.Write(item.Value);
+                    if (item.Field is IPreparedStructuralWrite structural) {
+                        item.Value = structural.AppliedValue().DeepClone();
+                        prepared[i] = item;
+                    }
                 }
                 rows.Add(new JObject { ["op"] = item.Index, ["object"] = item.Field.ObjectId, ["field"] = item.Field.Field, ["expect"] = item.Original.DeepClone(), ["value"] = item.Value.DeepClone(), ["may_change_by_game"] = item.Field.MayChangeByGame });
             }

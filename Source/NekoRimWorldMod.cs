@@ -19,6 +19,7 @@ public sealed class NekoRimWorldMod : Mod
         "situation_snapshot.v1",
         "colony_state.v1",
         "colony_write.transactions.v1",
+        "colony_write.ledger_snapshot.v1",
     };
 
     private static NekoRimWorldMod? activeMod;

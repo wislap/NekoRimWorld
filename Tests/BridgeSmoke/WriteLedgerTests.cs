@@ -36,6 +36,19 @@ internal static class WriteLedgerTests {
         var receiptSession = WriteReceiptSession.AtTick(queuedSession, 42);
         Check(receiptSession.GameTick == (long)ledger.Find("a", "value")!["tick"]! && receiptSession.SnapshotSequence == 7 && receiptSession.LoadEpoch == queuedSession.LoadEpoch && queuedSession.GameTick == 41, "write receipt did not use execution tick");
         Check(a.Value == 3 && b.Value == 4 && ledger.Count == 2, "commit failed");
+        var snapshot = ledger.ReadSnapshot(true, targets, x => ((Probe)x).Destroyed, (id, field, target, value) => resolver.fields[id]);
+        Check((string?)snapshot["ledger_status"] == "valid" && (bool)snapshot["complete"]! && (int)snapshot["entry_count"]! == 2 && (string?)snapshot["entries"]![0]!["current_status"] == "observed" && (int)snapshot["entries"]![0]!["current_value"]! == 3 && a.Writes == 1, "snapshot read failed or mutated");
+        a.Destroyed = true;
+        snapshot = ledger.ReadSnapshot(true, targets, x => ((Probe)x).Destroyed, (id, field, target, value) => throw new Exception());
+        Check((string?)snapshot["entries"]![0]!["current_status"] == "destroyed" && (string?)snapshot["entries"]![1]!["current_status"] == "unresolved", "snapshot statuses incorrect");
+        a.Destroyed = false;
+        snapshot = ledger.ReadSnapshot(true, targets, x => false, (id, field, target, value) => null);
+        Check((string?)snapshot["entries"]![0]!["current_status"] == "unknown", "unknown field not distinguished");
+        snapshot = ledger.ReadSnapshot(false, targets, x => false, (id, field, target, value) => throw new Exception());
+        Check((string?)snapshot["ledger_status"] == "invalid" && !(bool)snapshot["complete"]! && (int)snapshot["entry_count"]! == 0 && !snapshot["entries"]!.HasValues, "invalid ledger exposed stale data");
+        var identities = WriteCoordinator.FieldIdentities(request, resolver);
+        Check((bool)identities["complete"]! && (int)identities["field_count"]! == 2 && identities["fields"]!.Count() == 2 && (string?)identities["fields"]![0]!["object"] == "a" && (int)identities["fields"]![1]!["op"]! == 1 && a.Writes == 1, "identity resolution failed or wrote");
+        Check((string?)coordinator.UndoFields(token)["status"] == "available" && (bool)coordinator.UndoFields(token)["complete"]! && (int)coordinator.UndoFields(token)["field_count"]! == 2 && coordinator.UndoFields(token)["fields"]!.Count() == 2 && (string?)coordinator.UndoFields("missing")["status"] == "unknown_token", "undo identities failed");
         var replay = Call("commit", request);
         Check(!result.IsReplay && replay.IsReplay && JToken.DeepEquals(result.Data, replay.Data) && a.Writes == 1 && b.Writes == 1, "duplicate wrote twice or lost replay identity");
         Check(JToken.DeepEquals(result.Data, coordinator.Execute("commit", request, resolver, () => "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", () => false, 44).Data), "cached receipt depends on world readiness");
@@ -60,7 +73,7 @@ internal static class WriteLedgerTests {
         Check(copy.Count == 1, "invalid ledger changed existing entries");
         b.Value = 99; var failedUndo = Call("undo", new JObject { ["token"] = token }); Check((string?)failedUndo.Data!["status"] == "conflict" && a.Value == 3 && b.Value == 99, "undo conflict changed fields");
         b.Value = 4; Check((string?)Call("undo", new JObject { ["token"] = token }).Data!["status"] == "undone" && a.Value == 1 && b.Value == 2, "undo failed");
-        Check((string?)Call("undo", new JObject { ["token"] = token }).Data!["status"] == "already_undone", "repeat undo accepted");
+        Check((string?)Call("undo", new JObject { ["token"] = token }).Data!["status"] == "already_undone" && (string?)coordinator.UndoFields(token)["status"] == "already_undone", "repeat undo accepted");
         Check((string?)Call("undo", new JObject { ["token"] = "missing" }).Data!["status"] == "unknown_token", "unknown token accepted");
         Check(ledger.Count == 2 && (int)ledger.Find("a", "value")!["value"]! == 1, "latest ledger value not updated");
         a.Destroyed = true; coordinator.PruneConfirmedDestroyed(); Check(ledger.Count == 1, "destroyed entry retained"); a.Destroyed = false;

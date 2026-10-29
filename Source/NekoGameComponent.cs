@@ -5,6 +5,7 @@ using Verse;
 using RimWorld;
 using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Neko.RimWorld;
 
@@ -198,7 +199,7 @@ public sealed class NekoGameComponent : GameComponent
         ProtocolEnvelope request)
     {
         var session = CurrentSession();
-        if (writeLedgerSave.Valid) writeTargets.Prune(writeLedger);
+        if (writeLedgerSave.Valid && request.Payload.Operation != "write_ledger_snapshot" && request.Payload.Operation != "write_field_identities" && request.Payload.Operation != "write_undo_fields") writeTargets.Prune(writeLedger);
 
         bool writing = string.Equals(request.Type, ProtocolMessageTypes.WriteRequest, StringComparison.Ordinal);
         bool policy = request.Type == ProtocolMessageTypes.PolicyRequest;
@@ -254,6 +255,39 @@ public sealed class NekoGameComponent : GameComponent
             var data = (JObject)request.Payload.Arguments.DeepClone();
             Emit("policy_changed", (JObject)data.DeepClone());
             runtime.EnqueueControl(ProtocolEnvelope.Create(ProtocolMessageTypes.PolicyResult, request.ConnectionEpoch, 0, new ProtocolPayload { Status = ProtocolStatuses.Ok, Data = data, Issues = Array.Empty<QueryIssue>() }, session, request.RequestId)); return;
+        }
+        if (!writing && !policy && (request.Payload.Operation == "write_field_identities" || request.Payload.Operation == "write_undo_fields")) {
+            var sample = new SessionDescriptor(colonyId, loadEpoch, Find.TickManager?.TicksGame ?? 0, checked(snapshotSequence + 1));
+            QueryOutcome result;
+            try {
+                if (!UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing || LongEventHandler.AnyEventNowOrWaiting) throw new InvalidOperationException("World unavailable.");
+                var args = request.Payload.Arguments ?? throw new ArgumentException("Arguments required.");
+                JObject data;
+                if (request.Payload.Operation == "write_undo_fields") {
+                    ColonyWriteContract.ValidateRequest("undo", args);
+                    data = writeCoordinator!.UndoFields((string)args["token"]!);
+                } else {
+                    if (args.Properties().Count() != 1 || args["changeset"] is not JObject changeset) throw new ArgumentException("changeset required.");
+                    if ((string?)changeset["load_epoch"] != loadEpoch) throw new ArgumentException("Stale changeset epoch.");
+                    data = WriteCoordinator.FieldIdentities(changeset, new VerseWriteFieldResolver(new VerseGameData()));
+                }
+                result = new QueryOutcome { Data = data };
+            } catch (Exception error) when (IsRecoverable(error)) { result = QueryOutcome.Failure("identity_unavailable", "Field identities could not be resolved."); }
+            Publish(runtime, request, sample, result); return;
+        }
+        if (!writing && !policy && request.Payload.Operation == "write_ledger_snapshot") {
+            var sample = new SessionDescriptor(colonyId, loadEpoch, Find.TickManager?.TicksGame ?? 0, checked(snapshotSequence + 1));
+            QueryOutcome result;
+            if (request.Payload.Arguments == null || request.Payload.Arguments.HasValues)
+                result = QueryOutcome.Failure("invalid_arguments", "write_ledger_snapshot requires empty arguments.");
+            else if (!UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing || LongEventHandler.AnyEventNowOrWaiting)
+                result = QueryOutcome.Failure("unavailable", "Ledger snapshot is unavailable.");
+            else {
+                var resolver = new VerseWriteFieldResolver(new VerseGameData());
+                result = new QueryOutcome { Data = writeLedger.ReadSnapshot(writeLedgerSave.Valid, writeTargets, WriteTargetReferences.Destroyed,
+                    (id, field, target, value) => field == "production_bills" ? resolver.ResolveLedgerProductionBills(id, target, value) : resolver.ResolveHeldLedgerField(id, field, target) ?? resolver.ResolveLedgerField(id, field)) };
+            }
+            Publish(runtime, request, sample, result); return;
         }
         var next = checked(snapshotSequence + 1);
         var sampledSession = new SessionDescriptor(colonyId, loadEpoch, session.GameTick, next);

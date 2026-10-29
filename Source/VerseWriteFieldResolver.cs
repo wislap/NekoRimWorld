@@ -20,6 +20,22 @@ internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver
     }
 
     internal VerseWriteFieldResolver(IGameData data) { this.data = data; }
+    internal IPreparedWriteField? ResolveHeldLedgerField(string id, string field, object? target) {
+        if (target is Pawn pawn && pawn.GetUniqueLoadID() == id) {
+            if (field == "medical_care") return new MedicalField(pawn);
+            if (field == "allowed_area") return new AreaField(pawn);
+            if (field.StartsWith("work_priority:", StringComparison.Ordinal)) {
+                var work = DefDatabase<WorkTypeDef>.GetNamedSilentFail(field.Substring(14));
+                return work == null ? null : new WorkPriorityField(pawn, work);
+            }
+        }
+        if (field == "forbidden_flag" && target is Thing thing && thing.GetUniqueLoadID() == id) {
+            var comp = thing.TryGetComp<CompForbiddable>();
+            return comp == null ? null : new ForbiddenField(thing, comp);
+        }
+        return null;
+    }
+
     private IReadOnlyList<ResolvedWriteField> ResolveBillFields(JObject operation)
     {
         if (operation["value"] is not JObject values || operation["expect"] is not JObject expected ||
@@ -281,7 +297,10 @@ internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver
         public object? NativeTarget => pawn;
         public string Field => "work_priority:" + work.defName;
         public bool MayChangeByGame => true;
-        public JToken Read() => new JValue(pawn.workSettings.GetPriority(work));
+        public JToken Read() {
+            if (pawn.workSettings == null || !pawn.workSettings.Initialized) throw new InvalidOperationException("Work settings are unavailable.");
+            return new JValue(pawn.workSettings.GetPriority(work));
+        }
         public void Validate(JToken value)
         {
             if (pawn.Destroyed || pawn.workSettings == null || !pawn.workSettings.Initialized || pawn.WorkTypeIsDisabled(work)) throw new ArgumentException("Work type is unavailable or work settings are not initialized.");

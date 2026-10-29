@@ -17,6 +17,7 @@ internal sealed class WriteTargetIndex
         foreach (var value in values) if (value.Value != null) next[value.Key] = value.Value;
         targets = next;
     }
+    internal object? Find(string id) => targets.TryGetValue(id, out var target) ? target : null;
     internal IReadOnlyList<KeyValuePair<string, object>> Entries() => targets.ToArray();
     internal void Prune(WriteLedger ledger) {
         if (targets.Count == 0) return;

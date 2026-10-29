@@ -42,6 +42,27 @@ internal sealed partial class VerseWriteFieldResolver
         return entry.Resolve(this, operation);
     }
 
+    // Recover the exact same field implementation used by writes; no validation or setter is invoked.
+    internal IPreparedWriteField? ResolveLedgerField(string id, string field) {
+        JObject op;
+        if (field == "current_project" && id == "research:current") op = new JObject { ["op"] = "set_research", ["research"] = "current" };
+        else if (field == "medical_care") op = new JObject { ["op"] = "set_medical_care", ["pawn"] = id };
+        else if (field == "allowed_area") op = new JObject { ["op"] = "set_allowed_area", ["pawn"] = id };
+        else if (field == "forbidden_flag") op = new JObject { ["op"] = "set_forbidden", ["thing"] = id };
+        else if (field.StartsWith("work_priority:", StringComparison.Ordinal)) op = new JObject { ["op"] = "set_work_priority", ["pawn"] = id, ["work"] = field.Substring(14) };
+        else if (field == "storage_priority") op = new JObject { ["op"] = "set_storage_priority", ["storage"] = id };
+        else if (field.StartsWith("storage_allow:", StringComparison.Ordinal)) op = new JObject { ["op"] = "set_storage_allow", ["storage"] = id, ["item"] = field.Substring(14) };
+        else if (field.StartsWith("bill:", StringComparison.Ordinal)) {
+            var name = field.Substring(5);
+            op = new JObject { ["op"] = "set_bill", ["bill"] = id, ["value"] = new JObject { [name] = JValue.CreateNull() }, ["expect"] = new JObject { [name] = JValue.CreateNull() } };
+            var bill = Resolve(op).Single().Field;
+            return bill.ObjectId == id && bill.Field == field ? bill : null;
+        } else return null;
+        op["value"] = JValue.CreateNull(); op["expect"] = JValue.CreateNull();
+        var result = Resolve(op).Single().Field;
+        return result.ObjectId == id && result.Field == field ? result : null;
+    }
+
     private static IReadOnlyList<ResolvedWriteField> One(IPreparedWriteField field, JObject operation) =>
         new[] { new ResolvedWriteField(field, operation["expect"]!, operation["value"]!) };
 

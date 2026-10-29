@@ -16,6 +16,7 @@ internal static class QueryExecutor
             outcome.Data["native_behavior"] = ActionInspectionContract.Catalog();
             outcome.Data["situation_snapshot"] = SituationSnapshotContract.Catalog();
             outcome.Data["colony_state"] = ColonyReadContract.Catalog();
+            outcome.Data["write_ledger_snapshot"] = new JObject { ["capability"] = "colony_write.ledger_snapshot.v1", ["operations"] = new JArray("write_ledger_snapshot", "write_field_identities", "write_undo_fields") };
             outcome.Data["colony_write"] = VerseWriteFieldResolver.DescribeCatalog();
             outcome.Data["game_implementation"] = GameImplementation.Describe();
         }

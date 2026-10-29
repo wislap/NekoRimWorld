@@ -66,6 +66,46 @@ internal sealed partial class VerseWriteFieldResolver
         }
     }
 
+    // Shared with ledger sampling: createdId is only a lookup key. All returned
+    // values are taken from the current complete native stack.
+    private static JObject ReadProductionBillResult(Building_WorkTable table, string? createdId) {
+        var bills = table.BillStack.Bills;
+        var result = new JObject { ["bill_ids"] = new JArray(bills.Select(b => b.GetUniqueLoadID())) };
+        if (createdId != null) {
+            var matches = bills.Where(b => b.GetUniqueLoadID() == createdId).ToArray();
+            if (matches.Length > 1) throw new InvalidOperationException("Ambiguous bill identity.");
+            if (matches.Length == 0) result["created"] = JValue.CreateNull();
+            else if (matches[0] is Bill_Production production && production.recipe != null)
+                result["created"] = new JObject { ["bill_id"] = production.GetUniqueLoadID(), ["recipe"] = production.recipe.defName };
+            else throw new InvalidOperationException("Bill identity cannot be read.");
+        }
+        return result;
+    }
+
+    internal IPreparedWriteField? ResolveLedgerProductionBills(string id, object? target, JToken value) {
+        if (target is not Building_WorkTable table || table.GetUniqueLoadID() != id || table.Destroyed || table.BillStack == null || value is not JObject recorded) return null;
+        string? createdId = null;
+        if (recorded.TryGetValue("created", out var created)) {
+            if (created is not JObject obj || obj["bill_id"]?.Type != JTokenType.String || string.IsNullOrWhiteSpace((string?)obj["bill_id"])) return null;
+            createdId = (string)obj["bill_id"]!;
+        }
+        return new ProductionBillLedgerField(table, createdId);
+    }
+    private sealed class ProductionBillLedgerField : IPreparedWriteField {
+        private readonly Building_WorkTable table;
+        private readonly string? createdId;
+        internal ProductionBillLedgerField(Building_WorkTable table, string? createdId) { this.table = table; this.createdId = createdId; }
+        public string ObjectId => table.GetUniqueLoadID();
+        public string Field => "production_bills";
+        public bool IsDestroyed => table.Destroyed;
+        public bool MayChangeByGame => false;
+        public object NativeTarget => table;
+        public JToken Read() => ReadProductionBillResult(table, createdId);
+        public void Validate(JToken value) => throw new NotSupportedException();
+        public void Write(JToken value) => throw new NotSupportedException();
+        public void Restore(JToken value) => throw new NotSupportedException();
+    }
+
     private sealed class ProductionBillAddition : IPreparedStructuralWrite, IWriteAggregateScope
     {
         private readonly Building_WorkTable table;
@@ -89,11 +129,7 @@ internal sealed partial class VerseWriteFieldResolver
                 ["target_count"] = bill.targetCount, ["state_fingerprint"] = state.Fingerprint(bill) };
             return result;
         }
-        private JObject Result() {
-            var result = Order();
-            if (bill != null) result["created"] = new JObject { ["bill_id"] = bill.GetUniqueLoadID(), ["recipe"] = bill.recipe.defName };
-            return result;
-        }
+        private JObject Result() => ReadProductionBillResult(table, bill?.GetUniqueLoadID());
         public JToken Read() => bill == null ? Order() : Result();
         public void Validate(JToken value) {
             if (table.Destroyed || table.BillStack.Count >= BillStack.MaxCount || value is not JObject obj || obj.Properties().Count() != 1 || obj["recipe"]?.Type != JTokenType.String) throw new ArgumentException("Invalid production bill request or full worktable.");

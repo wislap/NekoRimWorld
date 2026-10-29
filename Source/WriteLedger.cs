@@ -27,6 +27,28 @@ internal sealed class WriteLedger
         }
         entries = next;
     }
+    internal JObject ReadSnapshot(bool valid, WriteTargetIndex targets, Func<object, bool> destroyed, Func<string, string, object?, JToken, IPreparedWriteField?> resolve) {
+        var rows = new JArray();
+        if (valid) foreach (var source in entries.OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => x.Value)) {
+            var entry = (JObject)source.DeepClone();
+            string id = (string)entry["object"]!, field = (string)entry["field"]!;
+            var target = targets.Find(id);
+            string status = "unresolved"; JToken? current = null; bool? mayChange = null;
+            if (target != null && destroyed(target)) status = "destroyed";
+            else try {
+                var resolved = resolve(id, field, target, entry["value"]!);
+                if (resolved == null) status = "unknown";
+                else if (resolved.ObjectId != id || resolved.Field != field) status = "unresolved";
+                else if (resolved.IsDestroyed) status = "destroyed";
+                else { current = resolved.Read(); mayChange = resolved.MayChangeByGame; status = "observed"; }
+            } catch (Exception error) when (ReadContext.Recoverable(error)) { status = "unresolved"; }
+            entry["current_status"] = status;
+            entry["current_value"] = current ?? JValue.CreateNull();
+            entry["may_change_by_game"] = mayChange.HasValue ? new JValue(mayChange.Value) : JValue.CreateNull();
+            rows.Add(entry);
+        }
+        return new JObject { ["ledger_status"] = valid ? "valid" : "invalid", ["complete"] = valid, ["entry_count"] = rows.Count, ["entries"] = rows };
+    }
     internal void RemoveConfirmedDestroyed(Func<string, bool> destroyed) {
         var next = new Dictionary<string, JObject>(entries, StringComparer.Ordinal);
         foreach (var item in entries) if (destroyed((string)item.Value["object"]!)) next.Remove(item.Key);
@@ -78,6 +100,20 @@ internal sealed class WriteCoordinator
     private readonly Dictionary<string, Receipt> receipts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Undo> undo = new(StringComparer.Ordinal);
     internal WriteCoordinator(WriteLedger ledger, WriteTargetIndex? targets = null) { this.ledger = ledger; this.targets = targets ?? new WriteTargetIndex(x => x is IPreparedWriteField f && f.IsDestroyed); }
+    internal JObject UndoFields(string token) {
+        if (!undo.TryGetValue(token, out var saved)) return new JObject { ["status"] = "unknown_token", ["complete"] = true, ["field_count"] = 0, ["fields"] = new JArray() };
+        if (saved.Used) return new JObject { ["status"] = "already_undone", ["complete"] = true, ["field_count"] = 0, ["fields"] = new JArray() };
+        return new JObject { ["status"] = "available", ["complete"] = true, ["field_count"] = saved.Fields.Count, ["fields"] = new JArray(saved.Fields.Select(f => new JObject { ["object"] = f.Field.ObjectId, ["field"] = f.Field.Field })) };
+    }
+    internal static JObject FieldIdentities(JObject changeset, IWriteFieldResolver resolver) {
+        ColonyWriteContract.ValidateRequest("dry_run", changeset);
+        var rows = new JArray(); int index = 0;
+        foreach (JObject op in (JArray)changeset["ops"]!) {
+            foreach (var resolved in resolver.Resolve(op)) rows.Add(new JObject { ["op"] = index, ["object"] = resolved.Field.ObjectId, ["field"] = resolved.Field.Field });
+            index++;
+        }
+        return new JObject { ["complete"] = true, ["field_count"] = rows.Count, ["fields"] = rows };
+    }
     internal void StartEpoch(string value) { epoch = value; receipts.Clear(); undo.Clear(); }
     internal void PruneConfirmedDestroyed() => targets.Prune(ledger);
     private static QueryOutcome Copy(QueryOutcome o) => new() { Status = o.Status, Data = (JObject?)o.Data?.DeepClone(), ErrorCode = o.ErrorCode, Message = o.Message, Issues = o.Issues };

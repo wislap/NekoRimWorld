@@ -45,7 +45,8 @@ public static class ColonyWriteContract
             Fields("paused", "role");
             if (data["paused"]?.Type != JTokenType.Boolean) Bad();
             Text("role");
-            if ((string?)data["role"] != "planner" && (string?)data["role"] != "frontdesk") Bad();
+            if ((string?)data["role"] != "planner" && (string?)data["role"] != "frontdesk" && (string?)data["role"] != "policy") Bad();
+            if ((string?)data["role"] == "policy" && (bool)data["paused"]! == false) Bad();
             return;
         }
         switch ((string?)data["status"]) {
@@ -89,7 +90,7 @@ public static class ColonyWriteContract
                 if (op.Properties().Count() > 16) Bad("Too many operation fields.");
             }
         } else if (mode == "undo") { Keys(args, "token"); Text(args["token"]); }
-        else if (mode == "set_paused") { Keys(args, "paused", "role"); if (args["paused"]?.Type != JTokenType.Boolean) Bad("paused must be boolean."); Text(args["role"]); if ((string?)args["role"] != "planner" && (string?)args["role"] != "frontdesk") Bad("Unknown pause role."); if ((string?)args["role"] == "frontdesk" && (bool)args["paused"]! == false) Bad("Frontdesk cannot resume."); }
+        else if (mode == "set_paused") { Keys(args, "paused", "role"); if (args["paused"]?.Type != JTokenType.Boolean) Bad("paused must be boolean."); Text(args["role"]); if ((string?)args["role"] != "planner" && (string?)args["role"] != "frontdesk" && (string?)args["role"] != "policy") Bad("Unknown pause role."); if (((string?)args["role"] == "frontdesk" || (string?)args["role"] == "policy") && (bool)args["paused"]! == false) Bad("This role cannot resume."); }
         else Bad("Unknown write mode.");
     }
 }

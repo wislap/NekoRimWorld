@@ -25,6 +25,8 @@ internal static class ColonyWriteContractTests
         ColonyWriteContract.ValidateRequest("dry_run", changes);
         ColonyWriteContract.ValidateRequest("undo", JObject.Parse("{'token':'undo-1'}"));
         ColonyWriteContract.ValidateRequest("set_paused", JObject.Parse("{'paused':true,'role':'planner'}"));
+        ColonyWriteContract.ValidateRequest("set_paused", JObject.Parse("{'paused':true,'role':'policy'}"));
+        Reject("set_paused", JObject.Parse("{'paused':false,'role':'policy'}"));
         void Reject(string mode, JObject args) { try { ColonyWriteContract.ValidateRequest(mode, args); throw new Exception("accepted invalid write"); } catch (ProtocolException e) when (e.ErrorCode == ProtocolErrorCodes.InvalidPayload) { } }
         Reject("commit", JObject.Parse("{'changeset_id':'x'}"));
         Reject("set_paused", JObject.Parse("{'paused':'true','role':'planner'}"));

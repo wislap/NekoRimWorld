@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="../fixtures/colony-pause-policy-v1/vectors.json" Link="colony-pause-policy-v1/vectors.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../../Source/PausePolicy.cs" Link="PausePolicy.cs" />
     <None Include="../fixtures/colony-events-v1/vectors.json" Link="colony-events-v1/vectors.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../../Source/NativeWriteSafety.cs" Link="NativeWriteSafety.cs" />

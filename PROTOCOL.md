@@ -127,10 +127,10 @@ exists; an incomplete prerequisite yields false, while an absent key whose zero
 progress still meets cost yields null (unknown).
 
 
-## Write contract staging (v3.3)
+## Transactions and independent controls (v3.3 source)
 
 `colony_write.transactions.v1` advertises the dry_run, commit and undo subset of
-`colony_write.v1`. It does not advertise set_paused or event support. Native
+`colony_write.v1`. Pause and event support use separate capabilities. Native
 `query_catalog.colony_write` describes the registered operations and evidence
 extraction, with `catalog_id` as SHA-256 of its compact JSON before that field is
 added. The existing public query schema_id is unchanged. Query-only engines do
@@ -139,7 +139,10 @@ Authenticated `write_request` uses `mode` and `arguments`, and carries the usual
 session and request identity. `dry_run` and `commit` carry a changeset directly;
 `undo` takes `token`, and `set_paused` takes `paused` and `role`. A current
 game session with a valid ledger accepts the first three modes through the
-authenticated queue as a staged interface; `set_paused` remains unsupported.
+authenticated queue. `colony_pause.v1` independently enables `set_paused`, and
+`colony_events.v1` enables explicit event subscription and policy requests. Both
+require the audited native binary and available native event hooks; invalid
+field-ledger data disables transactions without disabling pause control.
 The read-only frontend does not register write tools. Stale sessions are rejected and a full queue returns `busy`.
 The operation-specific target and value grammar remains for the native operation
 catalog; the staging parser validates only the common bounded structure.
@@ -192,8 +195,19 @@ require no current job. Item filters reject nonofficial definitions, virtual
 descendants and items excluded by the parent's filter. These restrictions avoid
 native side effects that restoring one field cannot undo.
 
-New production bills, an advertised operation schema, pause control and events
-remain pending. Smoke tests cover transaction, persistence adapter, authenticated
-loopback and preflight policy semantics with fake fields; they do not establish
-actual Verse setter behavior, real Scribe roundtrips or frame time. The staged
-three-mode interface is not an advertised or complete automatic-play capability.
+The registered schema also supports creating ordinary production bills on the
+supported native worktable classes. Creation has its own ordered bill-list
+precondition; undo additionally guards the created bill's configuration and
+position. Special bill types remain unsupported.
+
+`colony_pause.policy.v1` adds the code-owned failure policy role to `set_paused`.
+It accepts only `{paused: true, role: "policy"}`; policy cannot resume the game.
+An actual running-to-paused transition has source `policy`. A no-op pause retains
+the existing owner, including user or unknown ownership. Planner resume preserves
+the existing user/unknown/forced-pause protections. Pause never enters field
+changesets or the saved field ledger, and never selects a running speed.
+
+Smoke tests establish contract and coordinator behavior. Separate isolated native
+traces exercise selected real setters, save roundtrips and failure policy pause;
+they do not establish complete fault coverage, frame time or autonomous gameplay
+quality. These capabilities alone do not enable automatic play.

@@ -115,7 +115,7 @@ public sealed class NekoRimWorldMod : Mod
     }
 
     private string[] AdvertisedCapabilities() => hooksReady
-        ? Capabilities.Concat(new[] { "colony_events.v1", "colony_pause.v1" }).ToArray() : Capabilities;
+        ? Capabilities.Concat(new[] { "colony_events.v1", "colony_pause.v1", "colony_pause.policy.v1" }).ToArray() : Capabilities;
 
     private void ApplyRuntimeConfiguration()
     {

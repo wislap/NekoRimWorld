@@ -39,6 +39,7 @@ public sealed class NekoGameComponent : GameComponent
     private bool lastForcePaused;
     private bool lastWindowPaused;
     private long lastEventHeartbeat;
+    private bool loadPausePristine;
 
     internal void ObserveUserPause(bool before) {
         var tm = Find.TickManager; if (tm == null) return;
@@ -61,10 +62,30 @@ public sealed class NekoGameComponent : GameComponent
     }
     private void RefreshPolicy() { var connection = NekoRimWorldMod.Runtime.ReadyConnectionEpoch; if (policyConnection != connection) policyConnection = connection; pausePolicy.Bind(connection, colonyId, loadEpoch); }
     private void Emit(string kind, JObject data) { data["kind"] = kind; NekoRimWorldMod.Runtime.EmitEvent(CurrentSession(), data); }
-    private void EmitPause(string source, TickManager tm) => Emit("pause_changed", new JObject {
+    private void EmitPause(string source, TickManager tm) {
+        loadPausePristine = false;
+        Emit("pause_changed", new JObject {
         ["paused"] = tm.Paused, ["speed_paused"] = tm.CurTimeSpeed == TimeSpeed.Paused,
-        ["force_paused"] = tm.ForcePaused, ["windows_force_paused"] = Find.WindowStack?.WindowsForcePause ?? false, ["source"] = source
-    });
+        ["force_paused"] = tm.ForcePaused, ["windows_force_paused"] = Find.WindowStack?.WindowsForcePause ?? false, ["source"] = source,
+        ["pause_revision"] = pausePolicy.Revision
+        });
+    }
+    // Native ownership metadata, also inspected by the isolated study controller.
+    // This observes state only; it is not a model recovery capability.
+    internal JObject CapturePauseState() {
+        if (!UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing ||
+            !NativeEventHookSupport.Ready() || Find.TickManager == null || Find.WindowStack == null)
+            throw new InvalidOperationException("Native pause ownership metadata is unavailable.");
+        RefreshPolicy(); ObservePause();
+        return new JObject {
+            ["connection_epoch"] = policyConnection, ["colony_id"] = colonyId, ["load_epoch"] = loadEpoch,
+            ["owner"] = pausePolicy.Owner, ["pause_revision"] = pausePolicy.Revision,
+            ["pause_transition_revision"] = pausePolicy.TransitionRevision, ["load_pause_pristine"] = loadPausePristine,
+            ["session_source"] = sessionSource, ["session_start_tick"] = sessionStartTick,
+            ["speed_paused"] = Find.TickManager.CurTimeSpeed == TimeSpeed.Paused,
+            ["windows_force_paused"] = Find.WindowStack?.WindowsForcePause ?? false
+        };
+    }
     private void ObservePause() {
         var tm = Find.TickManager; if (tm == null) return;
         bool speed = tm.CurTimeSpeed == TimeSpeed.Paused, force = tm.ForcePaused;
@@ -193,6 +214,7 @@ public sealed class NekoGameComponent : GameComponent
         lastSpeedPaused = Find.TickManager?.CurTimeSpeed == TimeSpeed.Paused;
         lastForcePaused = Find.TickManager?.ForcePaused ?? false;
         lastWindowPaused = Find.WindowStack?.WindowsForcePause ?? false;
+        loadPausePristine = true;
         lastEventHeartbeat = 0;
         NekoRimWorldMod.Runtime.AttachSession(CurrentSession(), writerReady: writeLedgerSave.Valid);
         Log.Message($"[N.E.K.O RimWorld] Game session attached ({source}).");

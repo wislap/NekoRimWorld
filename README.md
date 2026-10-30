@@ -51,6 +51,12 @@ Legacy pause requests remain wire-compatible. The matching plugin requires guard
 recovery for its model tool; a named source does not replace the user's authorization.
 This is a source change, without deployment of the installed DLL.
 
+Pause events now include a monotonic `pause_revision`. Internal ownership metadata
+also distinguishes observed pause transitions from connection rebinding, allowing
+the opt-in bench controller to reject stale same-owner recovery and restrict its
+one-shot loader preparation. No new recovery tool or policy-pause permission is
+exposed to the model by this metadata.
+
 Read-only RimWorld 1.6 bridge for the N.E.K.O plugin. The v2 transport supports
 public_query.v2, world_observation.v2.3, native_behavior.v1 and the internal
 situation_snapshot.v1 consultation background. Reads run on the

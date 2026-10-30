@@ -12,6 +12,17 @@ internal static class EventContractTests {
         }
         if (PausePolicy.ObservedSource(false, true) != "window" || PausePolicy.ObservedSource(true, true) != "unknown" || PausePolicy.ObservedSource(false, false) != "unknown") throw new Exception("Ambiguous pause source misclassified");
         var policy = new PausePolicy(); policy.Bind("c1", "colony", "epoch1");
+        long initialRevision = policy.Revision;
+        policy.Bind("c1", "colony", "epoch1");
+        if (policy.Revision != initialRevision) throw new Exception("Unchanged binding advanced pause revision");
+        policy.Observe("policy"); long firstPolicyRevision = policy.Revision;
+        long firstTransition = policy.TransitionRevision;
+        policy.Observe("none"); policy.Observe("policy");
+        if (policy.Revision <= firstPolicyRevision || policy.TransitionRevision <= firstTransition) throw new Exception("Same-owner pause generation was reused");
+        long beforeBindTransition = policy.TransitionRevision;
+        policy.Bind("new", "colony", "epoch1");
+        if (policy.TransitionRevision != beforeBindTransition) throw new Exception("Binding changed pause transition identity");
+        policy.Bind("c1", "colony", "epoch1");
         if (policy.Matches("ThreatBig")) throw new Exception("Default policy was enabled");
         policy.Set(new[] { "ThreatBig", "NegativeEvent" });
         if (!policy.Matches("ThreatBig") || policy.Matches("ThreatSmall")) throw new Exception("Definition matching failed");

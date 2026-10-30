@@ -42,6 +42,15 @@ background, world/faction/quest/trade/research consultation, and the exact-read,
 resource-source and loaded-journey improvements. Product and protocol versions
 are independent; the supported wire contracts below retain their meanings.
 
+Unreleased v3.3 source adds `colony_pause.resume_guard.v1` when native pause
+hooks are available. A planner recovery can include `expected_owner`; the game
+checks that the named agent source still owns a speed pause in the same main-thread
+action before resuming. Guarded recovery rejects user, unknown, policy and forced
+pauses, as well as changed owners. Successful receipts echo the guard for correlation.
+Legacy pause requests remain wire-compatible. The matching plugin requires guarded
+recovery for its model tool; a named source does not replace the user's authorization.
+This is a source change, without deployment of the installed DLL.
+
 Read-only RimWorld 1.6 bridge for the N.E.K.O plugin. The v2 transport supports
 public_query.v2, world_observation.v2.3, native_behavior.v1 and the internal
 situation_snapshot.v1 consultation background. Reads run on the

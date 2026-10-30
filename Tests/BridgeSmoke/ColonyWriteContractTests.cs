@@ -26,6 +26,9 @@ internal static class ColonyWriteContractTests
         ColonyWriteContract.ValidateRequest("undo", JObject.Parse("{'token':'undo-1'}"));
         ColonyWriteContract.ValidateRequest("set_paused", JObject.Parse("{'paused':true,'role':'planner'}"));
         ColonyWriteContract.ValidateRequest("set_paused", JObject.Parse("{'paused':true,'role':'policy'}"));
+        ColonyWriteContract.ValidateRequest("set_paused", JObject.Parse("{'paused':false,'role':'planner','expected_owner':'frontdesk'}"));
+        foreach (var owner in new[] { "policy", "user", "unknown", "none", "" }) Reject("set_paused", new JObject { ["paused"] = false, ["role"] = "planner", ["expected_owner"] = owner });
+        Reject("set_paused", JObject.Parse("{'paused':true,'role':'planner','expected_owner':'frontdesk'}"));
         Reject("set_paused", JObject.Parse("{'paused':false,'role':'policy'}"));
         void Reject(string mode, JObject args) { try { ColonyWriteContract.ValidateRequest(mode, args); throw new Exception("accepted invalid write"); } catch (ProtocolException e) when (e.ErrorCode == ProtocolErrorCodes.InvalidPayload) { } }
         Reject("commit", JObject.Parse("{'changeset_id':'x'}"));

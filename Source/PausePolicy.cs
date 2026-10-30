@@ -17,4 +17,9 @@ internal sealed class PausePolicy
     internal void Observe(string owner) => Owner = owner;
     internal static string ObservedSource(bool speedChanged, bool windowChanged) => !speedChanged && windowChanged ? "window" : "unknown";
     internal bool CanResume => Owner != "user" && Owner != "unknown";
+    // Guarded requests must name the currently observed agent owner. Policy
+    // faults require explicit operator recovery, even if the caller is planner.
+    internal bool CanResumeExpected(string expected) => binding.Length != 0 &&
+        Owner == expected && IsResumableOwner(expected);
+    internal static bool IsResumableOwner(string owner) => owner is "planner" or "frontdesk" or "reflex" or "automatic_letter";
 }

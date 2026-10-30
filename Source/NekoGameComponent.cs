@@ -82,9 +82,13 @@ public sealed class NekoGameComponent : GameComponent
         if (tm == null || !UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing || LongEventHandler.AnyEventNowOrWaiting) return QueryOutcome.Failure("unavailable", "Pause control is unavailable.");
         ObservePause(); bool before = tm.CurTimeSpeed == TimeSpeed.Paused;
         if (!paused && tm.ForcePaused) return QueryOutcome.Failure("force_paused", "A native force pause is active.");
+        string? expectedOwner = (string?)args["expected_owner"];
+        if (expectedOwner != null && (!before || !pausePolicy.CanResumeExpected(expectedOwner))) return QueryOutcome.Failure("pause_owner_changed", "The expected agent pause is no longer current.");
         if (!paused && before && !pausePolicy.CanResume) return QueryOutcome.Failure("pause_owned", "A user or unknown pause cannot be released by an agent.");
         if (before != paused) { tm.TogglePaused(); if ((tm.CurTimeSpeed == TimeSpeed.Paused) != paused) return QueryOutcome.Failure("pause_rejected", "Native pause control rejected the request."); pausePolicy.Observe(paused ? role : "none"); lastSpeedPaused = paused; EmitPause(role, tm); }
-        return new QueryOutcome { Data = new JObject { ["paused"] = paused, ["role"] = role } };
+        var data = new JObject { ["paused"] = paused, ["role"] = role };
+        if (expectedOwner != null) data["expected_owner"] = expectedOwner;
+        return new QueryOutcome { Data = data };
     }
 
 

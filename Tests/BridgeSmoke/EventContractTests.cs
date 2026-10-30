@@ -20,5 +20,17 @@ internal static class EventContractTests {
         policy.Set(new[] { "ThreatBig" }); policy.Bind("", "colony", "epoch2"); if (policy.Matches("ThreatBig")) throw new Exception("Disconnected policy active");
         foreach (var owner in new[] { "user", "unknown" }) { policy.Observe(owner); if (policy.CanResume) throw new Exception("Unsafe resume"); }
         foreach (var owner in new[] { "planner", "frontdesk", "reflex", "automatic_letter", "policy" }) { policy.Observe(owner); if (!policy.CanResume) throw new Exception("Agent pause cannot resume"); }
+        policy.Bind("bound", "colony", "epoch3");
+        foreach (var owner in new[] { "user", "unknown", "policy", "none", "window", "unexpected" }) {
+            policy.Observe(owner);
+            if (policy.CanResumeExpected(owner) || policy.CanResumeExpected("frontdesk")) throw new Exception("Guarded unsafe resume");
+        }
+        foreach (var owner in new[] { "planner", "frontdesk", "reflex", "automatic_letter" }) {
+            policy.Observe(owner);
+            if (!policy.CanResumeExpected(owner)) throw new Exception("Guarded agent resume rejected");
+            if (policy.CanResumeExpected(owner == "planner" ? "frontdesk" : "planner")) throw new Exception("Changed owner accepted");
+        }
+        policy.Bind("next", "colony", "epoch3");
+        if (policy.CanResumeExpected("frontdesk")) throw new Exception("Old connection pause accepted");
     }
 }

@@ -42,11 +42,13 @@ public static class ColonyWriteContract
             }
         }
         if (data["status"] == null) {
-            Fields("paused", "role");
+            if (data.Property("expected_owner") != null) Fields("paused", "role", "expected_owner");
+            else Fields("paused", "role");
             if (data["paused"]?.Type != JTokenType.Boolean) Bad();
             Text("role");
             if ((string?)data["role"] != "planner" && (string?)data["role"] != "frontdesk" && (string?)data["role"] != "policy") Bad();
             if ((string?)data["role"] == "policy" && (bool)data["paused"]! == false) Bad();
+            if (data.Property("expected_owner") != null && ((bool)data["paused"]! || (string?)data["role"] != "planner" || !PausePolicy.IsResumableOwner((string?)data["expected_owner"] ?? ""))) Bad();
             return;
         }
         switch ((string?)data["status"]) {
@@ -90,7 +92,15 @@ public static class ColonyWriteContract
                 if (op.Properties().Count() > 16) Bad("Too many operation fields.");
             }
         } else if (mode == "undo") { Keys(args, "token"); Text(args["token"]); }
-        else if (mode == "set_paused") { Keys(args, "paused", "role"); if (args["paused"]?.Type != JTokenType.Boolean) Bad("paused must be boolean."); Text(args["role"]); if ((string?)args["role"] != "planner" && (string?)args["role"] != "frontdesk" && (string?)args["role"] != "policy") Bad("Unknown pause role."); if (((string?)args["role"] == "frontdesk" || (string?)args["role"] == "policy") && (bool)args["paused"]! == false) Bad("This role cannot resume."); }
+        else if (mode == "set_paused") {
+            if (args.Property("expected_owner") != null) Keys(args, "paused", "role", "expected_owner");
+            else Keys(args, "paused", "role");
+            if (args["paused"]?.Type != JTokenType.Boolean) Bad("paused must be boolean.");
+            Text(args["role"]);
+            if ((string?)args["role"] != "planner" && (string?)args["role"] != "frontdesk" && (string?)args["role"] != "policy") Bad("Unknown pause role.");
+            if (((string?)args["role"] == "frontdesk" || (string?)args["role"] == "policy") && (bool)args["paused"]! == false) Bad("This role cannot resume.");
+            if (args.Property("expected_owner") != null && ((bool)args["paused"]! || (string?)args["role"] != "planner" || !PausePolicy.IsResumableOwner((string?)args["expected_owner"] ?? ""))) Bad("Invalid expected pause owner.");
+        }
         else Bad("Unknown write mode.");
     }
 }

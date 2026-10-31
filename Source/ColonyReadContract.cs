@@ -34,6 +34,16 @@ internal static class ColonyReadContract
             properties["caravan"] = Reference(); properties["destinations"] = new JObject { ["type"] = "array", ["minItems"] = 1, ["items"] = Reference() }; properties["include"] = Strings(); required.Add("caravan"); required.Add("destinations");
         } else if (op == "evaluate_trade") {
             properties["trader"] = Reference(true); properties["negotiator"] = Reference(true); properties["buy"] = Basket(); properties["sell"] = Basket(); required.Add("trader"); required.Add("negotiator");
+        } else if (op == "inspect_storage") {
+            properties["ids"] = Strings(); properties["ids"]!["maxItems"] = 1;
+            properties["map"] = new JObject { ["type"] = "string", ["minLength"] = 1 };
+            properties["items"] = Strings(); properties["items"]!["maxItems"] = 32;
+            properties["aspects"] = new JObject { ["type"] = "array", ["minItems"] = 1,
+                ["items"] = new JObject { ["type"] = "string", ["enum"] = new JArray("priority", "allows") },
+                ["description"] = "Compatibility selector; both priority and requested item permissions are returned." };
+            properties["offset"] = new JObject { ["type"] = "integer", ["const"] = 0, ["description"] = "Neutral compatibility marker; pagination is unsupported." };
+            properties["limit"] = new JObject { ["type"] = "integer", ["enum"] = new JArray(1, 20), ["description"] = "Neutral compatibility marker; pagination is unsupported." };
+            required.Add("ids"); required.Add("map");
         } else {
             properties["ids"] = Strings(); properties["names"] = Strings(); properties["aspects"] = Strings();
             properties["limit"] = new JObject { ["type"] = "integer", ["minimum"] = 1, ["maximum"] = 100, ["default"] = 20 };
@@ -45,7 +55,6 @@ internal static class ColonyReadContract
                 properties["near"] = new JObject { ["type"] = "object" };
             }
             if (op == "inspect_research") properties["items"] = Strings();
-            if (op == "inspect_storage") { properties["map"] = new JObject { ["type"] = "string", ["minLength"] = 1 }; properties["items"] = Strings(); required.Add("ids"); required.Add("map"); }
             if (op == "inspect_resources") { properties["map"] = new JObject { ["type"] = "string" }; properties["items"] = Strings(); required.Add("items"); }
             if (op == "inspect_trade") { properties["map"] = new JObject { ["type"] = "string" }; properties["items"] = Strings(); }
         }
@@ -64,6 +73,15 @@ internal static class ColonyReadContract
         }
         foreach (var key in ((JArray)schema["required"]!).Values<string>()) if (args[key!] == null) throw ReadContext.Error("invalid_arguments", "Missing " + key + ".");
         foreach (string field in new[] { "ids", "names", "aspects", "items", "include" }) if (args[field] != null) Texts(args, field);
+        if (operation == "inspect_storage") {
+            if ((args["ids"] as JArray)?.Count != 1 || (args["items"] as JArray)?.Count > 32)
+                throw ReadContext.Error("invalid_arguments", "Select one storage and at most 32 definitions.");
+            if (args["offset"] != null && (long)args["offset"]! != 0 ||
+                args["limit"] != null && (long)args["limit"]! != 1 && (long)args["limit"]! != 20)
+                throw ReadContext.Error("invalid_arguments", "Storage does not support pagination.");
+            if (args["aspects"] is JArray storageAspects && storageAspects.Values<string>().Any(a => a != "priority" && a != "allows"))
+                throw ReadContext.Error("invalid_arguments", "Storage aspects must be priority or allows.");
+        }
         if (args["limit"] != null && ((long)args["limit"]! < 1 || (long)args["limit"]! > 100) || args["offset"] != null && ((long)args["offset"]! < 0 || (long)args["offset"]! > int.MaxValue)) throw ReadContext.Error("invalid_arguments", "limit must be 1..100; offset must be nonnegative.");
     }
     internal static string[] Texts(JObject args, string key)

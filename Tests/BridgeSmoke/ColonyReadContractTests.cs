@@ -12,6 +12,17 @@ internal static class ColonyReadContractTests
         var catalog = ColonyReadContract.Catalog();
         Require((string?)catalog["version"] == "colony_state.v1" && ((JArray)catalog["operations"]!).Count == 9, "Complete additive native business catalog");
         ColonyReadContract.Validate("inspect_storage", JObject.Parse("{ids:['storage'],map:'map',items:['Steel']}"));
+        var storage = ColonyReadContract.Parameters("inspect_storage");
+        Require((int?)storage["properties"]!["ids"]!["maxItems"] == 1, "Storage catalog advertises one id");
+        Require((int?)storage["properties"]!["offset"]!["const"] == 0, "Storage offset is a neutral compatibility marker");
+        Require(storage["properties"]!["limit"]!["enum"] is JArray, "Storage limits are neutral compatibility markers");
+        ColonyReadContract.Validate("inspect_storage", JObject.Parse("{ids:['a'],map:'map',offset:0,limit:20,aspects:['priority']}"));
+        ColonyReadContract.Validate("inspect_storage", JObject.Parse("{ids:['a'],map:'map',offset:0,limit:1,aspects:['allows']}"));
+        Invalid(() => ColonyReadContract.Validate("inspect_storage", JObject.Parse("{ids:['a'],map:'map',limit:2}")), "invalid_arguments");
+        Invalid(() => ColonyReadContract.Validate("inspect_storage", JObject.Parse("{ids:['a'],map:'map',aspects:['health']}")), "invalid_arguments");
+        Invalid(() => ColonyReadContract.Validate("inspect_storage", JObject.Parse("{ids:['a','b'],map:'map'}")), "invalid_arguments");
+        Invalid(() => ColonyReadContract.Validate("inspect_storage", JObject.Parse("{ids:['a','a'],map:'map'}")), "invalid_arguments");
+        Invalid(() => ColonyReadContract.Validate("inspect_storage", JObject.Parse("{ids:['a'],map:'map',offset:1}")), "invalid_arguments");
         Invalid(() => ColonyReadContract.Validate("inspect_storage", JObject.Parse("{ids:['storage']}")), "invalid_arguments");
         Require(catalog["tools"] == null, "Native operations do not become extra public tools");
         ColonyReadContract.Validate("inspect_research", JObject.Parse("{\"names\":[\"MicroelectronicsBasics\"],\"aspects\":[\"progress\",\"requirements\"]}"));

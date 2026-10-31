@@ -33,6 +33,7 @@ internal static class Program
             WriteLedgerTests.Run();
             SituationSnapshotContractTests.Run();
             ColonyReadContractTests.Run();
+            StorageMapSelectionTests.Run();
             ColonyWriteContractTests.Run();
             EventContractTests.Run();
             ColonyWriteCatalogTests.Run();

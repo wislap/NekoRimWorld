@@ -21,7 +21,8 @@ internal static class StorageReadings
     {
         var ids = ColonyReadContract.Texts(args, "ids"); var items = ColonyReadContract.Texts(args, "items");
         if (ids.Length != 1 || items.Length > 32) throw ReadContext.Error("invalid_arguments", "Select one storage and at most 32 definitions.");
-        var mapId = (string?)args["map"];
+        var mapId = StorageMapSelection.ResolveReadMap((string?)args["map"],
+            () => GameWorldReferences.ResolveMap("current").GetUniqueLoadID());
         var target = Resolve(ids[0], mapId);
         var settings = target.storage.GetStoreSettings() ?? throw new ArgumentException("Storage settings unavailable.");
         var allows = new JArray();

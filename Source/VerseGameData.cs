@@ -36,6 +36,7 @@ internal sealed class VerseGameData : IGameData, IThingData, IQueryData
     public object? GameField(string field) => field switch
     {
         "paused" => Find.TickManager?.Paused,
+        "pauseWindows" => NativePauseWindows.Capture(),
         "currentMapId" => Find.CurrentMap?.GetUniqueLoadID(),
         _ => throw new ArgumentException("Unknown game field."),
     };

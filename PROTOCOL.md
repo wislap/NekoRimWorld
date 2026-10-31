@@ -109,6 +109,23 @@ Paused: speed_paused or force_paused), `speed_paused` (CurTimeSpeed==Paused),
 (PrefsData setting), and optional `force_pause_window` (first forcePause window type).
 Letter auto-pause sets speed to paused; state alone cannot distinguish it from user pause.
 
+Current pause events, ownership snapshots and situation clocks also include optional
+`pause_windows` evidence. The existing public `game` query exposes the same reader
+as `pause_windows.*` (native GraphQL `Game.pauseWindows`), so callers can request a
+fresh sample instead of reusing a situation background. Evidence contains `status`,
+`sampled_tick`, total `count`, `truncated`, and at most 16 window rows: runtime
+`window_id`, `type`, `stack_index`, `opened_tick`, and `opening_source` with status
+and at most eight bounded managed method frames. Identity/source records bind the
+actual Game, WindowStack, window object and native ID; IDs are not persistent or
+cross-load identities. Opening frames describe the observed managed call path,
+not a person, user intent or permission to select/close a window. An existing
+window without a captured opening has unknown source. Unavailable stacks report
+unknown count, never an observed zero; partial/truncated samples remain partial.
+Older producers may omit this additive field. The optional opening hook does not
+change existing pause-hook readiness or resume guards. No window-control action
+is added. Cached situation fields retain their original sample tick and must not
+be treated as a current pause observation.
+
 Event items now carry `auto_pause_mode` (LetterDef.pauseMode enum string or null for
 messages) and `pauses_game` (boolean or null: whether this letter's pauseMode would
 trigger auto-pause given the current AutomaticPauseMode pref).

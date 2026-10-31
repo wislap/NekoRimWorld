@@ -68,6 +68,7 @@ internal sealed class SituationSnapshot : FrameQueryOperation
             ["paused"] = Find.TickManager.Paused, ["speed_paused"] = Find.TickManager.CurTimeSpeed == TimeSpeed.Paused,
             ["force_paused"] = Find.TickManager.ForcePaused, ["windows_force_paused"] = Find.WindowStack.WindowsForcePause,
             ["force_pause_window"] = Find.WindowStack.Windows.FirstOrDefault(w => w.forcePause)?.GetType().FullName,
+            ["pause_windows"] = NativePauseWindows.Capture(),
             ["automatic_pause_mode"] = Prefs.AutomaticPauseMode.ToString(),
             ["pause_meaning"] = "paused is native Paused: speed_paused or force_paused. force_paused also covers long events, tile picking and gravship cutscenes besides force-pause windows. Letter auto-pause sets the speed to paused, so state alone cannot tell it from a user pause; a letter whose pauses_game is true paused the game on arrival." };
         result["map"] = new JObject { ["id"] = map.GetUniqueLoadID(), ["tile"] = map.Tile.ToString(), ["is_player_home"] = map.IsPlayerHome,

@@ -68,6 +68,7 @@ public sealed class NekoGameComponent : GameComponent
         Emit("pause_changed", new JObject {
         ["paused"] = tm.Paused, ["speed_paused"] = tm.CurTimeSpeed == TimeSpeed.Paused,
         ["force_paused"] = tm.ForcePaused, ["windows_force_paused"] = Find.WindowStack?.WindowsForcePause ?? false, ["source"] = source,
+        ["pause_windows"] = NativePauseWindows.Capture(),
         ["pause_revision"] = pausePolicy.Revision
         });
     }
@@ -85,7 +86,8 @@ public sealed class NekoGameComponent : GameComponent
             ["session_initial_pause_transition_revision"] = sessionInitialPauseTransitionRevision,
             ["session_source"] = sessionSource, ["session_start_tick"] = sessionStartTick,
             ["speed_paused"] = Find.TickManager.CurTimeSpeed == TimeSpeed.Paused,
-            ["windows_force_paused"] = Find.WindowStack?.WindowsForcePause ?? false
+            ["windows_force_paused"] = Find.WindowStack?.WindowsForcePause ?? false,
+            ["pause_windows"] = NativePauseWindows.Capture()
         };
     }
     private void ObservePause() {

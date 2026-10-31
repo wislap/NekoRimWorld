@@ -166,6 +166,12 @@ catalog; the staging parser validates only the common bounded structure.
 
 The work facet also exposes `allowed_area_key` as `{map_id, area_id}` using native
 integer `Area.ID`. The existing `allowed_area` remains the native load ID.
+Allowed-area assignment uses the native setter while the pawn has an active job;
+there is no job-idle prerequisite. Restricting an area may cause RimWorld to
+interrupt the current job. Rollback and undo restore the configured area field,
+not that interrupted job or its progress. The existing target/map, evidence and
+compare-before-write checks still apply.
+
 `write_allowed_area_key` reads the raw restriction used by writes and is absent
 when player settings or map are unavailable. `inspect_research.current_regular_project`
 is an explicit nullable ordinary project ID. `inspect_storage` selects one player
@@ -207,10 +213,11 @@ forbidden flags, existing production-bill fields, ordinary research, and storage
 priority / individual item permission. Bill edits expand into distinct fields.
 Native writes require the Unity main thread, Playing state and no long event.
 Work settings must already be initialized. Priority changes involving zero are
-rejected when a current or queued job could be affected; area changes currently
-require no current job. Item filters reject nonofficial definitions, virtual
-descendants and items excluded by the parent's filter. These restrictions avoid
-native side effects that restoring one field cannot undo.
+rejected when a current or queued job could be affected. Area changes have no
+job-idle prerequisite and use the native interruption behavior described above.
+Item filters reject nonofficial definitions, virtual descendants and items
+excluded by the parent's filter. These other operation-specific restrictions
+retain their existing scope.
 
 The registered schema also supports creating ordinary production bills on the
 supported native worktable classes. Creation has its own ordered bill-list

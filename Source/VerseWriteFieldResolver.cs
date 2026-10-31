@@ -118,11 +118,13 @@ internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver
             return new JObject { ["map_id"] = pawn.MapHeld.GetUniqueLoadID(), ["area_id"] = area == null ? JValue.CreateNull() : new JValue(area.ID) };
         }
         public void Validate(JToken value) {
-            if (pawn.Destroyed || pawn.MapHeld == null || pawn.playerSettings == null || !pawn.playerSettings.RespectsAllowedArea || pawn.jobs?.curJob != null) throw new ArgumentException("Area change requires a spawned eligible pawn without a current job.");
+            if (pawn.Destroyed || pawn.MapHeld == null || pawn.playerSettings == null || !pawn.playerSettings.RespectsAllowedArea) throw new ArgumentException("Area change requires a spawned eligible pawn.");
             if (pawn.playerSettings.AreaRestrictionInPawnCurrentMap != null && pawn.playerSettings.AreaRestrictionInPawnCurrentMap is not Area_Allowed) throw new ArgumentException("Existing area cannot be restored safely.");
             if (value is not JObject obj || obj.Properties().Count() != 2 || (string?)obj["map_id"] != pawn.MapHeld.GetUniqueLoadID() || obj["area_id"] == null) throw new ArgumentException("Area key must identify the pawn's current map.");
             if (obj["area_id"]!.Type != JTokenType.Null && (obj["area_id"]!.Type != JTokenType.Integer || !pawn.MapHeld.areaManager.AllAreas.OfType<Area_Allowed>().Any(a => a.ID == (int)obj["area_id"]!))) throw new ArgumentException("Allowed area not found on the pawn's current map.");
         }
+        // Match the native area UI even while a job is active. The native setter
+        // may interrupt that job; field rollback/undo does not reconstruct jobs.
         public void Write(JToken value) {
             var id = value["area_id"]!;
             pawn.playerSettings.AreaRestrictionInPawnCurrentMap = id.Type == JTokenType.Null ? null : pawn.MapHeld.areaManager.AllAreas.OfType<Area_Allowed>().Single(a => a.ID == (int)id);

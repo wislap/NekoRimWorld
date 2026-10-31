@@ -10,10 +10,10 @@ internal static class AtomicWriteOperationTests
         public string ObjectId { get; set; } = ""; public string Field => "value"; public bool MayChangeByGame => false;
         public bool IsDestroyed => false;
         public object? NativeTarget => this;
-        public int Value, Writes; public bool FailWrite, FailValidation, FailRestore, IgnoreWrite; public Action<JToken>? Guard;
+        public int Value, Writes; public bool FailWrite, FailValidation, FailRestore, IgnoreWrite; public Action<JToken>? Guard; public Action? NativeEffect;
         public JToken Read() => new JValue(Value);
         public void Validate(JToken value) { Guard?.Invoke(value); if (FailValidation) throw new ArgumentException("invalid"); }
-        public void Write(JToken value) { if (!IgnoreWrite) Value = (int)value; Writes++; if (FailWrite) throw new InvalidOperationException("after mutation"); }
+        public void Write(JToken value) { if (!IgnoreWrite) Value = (int)value; Writes++; NativeEffect?.Invoke(); if (FailWrite) throw new InvalidOperationException("after mutation"); }
         public void Restore(JToken original) { if (FailRestore) throw new InvalidOperationException("restore failed"); Value = (int)original; }
     }
     private sealed class Resolver : IWriteFieldResolver {
@@ -31,6 +31,7 @@ internal static class AtomicWriteOperationTests
             new JObject { ["thing"] = "b", ["expect"] = expected2, ["value"] = 4 }) };
     internal static void Run() {
         NativeSafety();
+        FieldRollbackDoesNotReconstructNativeActions();
         var a = new FieldProbe { ObjectId = "a", Value = 1 }; var b = new FieldProbe { ObjectId = "b", Value = 2 };
         var resolver = new Resolver(); resolver.Fields.Add("a", a); resolver.Fields.Add("b", b);
         using (var op = new AtomicWriteOperation(resolver, Request(9), () => "epoch", false)) {
@@ -64,6 +65,22 @@ internal static class AtomicWriteOperationTests
         var thread = new System.Threading.Thread(() => wrongThread.Advance()); thread.Start(); thread.Join();
         Require(wrongThread.Outcome!.ErrorCode == "write_failed" && a.Value == 3 && b.Value == 4, "Wrong thread executed transaction.");
         Console.WriteLine("Atomic write tests passed: conflict, validation, rollback, epoch and single advance.");
+    }
+    private static void FieldRollbackDoesNotReconstructNativeActions()
+    {
+        bool interrupted = false;
+        var a = new FieldProbe { ObjectId = "a", Value = 1, NativeEffect = () => interrupted = true };
+        var b = new FieldProbe { ObjectId = "b", Value = 2, FailWrite = true };
+        var resolver = new Resolver(); resolver.Fields.Add("a", a); resolver.Fields.Add("b", b);
+        using (var preview = new AtomicWriteOperation(resolver, Request(), () => "epoch", true)) {
+            Require(preview.Advance() && preview.Outcome!.ErrorCode == null && !interrupted && a.Writes == 0,
+                "Dry-run invoked a native setter side effect.");
+        }
+        using (var write = new AtomicWriteOperation(resolver, Request(), () => "epoch", false)) {
+            Require(write.Advance() && write.Outcome!.ErrorCode == "write_failed" && a.Value == 1 && b.Value == 2,
+                "Failed batch did not restore its fields.");
+            Require(interrupted, "Field rollback pretended to reconstruct an interrupted native action.");
+        }
     }
     private static void NativeSafety()
     {

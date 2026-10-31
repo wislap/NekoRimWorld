@@ -85,7 +85,8 @@ internal static class JourneyEvaluation
                     definition = matches[0];
                 }
                 if (definition.category != ThingCategory.Item) throw ReadContext.Error("invalid_arguments", "Cargo changes support item definitions, not pawns or buildings: " + definition.defName);
-                grouped[definition] = checked((grouped.TryGetValue(definition, out int count) ? count : 0) + (int)request["quantity"]!);
+                try { grouped[definition] = checked((grouped.TryGetValue(definition, out int count) ? count : 0) + (int)request["quantity"]!); }
+                catch (OverflowException) { throw ReadContext.Error("invalid_arguments", "Combined cargo quantity exceeds the supported range."); }
             }
             foreach (var entry in grouped)
             {

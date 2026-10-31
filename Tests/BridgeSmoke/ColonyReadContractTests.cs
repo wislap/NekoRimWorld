@@ -26,7 +26,18 @@ internal static class ColonyReadContractTests
         Invalid(() => ColonyReadContract.Validate("inspect_storage", JObject.Parse("{ids:['storage']}")), "invalid_arguments");
         Require(catalog["tools"] == null, "Native operations do not become extra public tools");
         ColonyReadContract.Validate("inspect_research", JObject.Parse("{\"names\":[\"MicroelectronicsBasics\"],\"aspects\":[\"progress\",\"requirements\"]}"));
+        var nameSchema = ColonyReadContract.Parameters("inspect_research")["properties"]!["names"]!["items"]!;
+        Require((string?)nameSchema["pattern"] == @"\S" && nameSchema["maxLength"] == null, "Native names reject blanks without a new length cap");
+        ColonyReadContract.Validate("inspect_research", JObject.Parse("{names:['Simple meal']}"));
+        Invalid(() => ColonyReadContract.Validate("inspect_research", JObject.Parse("{names:['   ']}")), "invalid_arguments");
+        ColonyReadContract.Validate("evaluate_trade", JObject.Parse("{trader:{id:'t'},negotiator:{id:'p'},buy:[{item:'Simple meal',quantity:1}]}"));
+        Invalid(() => ColonyReadContract.Validate("evaluate_trade", JObject.Parse("{trader:{id:'t'},negotiator:{id:'p'},buy:[{item:'   ',quantity:1}]}")), "invalid_arguments");
         ColonyReadContract.Validate("evaluate_journey", JObject.Parse("{\"caravan\":{\"name\":\"采购队\"},\"destinations\":[{\"name\":\"据点\"}]}"));
+        ColonyReadContract.Validate("evaluate_trade", JObject.Parse("{trader:{id:'t'},negotiator:{id:'p'},buy:[{item:'Steel',quantity:2147483647}]}"));
+        Invalid(() => ColonyReadContract.Validate("evaluate_trade", JObject.Parse("{trader:{id:'t'},negotiator:{id:'p'},buy:[{item:'Steel',quantity:2147483648}]}")), "invalid_arguments");
+        Invalid(() => ColonyReadContract.Validate("evaluate_trade", JObject.Parse("{trader:{id:'t'},negotiator:{id:'p'},buy:[{quantity:1}]}")), "invalid_arguments");
+        Invalid(() => ColonyReadContract.Validate("evaluate_trade", JObject.Parse("{trader:{id:'t'},negotiator:{id:'p'},buy:[{item:'Steel',quantity:1,extra:true}]}")), "invalid_arguments");
+        Invalid(() => ColonyReadContract.Validate("evaluate_journey", JObject.Parse("{caravan:{id:'c'},destinations:[{id:'d'}],cargo_add:[{item:'Steel',quantity:2147483648}]}")), "invalid_arguments");
         ColonyReadContract.Validate("inspect_resources", JObject.Parse("{items:['WoodLog'],map:'current',aspects:['quantity','distribution']}"));
         ColonyReadContract.Validate("inspect_research", JObject.Parse("{items:['ComponentIndustrial'],aspects:['requirements']}"));
         ColonyReadContract.Validate("evaluate_journey", JObject.Parse("{caravan:{name:'采购队'},destinations:[{name:'据点'}],cargo_add:[{item:'WoodLog',quantity:40}]}"));

@@ -164,7 +164,9 @@ internal static class TradeReadings
             foreach (var request in basket.Cast<JObject>().GroupBy(item => (string)item["item"]!, StringComparer.OrdinalIgnoreCase))
             {
                 string name = request.Key;
-                int quantity = checked(request.Sum(item => (int)item["quantity"]!));
+                int quantity;
+                try { quantity = checked(request.Sum(item => (int)item["quantity"]!)); }
+                catch (OverflowException) { throw ReadContext.Error("invalid_arguments", "Combined basket quantity exceeds the supported range."); }
                 var population = direction == "buy" ? stock : colony;
                 var matching = population.Where(item => MatchesItem(item, name)).ToArray();
                 var groups = Group(matching);

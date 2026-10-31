@@ -15,16 +15,17 @@ internal static class ColonyReadContract
         ["version"] = Version,
         ["operations"] = new JArray(Operations.Select(op => new JObject { ["operation"] = op, ["parameters"] = Parameters(op) }))
     };
-    private static JObject Strings() => new() { ["type"] = "array", ["items"] = new JObject { ["type"] = "string", ["minLength"] = 1 }, ["minItems"] = 1 };
+    private static JObject Nonblank() => new() { ["type"] = "string", ["minLength"] = 1, ["pattern"] = @"\S" };
+    private static JObject Strings() => new() { ["type"] = "array", ["items"] = Nonblank(), ["minItems"] = 1 };
     private static JObject Reference(bool map = false)
     {
-        var properties = new JObject { ["id"] = new JObject { ["type"] = "string", ["minLength"] = 1 }, ["name"] = new JObject { ["type"] = "string", ["minLength"] = 1 } };
+        var properties = new JObject { ["id"] = Nonblank(), ["name"] = Nonblank() };
         if (map) properties["map"] = new JObject { ["type"] = "string" };
         return new JObject { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = properties,
             ["anyOf"] = new JArray(new JObject { ["required"] = new JArray("id") }, new JObject { ["required"] = new JArray("name") }) };
     }
     private static JObject Basket() => new() { ["type"] = "array", ["items"] = new JObject { ["type"] = "object", ["additionalProperties"] = false,
-        ["properties"] = new JObject { ["item"] = new JObject { ["type"] = "string", ["minLength"] = 1 }, ["quantity"] = new JObject { ["type"] = "integer", ["minimum"] = 1 } }, ["required"] = new JArray("item", "quantity") } };
+        ["properties"] = new JObject { ["item"] = Nonblank(), ["quantity"] = new JObject { ["type"] = "integer", ["minimum"] = 1, ["maximum"] = int.MaxValue } }, ["required"] = new JArray("item", "quantity") } };
     internal static JObject Parameters(string op)
     {
         var properties = new JObject();
@@ -36,7 +37,7 @@ internal static class ColonyReadContract
             properties["trader"] = Reference(true); properties["negotiator"] = Reference(true); properties["buy"] = Basket(); properties["sell"] = Basket(); required.Add("trader"); required.Add("negotiator");
         } else if (op == "inspect_storage") {
             properties["ids"] = Strings(); properties["ids"]!["maxItems"] = 1;
-            properties["map"] = new JObject { ["type"] = "string", ["minLength"] = 1 };
+            properties["map"] = Nonblank();
             properties["items"] = Strings(); properties["items"]!["maxItems"] = 32;
             properties["aspects"] = new JObject { ["type"] = "array", ["minItems"] = 1,
                 ["items"] = new JObject { ["type"] = "string", ["enum"] = new JArray("priority", "allows") },
@@ -50,13 +51,13 @@ internal static class ColonyReadContract
             properties["offset"] = new JObject { ["type"] = "integer", ["minimum"] = 0, ["default"] = 0 };
             if (op == "inspect_planet") {
                 properties["kind"] = new JObject { ["type"] = "string", ["enum"] = new JArray("world", "world_objects", "caravans") };
-                properties["faction"] = new JObject { ["type"] = "string" };
-                properties["category"] = new JObject { ["type"] = "string" };
+                properties["faction"] = Nonblank();
+                properties["category"] = Nonblank();
                 properties["near"] = new JObject { ["type"] = "object" };
             }
             if (op == "inspect_research") properties["items"] = Strings();
-            if (op == "inspect_resources") { properties["map"] = new JObject { ["type"] = "string" }; properties["items"] = Strings(); required.Add("items"); }
-            if (op == "inspect_trade") { properties["map"] = new JObject { ["type"] = "string" }; properties["items"] = Strings(); }
+            if (op == "inspect_resources") { properties["map"] = Nonblank(); properties["items"] = Strings(); required.Add("items"); }
+            if (op == "inspect_trade") { properties["map"] = Nonblank(); properties["items"] = Strings(); }
         }
         return new JObject { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = properties, ["required"] = required };
     }
@@ -72,6 +73,22 @@ internal static class ColonyReadContract
                 throw ReadContext.Error("invalid_arguments", "Invalid " + property.Name + " value.");
         }
         foreach (var key in ((JArray)schema["required"]!).Values<string>()) if (args[key!] == null) throw ReadContext.Error("invalid_arguments", "Missing " + key + ".");
+        foreach (string key in new[] { "buy", "sell", "cargo_add", "cargo_remove" }) {
+            if (args[key] is not JArray basket) continue;
+            foreach (var row in basket) {
+                if (row is not JObject item || item.Properties().Any(p => p.Name != "item" && p.Name != "quantity") ||
+                    item["item"]?.Type != JTokenType.String || string.IsNullOrWhiteSpace((string?)item["item"]) ||
+                    item["quantity"]?.Type != JTokenType.Integer)
+                    throw ReadContext.Error("invalid_arguments", "Basket needs an item and a positive 32-bit integer quantity.");
+                try {
+                    long quantity = (long)item["quantity"]!;
+                    if (quantity < 1 || quantity > int.MaxValue)
+                        throw ReadContext.Error("invalid_arguments", "Basket quantity must be a positive 32-bit integer.");
+                } catch (OverflowException) {
+                    throw ReadContext.Error("invalid_arguments", "Basket quantity must be a positive 32-bit integer.");
+                }
+            }
+        }
         foreach (string field in new[] { "ids", "names", "aspects", "items", "include" }) if (args[field] != null) Texts(args, field);
         if (operation == "inspect_storage") {
             if ((args["ids"] as JArray)?.Count != 1 || (args["items"] as JArray)?.Count > 32)

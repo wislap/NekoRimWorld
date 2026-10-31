@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Verse;
 
 namespace Neko.RimWorld;
@@ -22,6 +24,9 @@ internal static class VerseKnowledge
     private static readonly HashSet<Type> Types = new HashSet<Type>();
     private static string? directory;
     private static int visited;
+    private static long progressStarted, progressLast, extractionTicks, serializationTicks, enqueuedBytes;
+    private static int updateCount, uniqueCount, enqueuedCount, queueBackpressure;
+    private static bool producerFinished;
     private static readonly KnowledgeFields Fields = new KnowledgeFields(Reference, Forbidden);
 
     // Lifecycle callbacks may run during a long event; only arm work here.
@@ -30,6 +35,8 @@ internal static class VerseKnowledge
     private static void Initialize()
     {
         started = true;
+        progressStarted = Stopwatch.GetTimestamp();
+        progressLast = progressStarted;
         snapshot = new KnowledgeSnapshot();
         try
         {
@@ -53,6 +60,8 @@ internal static class VerseKnowledge
             // No trustworthy enumeration: retain the old file, never publish a misleading empty library.
             Log.Warning("[N.E.K.O RimWorld] Def knowledge initialization failed; old snapshot retained: " + exception.GetType().Name);
             publisher?.Fail(exception);
+            producerFinished = true;
+            LogProgress();
             Cleanup();
         }
     }
@@ -61,6 +70,7 @@ internal static class VerseKnowledge
     {
         if (Current.ProgramState != ProgramState.Playing || LongEventHandler.AnyEventNowOrWaiting) return;
         if (requested && !started) Initialize();
+        if (publisher != null) { updateCount++; MaybeLogProgress(); }
         if (publisher != null && publisher.Completion.IsCompleted)
         {
             if (publisher.IsFailed)
@@ -68,6 +78,8 @@ internal static class VerseKnowledge
             else
                 Log.Message("[N.E.K.O RimWorld] Offline Def knowledge published to ready.json.");
             var failed = publisher.IsFailed;
+            if (failed) producerFinished = true;
+            LogProgress();
             publisher.Dispose();
             publisher = null;
             if (failed) { Cleanup(); return; }
@@ -76,6 +88,7 @@ internal static class VerseKnowledge
         {
             // Cancellation is asynchronous; never wait on the game thread. The next frame
             // disposes the publisher after its worker has observed cancellation.
+            producerFinished = true;
             Cleanup();
             return;
         }
@@ -89,8 +102,10 @@ internal static class VerseKnowledge
                 if (publisher.IsFailed) { Cleanup(); return; }
                 if (pendingEntry != null)
                 {
-                    if (!publisher.TryEnqueueSerialized(pendingEntry)) return;
+                    if (!publisher.TryEnqueueSerialized(pendingEntry)) { queueBackpressure++; return; }
                     entryBytes += pendingEntryBytes + 1;
+                    enqueuedBytes = entryBytes;
+                    enqueuedCount++;
                     pendingEntry = null;
                     pendingEntryBytes = 0;
                     continue;
@@ -114,6 +129,7 @@ internal static class VerseKnowledge
                 { snapshot.Issue("Definition missing full type name or defName; omitted."); continue; }
                 var key = fullName + "/" + def.defName;
                 if (!Keys.Add(key)) continue;
+                uniqueCount = Keys.Count;
                 if (Keys.Count > KnowledgeSnapshot.MaxEntries) { snapshot.Issue("Entry count limit reached."); Finish(); return; }
                 var entry = new KnowledgeEntry
                 {
@@ -122,13 +138,18 @@ internal static class VerseKnowledge
                     SourceMod = def.modContentPack?.Name ?? "", PackageId = def.modContentPack?.PackageId ?? ""
                 };
                 if (def.modContentPack == null) snapshot.ProvenanceWarning("One or more definitions lack source mod metadata.");
+                var extractionStarted = Stopwatch.GetTimestamp();
                 try { Fields.Extract(def, entry); }
                 catch (Exception exception) when (KnowledgeFields.Recoverable(exception))
                 {
                     entry.Truncated = true;
                     snapshot.Issue("Field extraction failed for " + key + ": " + exception.GetType().Name);
                 }
-                var serialized = KnowledgeSnapshot.BoundAndSerialize(entry);
+                finally { extractionTicks += Stopwatch.GetTimestamp() - extractionStarted; }
+                var serializationStarted = Stopwatch.GetTimestamp();
+                string serialized;
+                try { serialized = KnowledgeSnapshot.BoundAndSerialize(entry); }
+                finally { serializationTicks += Stopwatch.GetTimestamp() - serializationStarted; }
                 var bytes = Encoding.UTF8.GetByteCount(serialized);
                 if (entry.Truncated) snapshot.Complete = false;
                 if (entryBytes + bytes + 1 > KnowledgeSnapshot.MaxSnapshotBytes - 8 * 1024 * 1024)
@@ -138,11 +159,14 @@ internal static class VerseKnowledge
                 }
                 if (!publisher.TryEnqueueSerialized(serialized))
                 {
+                    queueBackpressure++;
                     pendingEntry = serialized;
                     pendingEntryBytes = bytes;
                     return;
                 }
                 entryBytes += bytes + 1;
+                enqueuedBytes = entryBytes;
+                enqueuedCount++;
             }
             catch (Exception exception) when (KnowledgeFields.Recoverable(exception))
             {
@@ -157,12 +181,38 @@ internal static class VerseKnowledge
     {
         if (publisher == null || snapshot == null) return;
         publisher.Complete(snapshot);
+        producerFinished = true;
+        LogProgress();
         Cleanup();
+    }
+
+    private static void MaybeLogProgress()
+    {
+        var now = Stopwatch.GetTimestamp();
+        if (now - progressLast < 5L * Stopwatch.Frequency) return;
+        progressLast = now;
+        LogProgress();
+    }
+
+    private static void LogProgress()
+    {
+        if (progressStarted == 0) return;
+        var info = new JObject {
+            ["wall_seconds"] = (double)(Stopwatch.GetTimestamp() - progressStarted) / Stopwatch.Frequency,
+            ["update_count"] = updateCount, ["visited"] = visited, ["unique"] = uniqueCount,
+            ["enqueued"] = enqueuedCount, ["bytes"] = enqueuedBytes, ["queue_backpressure"] = queueBackpressure,
+            ["extraction_elapsed_ms"] = (double)extractionTicks * 1000 / Stopwatch.Frequency,
+            ["serialization_elapsed_ms"] = (double)serializationTicks * 1000 / Stopwatch.Frequency,
+            ["timing_basis"] = "monotonic_elapsed_not_thread_cpu", ["targetdir"] = directory,
+            ["producer_finished"] = producerFinished, ["publisher"] = publisher?.Progress()
+        };
+        Log.Message("[N.E.K.O RimWorld] Def knowledge progress " + info.ToString(Formatting.None));
     }
 
     private static void Cleanup()
     {
         definitions?.Dispose(); databases?.Dispose();
+        Fields.ClearMetadata();
         definitions = null; databases = null; snapshot = null;
         pendingEntry = null;
         pendingEntryBytes = 0;

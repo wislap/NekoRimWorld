@@ -23,6 +23,9 @@ internal sealed class KnowledgeFields
     private readonly Func<object, KnowledgeRelated?> defReference;
     private readonly Func<Type, bool> forbiddenType;
     private readonly Dictionary<object, string> seen = new Dictionary<object, string>(ReferenceEquality.Instance);
+    private readonly Dictionary<Type, FieldInfo[]> rootFields = new Dictionary<Type, FieldInfo[]>();
+    private readonly Dictionary<Type, FieldInfo[]> nestedFields = new Dictionary<Type, FieldInfo[]>();
+    private readonly HashSet<string> relatedKeys = new HashSet<string>(StringComparer.Ordinal);
     private KnowledgeEntry entry = null!;
     private int nodes;
 
@@ -37,40 +40,53 @@ internal sealed class KnowledgeFields
         entry = target;
         nodes = 0;
         seen.Clear();
+        relatedKeys.Clear();
+        foreach (var related in target.Related) relatedKeys.Add(related.Key);
         seen.Add(definition, "$");
         try { VisitObject(definition, "", 0); }
         finally
         {
             seen.Clear();
+            relatedKeys.Clear();
             entry = null!;
         }
     }
 
-    private void VisitObject(object value, string path, int depth)
+    // Called after a publication ends; types from the completed game are not retained.
+    internal void ClearMetadata() { rootFields.Clear(); nestedFields.Clear(); }
+
+    private FieldInfo[] FieldsFor(Type runtimeType, bool root)
     {
+        var cache = root ? rootFields : nestedFields;
+        if (cache.TryGetValue(runtimeType, out var cached)) return cached;
         var fields = new List<FieldInfo>();
         var names = new HashSet<string>(StringComparer.Ordinal);
-        for (var type = value.GetType(); type != null && type != typeof(object); type = type.BaseType)
+        for (var type = runtimeType; type != null && type != typeof(object); type = type.BaseType)
         {
             foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
             {
                 if (field.IsStatic || field.IsLiteral || field.IsNotSerialized || field.Name.StartsWith("<", StringComparison.Ordinal) ||
-                    path.Length == 0 && field.Name == "modContentPack" ||
-                    path.Length == 0 && (field.Name == "defName" || field.Name == "label" || field.Name == "description"))
+                    root && field.Name == "modContentPack" ||
+                    root && (field.Name == "defName" || field.Name == "label" || field.Name == "description"))
                     continue;
                 if (HasUnsavedAttribute(field) || !names.Add(field.Name)) continue;
                 fields.Add(field);
             }
         }
-
         fields.Sort((left, right) =>
         {
             var declaring = StringComparer.Ordinal.Compare(left.DeclaringType?.FullName, right.DeclaringType?.FullName);
             return declaring != 0 ? declaring : StringComparer.Ordinal.Compare(left.Name, right.Name);
         });
+        cached = fields.ToArray();
+        cache.Add(runtimeType, cached);
+        return cached;
+    }
 
+    private void VisitObject(object value, string path, int depth)
+    {
         var count = 0;
-        foreach (var field in fields)
+        foreach (var field in FieldsFor(value.GetType(), path.Length == 0))
         {
             if (++count > MaxFieldsPerObject)
             {
@@ -82,7 +98,6 @@ internal sealed class KnowledgeFields
                 Incomplete(path, "node limit");
                 return;
             }
-
             var fieldPath = path.Length == 0 ? field.Name : path + "." + field.Name;
             try
             {
@@ -268,7 +283,7 @@ internal sealed class KnowledgeFields
 
     private void AddRelated(KnowledgeRelated reference)
     {
-        if (entry.Related.Exists(item => item.Key == reference.Key)) return;
+        if (!relatedKeys.Add(reference.Key)) return;
         entry.Related.Add(reference);
     }
 

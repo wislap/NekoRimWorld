@@ -57,6 +57,14 @@ the opt-in bench controller to reject stale same-owner recovery and restrict its
 one-shot loader preparation. No new recovery tool or policy-pause permission is
 exposed to the model by this metadata.
 
+Offline Def publication reuses field metadata per runtime type and root/nested
+position during one publication, keeping the existing field values, ordering,
+limits and completeness rules. Related-key lookup retains first-seen output
+order; metadata is cleared when publication ends. The existing bounded queue,
+2ms cooperative work and atomic ready/hash contracts remain. Five-second progress
+summaries in Player.log distinguish extraction, queue and writer phases; elapsed
+time is not CPU time. The test-only frozen extractor is excluded from the game DLL.
+
 Read-only RimWorld 1.6 bridge for the N.E.K.O plugin. The v2 transport supports
 public_query.v2, world_observation.v2.3, native_behavior.v1 and the internal
 situation_snapshot.v1 consultation background. Reads run on the

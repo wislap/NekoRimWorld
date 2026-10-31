@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -72,6 +73,26 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
     private string? metadataJson;
     private Exception? failure;
     private int completed;
+    // Counters only: the game thread takes snapshots; the writer never calls Verse.
+    private int progressStage;
+    private long writtenEntries, writtenBytes, entryProcessingTicks, writeStarted, writeFinished, hashStarted, hashFinished, readyStarted, readyFinished;
+
+    private static double Milliseconds(long start, long end) => start == 0 ? 0 :
+        (double)((end == 0 ? Stopwatch.GetTimestamp() : end) - start) * 1000 / Stopwatch.Frequency;
+
+    internal JObject Progress()
+    {
+        var stage = Volatile.Read(ref progressStage);
+        var names = new[] { "starting", "writing", "hashing", "ready", "complete", "failed" };
+        return new JObject {
+            ["stage"] = names[stage], ["written_entries"] = Interlocked.Read(ref writtenEntries),
+            ["written_bytes"] = Interlocked.Read(ref writtenBytes),
+            ["entry_processing_elapsed_ms"] = (double)Interlocked.Read(ref entryProcessingTicks) * 1000 / Stopwatch.Frequency,
+            ["write_elapsed_ms"] = Milliseconds(Interlocked.Read(ref writeStarted), Interlocked.Read(ref writeFinished)),
+            ["hash_elapsed_ms"] = Milliseconds(Interlocked.Read(ref hashStarted), Interlocked.Read(ref hashFinished)),
+            ["ready_elapsed_ms"] = Milliseconds(Interlocked.Read(ref readyStarted), Interlocked.Read(ref readyFinished))
+        };
+    }
 
     internal KnowledgeStreamingPublisher(string directory)
     {
@@ -125,6 +146,8 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
         var published = false;
         try
         {
+            Interlocked.Exchange(ref writeStarted, Stopwatch.GetTimestamp());
+            Volatile.Write(ref progressStage, 1);
             Directory.CreateDirectory(directory);
             var id = Guid.NewGuid().ToString("N");
             var filename = "snapshot-" + id + ".json";
@@ -138,9 +161,12 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
             {
                 var opening = utf8.GetBytes("{\"entries\":[");
                 limited.Write(opening, 0, opening.Length);
+                Interlocked.Exchange(ref writtenBytes, limited.Position);
                 var first = true;
                 foreach (var entry in entries.GetConsumingEnumerable(cancellation.Token))
                 {
+                    var entryStarted = Stopwatch.GetTimestamp();
+                    try {
                     if (!first) limited.WriteByte((byte)',');
                     var bytes = utf8.GetBytes(entry);
                     var offset = limited.Position;
@@ -163,19 +189,31 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
                         ["description"] = string.Join(" ", descriptions), ["offset"] = offset,
                         ["length"] = bytes.Length, ["sha256"] = Digest(bytes) });
                     limited.Write(bytes, 0, bytes.Length);
+                    Interlocked.Exchange(ref writtenBytes, limited.Position);
+                    Interlocked.Increment(ref writtenEntries);
                     first = false;
+                    } finally {
+                        Interlocked.Add(ref entryProcessingTicks, Stopwatch.GetTimestamp() - entryStarted);
+                    }
                 }
                 cancellation.Token.ThrowIfCancellationRequested();
                 lock (stateLock) finalMetadata = metadataJson ?? throw new InvalidOperationException("Publication completed without metadata.");
                 var ending = utf8.GetBytes("]," + finalMetadata.Substring(1, finalMetadata.Length - 2) + "}");
                 limited.Write(ending, 0, ending.Length);
+                Interlocked.Exchange(ref writtenBytes, limited.Position);
                 limited.Flush();
                 file.Flush(true);
             }
             cancellation.Token.ThrowIfCancellationRequested();
+            Interlocked.Exchange(ref writeFinished, Stopwatch.GetTimestamp());
+            Interlocked.Exchange(ref hashStarted, Stopwatch.GetTimestamp());
+            Volatile.Write(ref progressStage, 2);
             string dataHash;
             using (var input = File.OpenRead(temporary))
             using (var hash = System.Security.Cryptography.SHA256.Create()) dataHash = Hex(hash.ComputeHash(input));
+            Interlocked.Exchange(ref hashFinished, Stopwatch.GetTimestamp());
+            Interlocked.Exchange(ref readyStarted, Stopwatch.GetTimestamp());
+            Volatile.Write(ref progressStage, 3);
             File.Move(temporary, dataPath);
             temporary = "";
             var metadata = JObject.Parse(finalMetadata);
@@ -192,9 +230,12 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
             KnowledgeFiles.ReplaceTemporary(readyTemporary, Path.Combine(directory, "ready.json"));
             readyTemporary = "";
             published = true;
+            Interlocked.Exchange(ref readyFinished, Stopwatch.GetTimestamp());
+            Volatile.Write(ref progressStage, 4);
         }
         catch (Exception exception)
         {
+            Volatile.Write(ref progressStage, 5);
             if (!(exception is OperationCanceledException && cancellation.IsCancellationRequested)) Fail(exception);
         }
         finally

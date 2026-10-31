@@ -38,6 +38,7 @@ internal static class Program
             ColonyWriteCatalogTests.Run();
             SpatialRouteTests.Run();
             KnowledgeTests.Run();
+            KnowledgeFieldCacheTests.Run();
             KnowledgeCompletenessTests.Run();
             KnowledgeBoundsTests.Run();
             KnowledgeStreamingPublisherTests.Run();

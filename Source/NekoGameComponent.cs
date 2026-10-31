@@ -40,6 +40,7 @@ public sealed class NekoGameComponent : GameComponent
     private bool lastWindowPaused;
     private long lastEventHeartbeat;
     private bool loadPausePristine;
+    private long sessionInitialPauseTransitionRevision;
 
     internal void ObserveUserPause(bool before) {
         var tm = Find.TickManager; if (tm == null) return;
@@ -81,6 +82,7 @@ public sealed class NekoGameComponent : GameComponent
             ["connection_epoch"] = policyConnection, ["colony_id"] = colonyId, ["load_epoch"] = loadEpoch,
             ["owner"] = pausePolicy.Owner, ["pause_revision"] = pausePolicy.Revision,
             ["pause_transition_revision"] = pausePolicy.TransitionRevision, ["load_pause_pristine"] = loadPausePristine,
+            ["session_initial_pause_transition_revision"] = sessionInitialPauseTransitionRevision,
             ["session_source"] = sessionSource, ["session_start_tick"] = sessionStartTick,
             ["speed_paused"] = Find.TickManager.CurTimeSpeed == TimeSpeed.Paused,
             ["windows_force_paused"] = Find.WindowStack?.WindowsForcePause ?? false
@@ -211,6 +213,7 @@ public sealed class NekoGameComponent : GameComponent
         writeCoordinator.StartEpoch(loadEpoch);
         snapshotSequence = 0;
         policyConnection = ""; pausePolicy.Bind("", colonyId, loadEpoch); pausePolicy.Observe("unknown");
+        sessionInitialPauseTransitionRevision = pausePolicy.TransitionRevision;
         lastSpeedPaused = Find.TickManager?.CurTimeSpeed == TimeSpeed.Paused;
         lastForcePaused = Find.TickManager?.ForcePaused ?? false;
         lastWindowPaused = Find.WindowStack?.WindowsForcePause ?? false;

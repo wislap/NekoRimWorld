@@ -1,8 +1,6 @@
 using System;
 using System.Diagnostics;
 using System.Linq;
-using System.Reflection;
-using HarmonyLib;
 using Newtonsoft.Json.Linq;
 using Verse;
 
@@ -41,14 +39,4 @@ internal static class NativePauseWindows
                 Records.Opened(stack, Current.Game, window, window.ID, Find.TickManager?.TicksGame, frames);
         } catch (Exception) { /* Evidence capture cannot alter window behavior. */ }
     }
-}
-
-[HarmonyPatch(typeof(WindowStack), nameof(WindowStack.Add), new Type[] { typeof(Window) })]
-internal static class NativePauseWindowOpenHook
-{
-    private static bool Prepare() => NativeEventHookSupport.KnownBinary();
-    private static void Prefix(Window window, out string[] __state) => __state = window != null && window.forcePause
-        && UnityData.IsInMainThread && Current.ProgramState == ProgramState.Playing && Current.Game != null
-        ? NativePauseWindows.CaptureFrames() : Array.Empty<string>();
-    private static void Postfix(WindowStack __instance, Window window, string[] __state) => NativePauseWindows.Opened(__instance, window, __state);
 }

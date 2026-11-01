@@ -24,6 +24,7 @@ public sealed class NekoRimWorldMod : Mod
 
     private static NekoRimWorldMod? activeMod;
     private bool hooksReady;
+    private bool attentionHookReady;
     private readonly NekoRimWorldSettings settings;
     private string portBuffer;
     private Vector2 settingsScrollPosition;
@@ -41,6 +42,7 @@ public sealed class NekoRimWorldMod : Mod
         new Harmony(PackageId).PatchAll(Assembly.GetExecutingAssembly());
         activeMod = this;
         hooksReady = NativeEventHookSupport.Ready();
+        attentionHookReady = SituationAlertObservations.HookMatched;
         ApplyRuntimeConfiguration();
         Log.Message("[N.E.K.O RimWorld] Bridge mod loaded; enable and pair it in Mod Settings to connect.");
     }
@@ -111,11 +113,15 @@ public sealed class NekoRimWorldMod : Mod
     internal static void RefreshNativeCapabilities() {
         var mod = activeMod; if (mod == null) return;
         bool ready = NativeEventHookSupport.Ready();
-        if (ready != mod.hooksReady) { mod.hooksReady = ready; mod.ApplyRuntimeConfiguration(); }
+        bool attentionReady = SituationAlertObservations.HookMatched;
+        if (ready != mod.hooksReady || attentionReady != mod.attentionHookReady) { mod.hooksReady = ready; mod.attentionHookReady = attentionReady; mod.ApplyRuntimeConfiguration(); }
     }
 
-    private string[] AdvertisedCapabilities() => hooksReady
-        ? Capabilities.Concat(new[] { "colony_events.v1", "colony_pause.v1", "colony_pause.policy.v1", "colony_pause.resume_guard.v1" }).ToArray() : Capabilities;
+    private string[] AdvertisedCapabilities() {
+        var capabilities = hooksReady
+            ? Capabilities.Concat(new[] { "colony_events.v1", "colony_pause.v1", "colony_pause.policy.v1", "colony_pause.resume_guard.v1" }) : Capabilities;
+        return AttentionFacts.CapabilityAvailable(hooksReady, attentionHookReady) ? capabilities.Concat(new[] { "colony_attention.v1" }).ToArray() : capabilities.ToArray();
+    }
 
     private void ApplyRuntimeConfiguration()
     {

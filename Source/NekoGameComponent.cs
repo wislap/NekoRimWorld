@@ -35,6 +35,8 @@ public sealed class NekoGameComponent : GameComponent
     private string sessionSource = "";
     private long sessionStartTick;
     private readonly PausePolicy pausePolicy = new();
+    private readonly AttentionSignals attentionSignals = new();
+    private bool attentionSubscribed;
     private bool lastSpeedPaused;
     private bool lastForcePaused;
     private bool lastWindowPaused;
@@ -158,6 +160,7 @@ public sealed class NekoGameComponent : GameComponent
             return;
         }
 
+        if (attentionSubscribed && AttentionFacts.CapabilityAvailable(NativeEventHookSupport.Ready(), SituationAlertObservations.HookMatched)) attentionSignals.Sample(data => NekoRimWorldMod.Runtime.EmitEvent(CurrentSession(), data));
         VerseKnowledge.Update();
         NekoRimWorldMod.RefreshNativeCapabilities();
         RefreshPolicy();
@@ -206,6 +209,7 @@ public sealed class NekoGameComponent : GameComponent
         sessionStartTick = Find.TickManager?.TicksGame ?? 0;
         WorldObservation.Clear();
         SituationAlertObservations.Clear();
+        attentionSignals.Reset(); attentionSubscribed = false;
         VerseKnowledge.StartOnce();
         GameImplementation.PrepareBehaviorReads();
         NormalizeOrCreateColonyId();
@@ -281,7 +285,7 @@ public sealed class NekoGameComponent : GameComponent
             }
             RefreshPolicy();
             if (policyConnection != request.ConnectionEpoch || !runtime.EnableEvents(request, out bool firstSubscription)) return;
-            if (firstSubscription) Emit("session_snapshot", new JObject { ["origin"] = sessionSource, ["start_tick"] = sessionStartTick });
+            if (firstSubscription) { attentionSignals.Reset(); attentionSubscribed = true; Emit("session_snapshot", new JObject { ["origin"] = sessionSource, ["start_tick"] = sessionStartTick }); }
             pausePolicy.Set(((JArray)request.Payload.Arguments!["pause_on_letter_defs"]!).Values<string>()!);
             var data = (JObject)request.Payload.Arguments.DeepClone();
             Emit("policy_changed", (JObject)data.DeepClone());

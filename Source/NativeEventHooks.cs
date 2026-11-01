@@ -55,3 +55,13 @@ internal static class NativeLetterEvents
         }
     }
 }
+
+[HarmonyPatch(typeof(WindowStack), nameof(WindowStack.Add), new Type[] { typeof(Window) })]
+internal static class NativePauseWindowOpenHook
+{
+    private static bool Prepare() => NativeEventHookSupport.KnownBinary();
+    private static void Prefix(Window window, out string[] __state) => __state = window != null && window.forcePause
+        && UnityData.IsInMainThread && Current.ProgramState == ProgramState.Playing && Current.Game != null
+        ? NativePauseWindows.CaptureFrames() : Array.Empty<string>();
+    private static void Postfix(WindowStack __instance, Window window, string[] __state) => NativePauseWindows.Opened(__instance, window, __state);
+}

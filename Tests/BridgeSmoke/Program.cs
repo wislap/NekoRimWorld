@@ -37,6 +37,7 @@ internal static class Program
             StorageMapSelectionTests.Run();
             ColonyWriteContractTests.Run();
             EventContractTests.Run();
+            AttentionFactsTests.Run();
             ColonyWriteCatalogTests.Run();
             SpatialRouteTests.Run();
             KnowledgeTests.Run();

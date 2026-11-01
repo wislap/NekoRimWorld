@@ -18,6 +18,8 @@ internal static class Program
         try
         {
             if (args.Length == 1 && args[0] == "--write-loopback") { ColonyWriteContractTests.Run(); WriteLoopback(); return 0; }
+            if (args.Length == 1 && args[0] == "--pause-evidence") { EventContractTests.Run(); Console.WriteLine("Pause evidence contract tests passed."); return 0; }
+            if (args.Length == 1 && args[0] == "--attention-facts") { AttentionFactsTests.Run(); Console.WriteLine("Attention facts contract tests passed."); return 0; }
             if (args.Length == 2 && args[0] == "--export-native-behavior") { File.WriteAllText(args[1], ActionInspectionContract.Catalog().ToString()); return 0; }
             if (args.Length == 2 && args[0] == "--export-catalog") { QueryEngineTests.ExportCatalog(args[1]); return 0; }
             if (args.Length == 2 && args[0] == "--export-write-catalog") { File.WriteAllText(args[1], VerseWriteFieldResolver.DescribeCatalog().ToString() + "\n"); return 0; }

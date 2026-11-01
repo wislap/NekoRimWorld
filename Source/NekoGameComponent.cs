@@ -71,26 +71,39 @@ public sealed class NekoGameComponent : GameComponent
         ["paused"] = tm.Paused, ["speed_paused"] = tm.CurTimeSpeed == TimeSpeed.Paused,
         ["force_paused"] = tm.ForcePaused, ["windows_force_paused"] = Find.WindowStack?.WindowsForcePause ?? false, ["source"] = source,
         ["pause_windows"] = NativePauseWindows.Capture(),
+        ["pause_state"] = PauseEvidenceWithoutObservation(tm),
         ["pause_revision"] = pausePolicy.Revision
         });
     }
     // Native ownership metadata, also inspected by the isolated study controller.
     // This observes state only; it is not a model recovery capability.
+    private JObject PauseEvidenceWithoutObservation(TickManager tm) {
+        if (!NativeEventHookSupport.Ready() || Find.WindowStack == null || Current.ProgramState != ProgramState.Playing ||
+            NekoRimWorldMod.Runtime.ReadyConnectionEpoch != policyConnection)
+            return new JObject { ["status"] = "unavailable" };
+        return pausePolicy.Evidence(policyConnection, colonyId, loadEpoch, tm.TicksGame,
+            tm.Paused, tm.CurTimeSpeed == TimeSpeed.Paused, tm.ForcePaused, Find.WindowStack.WindowsForcePause);
+    }
+    internal JObject PauseEvidence() {
+        try {
+            CapturePauseState();
+            return PauseEvidenceWithoutObservation(Find.TickManager);
+        } catch (Exception) { return new JObject { ["status"] = "unavailable" }; }
+    }
     internal JObject CapturePauseState() {
         if (!UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing ||
             !NativeEventHookSupport.Ready() || Find.TickManager == null || Find.WindowStack == null)
             throw new InvalidOperationException("Native pause ownership metadata is unavailable.");
         RefreshPolicy(); ObservePause();
-        return new JObject {
-            ["connection_epoch"] = policyConnection, ["colony_id"] = colonyId, ["load_epoch"] = loadEpoch,
-            ["owner"] = pausePolicy.Owner, ["pause_revision"] = pausePolicy.Revision,
-            ["pause_transition_revision"] = pausePolicy.TransitionRevision, ["load_pause_pristine"] = loadPausePristine,
-            ["session_initial_pause_transition_revision"] = sessionInitialPauseTransitionRevision,
-            ["session_source"] = sessionSource, ["session_start_tick"] = sessionStartTick,
-            ["speed_paused"] = Find.TickManager.CurTimeSpeed == TimeSpeed.Paused,
-            ["windows_force_paused"] = Find.WindowStack?.WindowsForcePause ?? false,
-            ["pause_windows"] = NativePauseWindows.Capture()
-        };
+        var tm = Find.TickManager;
+        var state = pausePolicy.State(policyConnection, colonyId, loadEpoch, tm.TicksGame,
+            tm.Paused, tm.CurTimeSpeed == TimeSpeed.Paused, tm.ForcePaused, Find.WindowStack.WindowsForcePause);
+        state["load_pause_pristine"] = loadPausePristine;
+        state["session_initial_pause_transition_revision"] = sessionInitialPauseTransitionRevision;
+        state["session_source"] = sessionSource;
+        state["session_start_tick"] = sessionStartTick;
+        state["pause_windows"] = NativePauseWindows.Capture();
+        return state;
     }
     private void ObservePause() {
         var tm = Find.TickManager; if (tm == null) return;
@@ -285,7 +298,7 @@ public sealed class NekoGameComponent : GameComponent
             }
             RefreshPolicy();
             if (policyConnection != request.ConnectionEpoch || !runtime.EnableEvents(request, out bool firstSubscription)) return;
-            if (firstSubscription) { attentionSignals.Reset(); attentionSubscribed = true; Emit("session_snapshot", new JObject { ["origin"] = sessionSource, ["start_tick"] = sessionStartTick }); }
+            if (firstSubscription) { attentionSignals.Reset(); attentionSubscribed = true; Emit("session_snapshot", new JObject { ["origin"] = sessionSource, ["start_tick"] = sessionStartTick, ["pause_state"] = PauseEvidence() }); }
             pausePolicy.Set(((JArray)request.Payload.Arguments!["pause_on_letter_defs"]!).Values<string>()!);
             var data = (JObject)request.Payload.Arguments.DeepClone();
             Emit("policy_changed", (JObject)data.DeepClone());

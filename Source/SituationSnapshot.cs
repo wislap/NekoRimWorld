@@ -49,6 +49,7 @@ internal sealed class SituationSnapshot : FrameQueryOperation
         result["sample"] = new JObject { ["colony_id"] = session.ColonyId, ["load_epoch"] = session.LoadEpoch,
             ["map_id"] = map?.GetUniqueLoadID(), ["started_tick"] = startTick, ["finished_tick"] = session.GameTick,
             ["snapshot_sequence"] = session.SnapshotSequence, ["atomic"] = false };
+        result["attention_snapshot"] = AttentionFacts.SnapshotFromSections(sections, (JObject)result["sample"]!);
         result["read_ms"] = ElapsedMilliseconds;
         if (Encoding.UTF8.GetByteCount(result.ToString(Formatting.None)) > ProtocolCodec.MaxFrameBytes - 8192) { Outcome = QueryOutcome.Failure("situation_result_too_large", "Native situation exceeds the bridge delivery bound; no silent truncation."); return; }
         Outcome = new QueryOutcome { Status = partial ? ProtocolStatuses.Partial : ProtocolStatuses.Ok, Data = result,
@@ -65,6 +66,7 @@ internal sealed class SituationSnapshot : FrameQueryOperation
             ["force_paused"] = Find.TickManager.ForcePaused, ["windows_force_paused"] = Find.WindowStack.WindowsForcePause,
             ["force_pause_window"] = Find.WindowStack.Windows.FirstOrDefault(w => w.forcePause)?.GetType().FullName,
             ["pause_windows"] = NativePauseWindows.Capture(),
+            ["pause_state"] = game.GetComponent<NekoGameComponent>()?.PauseEvidence() ?? new JObject { ["status"] = "unavailable" },
             ["automatic_pause_mode"] = Prefs.AutomaticPauseMode.ToString(),
             ["pause_meaning"] = "paused is native Paused: speed_paused or force_paused. force_paused also covers long events, tile picking and gravship cutscenes besides force-pause windows. Letter auto-pause sets the speed to paused, so state alone cannot tell it from a user pause; a letter whose pauses_game is true paused the game on arrival." };
         result["map"] = new JObject { ["id"] = map.GetUniqueLoadID(), ["tile"] = map.Tile.ToString(), ["is_player_home"] = map.IsPlayerHome,

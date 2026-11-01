@@ -38,6 +38,25 @@ internal static class AttentionFacts
         }
         return output;
     }
+    // A situation read spans frames: retain each partition's sample interval,
+    // and use the existing bounded event projection without rereading the world.
+    internal static JObject SnapshotFromSections(JObject sections, JObject sample)
+    {
+        var snapshot = new JObject { ["kind"] = "attention_snapshot", ["sample_tick"] = sample["finished_tick"]?.DeepClone(),
+            ["map_id"] = sample["map_id"]?.DeepClone(), ["sample"] = sample.DeepClone() };
+        foreach (var category in Categories) {
+            var section = sections[category] as JObject;
+            var input = section == null ? new JObject { ["status"] = "unavailable", ["items"] = new JArray() }
+                                        : (JObject)section.DeepClone();
+            if ((string?)input["status"] == "reading")
+                input["status"] = ((JArray?)input["items"])?.Count > 0 ? "partial" : "unavailable";
+            var part = Project(category, input);
+            part["sample_tick"] = input["sample_tick"]?.DeepClone();
+            part["finished_tick"] = input["finished_tick"]?.DeepClone();
+            snapshot[category] = part;
+        }
+        return snapshot;
+    }
     private static JArray Targets(JArray? input, JObject row)
     {
         var result = new JArray(); bool complete = true;

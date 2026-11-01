@@ -109,6 +109,17 @@ Paused: speed_paused or force_paused), `speed_paused` (CurTimeSpeed==Paused),
 (PrefsData setting), and optional `force_pause_window` (first forcePause window type).
 Letter auto-pause sets speed to paused; state alone cannot distinguish it from user pause.
 
+The existing `session_snapshot` and `pause_changed` event data, and the existing
+`read_situation` clock, add a `pause_state` object from the same native pause
+policy. `status=observed` includes `connection_epoch`, `colony_id`, `load_epoch`,
+`sampled_tick`, `owner`, `pause_revision`, `pause_transition_revision`, `paused`,
+`speed_paused`, `force_paused`, and `windows_force_paused`. The owner can be
+`unknown`, including after a connection or load change. `status=unavailable`
+contains no claimed ownership when hooks, state or binding cannot be observed.
+Scope and sampled tick identify the evidence; a later pause transition can make it
+stale. This adds no query, control action or recovery permission. Existing
+`set_paused` request and result shapes remain unchanged.
+
 Current pause events, ownership snapshots and situation clocks also include optional
 `pause_windows` evidence. The existing public `game` query exposes the same reader
 as `pause_windows.*` (native GraphQL `Game.pauseWindows`), so callers can request a
@@ -239,6 +250,15 @@ quality. These capabilities alone do not enable automatic play.
 ### Colony attention facts (`colony_attention.v1`)
 
 This capability is advertised independently only when the native event hooks and alert report observation hook are available, with `colony_events.v1`; delivery uses the existing event subscription and `game_event` envelope. A new connection subscription or load epoch starts with `attention_snapshot`; changing the selected map also replaces the baseline. No model-side subscription or pause-policy field is added. Letters retain the existing `letter` event. Events use the existing cursor: a cursor gap is a loss of evidence, not permission to assume missing changes did not occur.
+
+The existing `read_situation` response also contains `data.attention_snapshot`,
+assembled from that same read's three sections without another native scan. It
+has `kind=attention_snapshot`, `sample_tick` equal to the read's finished tick,
+`map_id`, the same bounded partitions, and a `sample` copy of the parent read's
+scope and non-atomic interval. Each partition additionally retains its own
+`sample_tick` and `finished_tick`. A missing or interrupted partition is
+`unavailable` or `partial`; this projection does not publish a game event or
+imply an atomic snapshot. Existing consumers may omit the additional field.
 
 Each snapshot contains `sample_tick`, `map_id`, and `alerts`, `conditions`, `threats` partitions. Each partition has `status` (`ok`, `partial`, or `unavailable`), `source`, `rows`, and `truncated` when the row limit is reached. Alert rows contain epoch-scoped observer `id`, native `runtime_type`, `label`, `priority`, `native_computed_tick`, `targets` and `targets_complete`. Condition rows contain native instance `id`, `def`, `scope`, `map_id`, `start_tick`, `duration_ticks`, and `permanent`. Threat rows contain native group or target `id`, `kind`, faction, visible count, map and member identities when available. Alert targets carry identity and map; cell targets carry map and coordinates. Alert cache scope is global, including other maps. Threats are visible spawned members of the current map's native player-hostile target cache, not all enemies or a prediction of attack.
 

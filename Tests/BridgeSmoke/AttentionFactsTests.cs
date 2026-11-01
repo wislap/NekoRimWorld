@@ -43,6 +43,24 @@ internal static class AttentionFactsTests
         for (int i = 0; i <= AttentionFacts.MaxRows; i++) oversizedItems.Add(new JObject { ["id"] = "c" + i, ["def"] = "ColdSnap" });
         var bounded = AttentionFacts.Project("conditions", oversized);
         Check((string?)bounded["status"] == "partial" && (bool?)bounded["truncated"] == true && ((JArray)bounded["rows"]!).Count == AttentionFacts.MaxRows, "bounded partition");
+        var situationSample = JObject.Parse("{colony_id:'c',load_epoch:'e',map_id:'m',started_tick:10,finished_tick:20,snapshot_sequence:4,atomic:false}");
+        var situationSections = new JObject { ["alerts"] = section.DeepClone(), ["conditions"] = oversized.DeepClone(),
+            ["threats"] = JObject.Parse("{status:'reading',sample_tick:15,items:[]}") };
+        ((JObject)situationSections["alerts"]!)["sample_tick"] = 11;
+        ((JObject)situationSections["alerts"]!)["finished_tick"] = 13;
+        var situation = AttentionFacts.SnapshotFromSections(situationSections, situationSample);
+        Check((string?)situation["kind"] == "attention_snapshot" && (int?)situation["sample_tick"] == 20 &&
+              (string?)situation["map_id"] == "m" && JToken.DeepEquals(situation["sample"], situationSample), "situation sample identity");
+        Check((int?)situation["alerts"]?["sample_tick"] == 11 && (int?)situation["alerts"]?["finished_tick"] == 13 &&
+              (string?)situation["alerts"]?["rows"]?[0]?["id"] == "a", "existing partition facts and times");
+        Check((string?)situation["conditions"]?["status"] == "partial" && ((JArray)situation["conditions"]!["rows"]!).Count == AttentionFacts.MaxRows &&
+              (string?)situation["threats"]?["status"] == "unavailable", "incomplete and bounded partitions");
+        var interrupted = AttentionFacts.SnapshotFromSections(new JObject { ["alerts"] = JObject.Parse("{status:'reading',items:[{id:'known'}]}") }, situationSample);
+        Check((string?)interrupted["alerts"]?["status"] == "partial" && ((JArray)interrupted["alerts"]!["rows"]!).Count == 1,
+              "interrupted partition retains known rows without claiming completeness");
+        var missingSituation = AttentionFacts.SnapshotFromSections(new JObject(), situationSample);
+        Check((string?)missingSituation["alerts"]?["status"] == "unavailable" && ((JArray)missingSituation["alerts"]!["rows"]!).Count == 0,
+              "missing partition is unknown, not observed empty");
         var vectors = JObject.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "colony-attention-v1", "vectors.json")));
         foreach (var value in (JArray)vectors["valid"]!) ProtocolCodec.Deserialize(System.Text.Encoding.UTF8.GetBytes(value.ToString()));
     }

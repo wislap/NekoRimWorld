@@ -10,6 +10,23 @@ internal static class EventContractTests {
         foreach (var row in (JArray)vectors["valid"]!) ProtocolCodec.Deserialize(Encoding.UTF8.GetBytes(row.ToString()));
         foreach (var row in (JArray)vectors["invalid"]!) { try { ProtocolCodec.Deserialize(Encoding.UTF8.GetBytes(row.ToString())); throw new Exception("Invalid event vector accepted"); } catch (ProtocolException) { } }
         }
+        var pauseVectors = JObject.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "colony-pause-state-v1", "vectors.json")));
+        var evidencePolicy = new PausePolicy();
+        var unboundState = evidencePolicy.State("", "colony", "epoch", 100, true, true, false, false);
+        if ((string?)unboundState["owner"] != "unknown" || (string?)unboundState["connection_epoch"] != "" ||
+            (string?)unboundState["colony_id"] != "colony" || (string?)unboundState["load_epoch"] != "epoch" ||
+            (bool?)unboundState["speed_paused"] != true || (long?)unboundState["pause_transition_revision"] != 0)
+            throw new Exception("Internal pause state unavailable before bridge connection");
+        if (!JToken.DeepEquals(evidencePolicy.Evidence("", "colony", "epoch", 100, true, true, false, false), pauseVectors["unavailable"]))
+            throw new Exception("Unbound pause evidence must be unavailable");
+        evidencePolicy.Bind("connection", "colony", "epoch"); evidencePolicy.Observe("planner");
+        if (!JToken.DeepEquals(evidencePolicy.Evidence("connection", "colony", "epoch", 100, true, true, false, false), pauseVectors["observed"]))
+            throw new Exception("Pause evidence does not match authority vector");
+        if (!JToken.DeepEquals(evidencePolicy.Evidence("other", "colony", "epoch", 100, true, true, false, false), pauseVectors["unavailable"]))
+            throw new Exception("Mismatched pause binding exposed prior owner");
+        evidencePolicy.Bind("new", "colony", "epoch");
+        if ((string?)evidencePolicy.Evidence("new", "colony", "epoch", 101, true, true, true, true)["owner"] != "unknown")
+            throw new Exception("Reconnection retained prior owner");
         if (PausePolicy.ObservedSource(false, true) != "window" || PausePolicy.ObservedSource(true, true) != "unknown" || PausePolicy.ObservedSource(false, false) != "unknown") throw new Exception("Ambiguous pause source misclassified");
         var policy = new PausePolicy(); policy.Bind("c1", "colony", "epoch1");
         long initialRevision = policy.Revision;

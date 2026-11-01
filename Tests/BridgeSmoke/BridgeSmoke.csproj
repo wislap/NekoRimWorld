@@ -11,6 +11,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../../Source/AttentionSignals.cs" Link="AttentionSignals.cs" />
+    <Compile Include="../../Source/AttentionSamplingMetrics.cs" Link="AttentionSamplingMetrics.cs" />
     <Compile Include="../../Source/AttentionFacts.cs" Link="AttentionFacts.cs" />
     <None Include="../fixtures/colony-attention-v1/vectors.json" Link="colony-attention-v1/vectors.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../fixtures/colony-pause-policy-v1/vectors.json" Link="colony-pause-policy-v1/vectors.json" CopyToOutputDirectory="PreserveNewest" />

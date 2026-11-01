@@ -50,6 +50,7 @@ internal sealed class SituationSnapshot : FrameQueryOperation
             ["map_id"] = map?.GetUniqueLoadID(), ["started_tick"] = startTick, ["finished_tick"] = session.GameTick,
             ["snapshot_sequence"] = session.SnapshotSequence, ["atomic"] = false };
         result["attention_snapshot"] = AttentionFacts.SnapshotFromSections(sections, (JObject)result["sample"]!);
+        result["attention_sampling_metrics"] = game.GetComponent<NekoGameComponent>()?.AttentionSamplingMetrics();
         result["read_ms"] = ElapsedMilliseconds;
         if (Encoding.UTF8.GetByteCount(result.ToString(Formatting.None)) > ProtocolCodec.MaxFrameBytes - 8192) { Outcome = QueryOutcome.Failure("situation_result_too_large", "Native situation exceeds the bridge delivery bound; no silent truncation."); return; }
         Outcome = new QueryOutcome { Status = partial ? ProtocolStatuses.Partial : ProtocolStatuses.Ok, Data = result,

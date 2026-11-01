@@ -274,3 +274,14 @@ imply an atomic snapshot. Existing consumers may omit the additional field.
 Each snapshot contains `sample_tick`, `map_id`, and `alerts`, `conditions`, `threats` partitions. Each partition has `status` (`ok`, `partial`, or `unavailable`), `source`, `rows`, and `truncated` when the row limit is reached. Alert rows contain epoch-scoped observer `id`, native `runtime_type`, `label`, `priority`, `native_computed_tick`, `targets` and `targets_complete`. Condition rows contain native instance `id`, `def`, `scope`, `map_id`, `start_tick`, `duration_ticks`, and `permanent`. Threat rows contain native group or target `id`, `kind`, faction, visible count, map and member identities when available. Alert targets carry identity and map; cell targets carry map and coordinates. Alert cache scope is global, including other maps. Threats are visible spawned members of the current map's native player-hostile target cache, not all enemies or a prediction of attack.
 
 Subsequent `attention_changed` events contain `sample_tick`, `map_id`, `category`, `source_id`, `edge`, `previous`, and `current`. Edges are `appeared`, `disappeared`, `priority_changed`, `targets_changed`, and `status_changed`; target changes additionally include `added` and `removed`. Conditions and threats use appearance and disappearance edges. A partial or unavailable partition does not establish absence; a target removal requires a complete target set. When a complete observation resumes, it is compared with retained confirmed facts. Unknown priority is not treated as a priority change. At most 32 rows per partition and 16 targets per row are projected, with strings capped at 128 characters. An overlength identity is omitted and marks the partition partial; other text truncation is marked on the row. A partially published sample retains its progress and retries only the first unsent event; the sample baseline advances after all its events are queued. The authoritative envelope examples are `Tests/fixtures/colony-attention-v1/vectors.json`.
+
+`read_situation` native data includes `attention_sampling_metrics`, a per-load-epoch
+aggregate of due samples and separate pending-publication retries. Each part reports
+count, failure count, total and maximum Stopwatch milliseconds. `sample` covers
+section reads, projection, difference and initial delivery; the section and
+`difference_delivery` measurements are overlapping subparts, not additive totals.
+A failed sample includes incomplete/unavailable sections, rejected publication or
+an exception. Pending retries are counted separately. Alert reads use the native
+cache and exclude the native `GetReport` computation; the existing alerts
+`observer_metrics` separately measures detached report observation overhead.
+This diagnostic is not a model-facing situation field and adds no events.

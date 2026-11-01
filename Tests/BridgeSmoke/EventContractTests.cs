@@ -10,6 +10,23 @@ internal static class EventContractTests {
         foreach (var row in (JArray)vectors["valid"]!) ProtocolCodec.Deserialize(Encoding.UTF8.GetBytes(row.ToString()));
         foreach (var row in (JArray)vectors["invalid"]!) { try { ProtocolCodec.Deserialize(Encoding.UTF8.GetBytes(row.ToString())); throw new Exception("Invalid event vector accepted"); } catch (ProtocolException) { } }
         }
+        long counter = 0;
+        var timings = new AttentionSamplingMetrics(() => counter, 1000);
+        long sample = timings.Start();
+        long part = timings.Start(); counter += 3; timings.Record("alerts", part, false);
+        part = timings.Start(); counter += 7; timings.Record("conditions", part, true);
+        part = timings.Start(); counter += 2; timings.Record("difference_delivery", part, true);
+        timings.Record("sample", sample, true);
+        sample = timings.Start(); counter += 5; timings.Record("sample", sample, false);
+        part = timings.Start(); counter += 4; timings.Record("pending_delivery", part, false);
+        var parts = timings.Report()["parts"]!;
+        if ((long?)parts["sample"]?["count"] != 2 || (long?)parts["sample"]?["failures"] != 1 ||
+            (double?)parts["sample"]?["total_ms"] != 17 || (double?)parts["sample"]?["max_ms"] != 12 ||
+            (long?)parts["conditions"]?["failures"] != 1 || (double?)parts["conditions"]?["total_ms"] != 7 ||
+            (long?)parts["difference_delivery"]?["failures"] != 1 || (long?)parts["pending_delivery"]?["count"] != 1 ||
+            (long?)parts["threats"]?["count"] != 0) throw new Exception("Attention sample aggregation failed");
+        timings.Clear();
+        if ((long?)timings.Report()["parts"]?["sample"]?["count"] != 0) throw new Exception("Attention metrics epoch reset failed");
         var clock1 = MonotonicEvidence.Capture(); var clock2 = MonotonicEvidence.Capture();
         if ((string?)clock1["domain"] != (string?)clock2["domain"] || (long?)clock1["frequency"] <= 0 ||
             (long?)clock1["frequency"] != (long?)clock2["frequency"] || (long?)clock2["counter"] < (long?)clock1["counter"])

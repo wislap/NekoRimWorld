@@ -36,6 +36,7 @@ public sealed class NekoGameComponent : GameComponent
     private long sessionStartTick;
     private readonly PausePolicy pausePolicy = new();
     private readonly AttentionSignals attentionSignals = new();
+    internal JObject AttentionSamplingMetrics() => attentionSignals.Metrics();
     private bool attentionSubscribed;
     private bool lastSpeedPaused;
     private bool lastForcePaused;
@@ -229,6 +230,7 @@ public sealed class NekoGameComponent : GameComponent
         sessionStartTick = Find.TickManager?.TicksGame ?? 0;
         WorldObservation.Clear();
         SituationAlertObservations.Clear();
+        attentionSignals.ClearMetrics();
         attentionSignals.Reset(); attentionSubscribed = false;
         VerseKnowledge.StartOnce();
         GameImplementation.PrepareBehaviorReads();

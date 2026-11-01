@@ -40,6 +40,7 @@ internal static class Program
             ColonyWriteContractTests.Run();
             EventContractTests.Run();
             AttentionFactsTests.Run();
+            AttentionSamplingTests.Run();
             ColonyWriteCatalogTests.Run();
             SpatialRouteTests.Run();
             KnowledgeTests.Run();

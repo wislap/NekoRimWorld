@@ -120,6 +120,17 @@ Scope and sampled tick identify the evidence; a later pause transition can make 
 stale. This adds no query, control action or recovery permission. Existing
 `set_paused` request and result shapes remain unchanged.
 
+Native pause evidence in `session_snapshot`, `pause_changed` and `heartbeat`,
+and private realtime-control receipts, may include `monotonic` with `domain`,
+`frequency` and `counter`. The counter is sampled from the native process
+monotonic clock; domain identifies that process instance and frequency gives ticks
+per second. Compare counters only within the same domain and frequency. The
+realtime timing window runs from the existing declaration receipt to the native
+terminal receipt; parent-process mode-close elapsed time is a separate measure.
+The evidence describes wall time in observed pause states, not CPU simulation time.
+It is omitted from model-facing situation and event presentations and grants no
+control or recovery permission. Older records may omit it.
+
 Current pause events, ownership snapshots and situation clocks also include optional
 `pause_windows` evidence. The existing public `game` query exposes the same reader
 as `pause_windows.*` (native GraphQL `Game.pauseWindows`), so callers can request a

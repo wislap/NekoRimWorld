@@ -10,6 +10,10 @@ internal static class EventContractTests {
         foreach (var row in (JArray)vectors["valid"]!) ProtocolCodec.Deserialize(Encoding.UTF8.GetBytes(row.ToString()));
         foreach (var row in (JArray)vectors["invalid"]!) { try { ProtocolCodec.Deserialize(Encoding.UTF8.GetBytes(row.ToString())); throw new Exception("Invalid event vector accepted"); } catch (ProtocolException) { } }
         }
+        var clock1 = MonotonicEvidence.Capture(); var clock2 = MonotonicEvidence.Capture();
+        if ((string?)clock1["domain"] != (string?)clock2["domain"] || (long?)clock1["frequency"] <= 0 ||
+            (long?)clock1["frequency"] != (long?)clock2["frequency"] || (long?)clock2["counter"] < (long?)clock1["counter"])
+            throw new Exception("Native monotonic clock domain changed or moved backwards");
         var pauseVectors = JObject.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "colony-pause-state-v1", "vectors.json")));
         var evidencePolicy = new PausePolicy();
         var unboundState = evidencePolicy.State("", "colony", "epoch", 100, true, true, false, false);

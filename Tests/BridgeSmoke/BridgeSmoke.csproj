@@ -15,6 +15,7 @@
     <None Include="../fixtures/colony-attention-v1/vectors.json" Link="colony-attention-v1/vectors.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../fixtures/colony-pause-policy-v1/vectors.json" Link="colony-pause-policy-v1/vectors.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../../Source/PausePolicy.cs" Link="PausePolicy.cs" />
+    <Compile Include="../../Source/MonotonicEvidence.cs" Link="MonotonicEvidence.cs" />
     <None Include="../fixtures/colony-pause-state-v1/vectors.json" Link="colony-pause-state-v1/vectors.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../../Source/NativePauseWindowRecords.cs" Link="NativePauseWindowRecords.cs" />
     <None Include="../fixtures/colony-events-v1/vectors.json" Link="colony-events-v1/vectors.json" CopyToOutputDirectory="PreserveNewest" />

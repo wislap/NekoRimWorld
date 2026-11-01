@@ -81,8 +81,10 @@ public sealed class NekoGameComponent : GameComponent
         if (!NativeEventHookSupport.Ready() || Find.WindowStack == null || Current.ProgramState != ProgramState.Playing ||
             NekoRimWorldMod.Runtime.ReadyConnectionEpoch != policyConnection)
             return new JObject { ["status"] = "unavailable" };
-        return pausePolicy.Evidence(policyConnection, colonyId, loadEpoch, tm.TicksGame,
+        var state = pausePolicy.Evidence(policyConnection, colonyId, loadEpoch, tm.TicksGame,
             tm.Paused, tm.CurTimeSpeed == TimeSpeed.Paused, tm.ForcePaused, Find.WindowStack.WindowsForcePause);
+        state["monotonic"] = MonotonicEvidence.Capture();
+        return state;
     }
     internal JObject PauseEvidence() {
         try {
@@ -98,6 +100,7 @@ public sealed class NekoGameComponent : GameComponent
         var tm = Find.TickManager;
         var state = pausePolicy.State(policyConnection, colonyId, loadEpoch, tm.TicksGame,
             tm.Paused, tm.CurTimeSpeed == TimeSpeed.Paused, tm.ForcePaused, Find.WindowStack.WindowsForcePause);
+        state["monotonic"] = MonotonicEvidence.Capture();
         state["load_pause_pristine"] = loadPausePristine;
         state["session_initial_pause_transition_revision"] = sessionInitialPauseTransitionRevision;
         state["session_source"] = sessionSource;
@@ -178,7 +181,11 @@ public sealed class NekoGameComponent : GameComponent
         NekoRimWorldMod.RefreshNativeCapabilities();
         RefreshPolicy();
         ObservePause();
-        if (Stopwatch.GetTimestamp() - lastEventHeartbeat >= Stopwatch.Frequency * 2) { lastEventHeartbeat = Stopwatch.GetTimestamp(); Emit("heartbeat", new JObject()); }
+        if (Stopwatch.GetTimestamp() - lastEventHeartbeat >= Stopwatch.Frequency * 2) {
+            lastEventHeartbeat = Stopwatch.GetTimestamp();
+            var tm = Find.TickManager;
+            Emit("heartbeat", new JObject { ["pause_state"] = tm == null ? new JObject { ["status"] = "unavailable" } : PauseEvidenceWithoutObservation(tm) });
+        }
 
         var runtime = NekoRimWorldMod.Runtime;
         var tickManager = Find.TickManager;

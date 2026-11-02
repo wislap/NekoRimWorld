@@ -48,11 +48,14 @@ internal static class ReadDependencyTests
         var virtualGraph=ReadMethodDependencies.Collect(new[]{virtualRoot},typeof(ReadDependencyTests).Assembly);
         if(!virtualGraph.Contains(implementation) || !virtualGraph.Contains(leaf) || virtualGraph.Contains(unrelated))
             throw new Exception("Virtual read dependency omitted a reachable implementation");
+        var cachedEdges=ReadMethodDependencies.CachedEdgeCount;
         Parallel.For(0,8,_=> {
             var repeated=ReadMethodDependencies.Collect(new[]{virtualRoot},typeof(ReadDependencyTests).Assembly);
             if(!new HashSet<MethodBase>(virtualGraph).SetEquals(repeated))
                 throw new Exception("Concurrent metadata reuse changed the reachable dependency set");
         });
+        if(ReadMethodDependencies.CachedEdgeCount!=cachedEdges)
+            throw new Exception("Repeated roots rebuilt outgoing metadata edges");
         var shared=typeof(SharedReader).GetMethod("Read",BindingFlags.Instance|BindingFlags.NonPublic)!;
         if(virtualGraph.Count(m=>ReadMethodDependencies.Identity(m)==ReadMethodDependencies.Identity(shared))!=1)
             throw new Exception("Inherited reflected aliases inflated the dependency graph");

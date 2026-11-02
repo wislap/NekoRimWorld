@@ -11,37 +11,64 @@ using Newtonsoft.Json.Linq;
 
 namespace Neko.RimWorld;
 
+// Frozen on the game thread after bounding; no Verse object crosses the queue.
+internal sealed class KnowledgePublicationEntry
+{
+    internal readonly byte[] Bytes;
+    internal readonly string Key;
+    internal readonly string[] Names;
+    internal readonly string Description;
+    internal KnowledgePublicationEntry(byte[] bytes, string key, string[] names, string description)
+    { Bytes = bytes; Key = key; Names = names; Description = description; }
+
+    internal static KnowledgePublicationEntry Capture(KnowledgeEntry entry)
+    {
+        var serialized = KnowledgeSnapshot.BoundAndSerialize(entry);
+        var names = new List<string>();
+        Action<string> add = value => { if (!string.IsNullOrEmpty(value) && !names.Contains(value)) names.Add(value); };
+        add(entry.DefName); add(entry.Label);
+        var descriptions = new List<string> { entry.Description };
+        foreach (var fact in entry.Facts) {
+            var leaf = fact.Name.Substring(fact.Name.LastIndexOf('.') + 1);
+            if (leaf.Equals("label", StringComparison.OrdinalIgnoreCase)) add(fact.Value);
+            else if (leaf.Equals("description", StringComparison.OrdinalIgnoreCase)) descriptions.Add(fact.Value);
+        }
+        return new KnowledgePublicationEntry(new UTF8Encoding(false, true).GetBytes(serialized), entry.Key,
+            names.ToArray(), string.Join(" ", descriptions));
+    }
+}
+
 internal sealed class KnowledgeEntryQueue : IDisposable
 {
     internal const int Capacity = 4;
     internal const long ByteCapacity = 8L * 1024 * 1024;
 
-    private readonly BlockingCollection<string> items = new BlockingCollection<string>(Capacity);
+    private readonly BlockingCollection<KnowledgePublicationEntry> items = new BlockingCollection<KnowledgePublicationEntry>(Capacity);
     private readonly object gate = new object();
     private long queuedBytes;
 
-    internal bool TryAdd(string json)
+    internal bool TryAdd(KnowledgePublicationEntry entry)
     {
-        if (json == null) throw new ArgumentNullException(nameof(json));
-        var bytes = Encoding.UTF8.GetByteCount(json);
+        if (entry == null) throw new ArgumentNullException(nameof(entry));
+        var bytes = entry.Bytes.Length;
         if (bytes > ByteCapacity) throw new InvalidDataException("Entry exceeds streaming queue byte limit.");
         lock (gate)
         {
             if (items.IsAddingCompleted || queuedBytes + bytes > ByteCapacity) return false;
-            if (!items.TryAdd(json)) return false;
+            if (!items.TryAdd(entry)) return false;
             queuedBytes += bytes;
             return true;
         }
     }
 
-    internal IEnumerable<string> GetConsumingEnumerable(CancellationToken token) =>
+    internal IEnumerable<KnowledgePublicationEntry> GetConsumingEnumerable(CancellationToken token) =>
         Consume(items.GetConsumingEnumerable(token));
 
-    private IEnumerable<string> Consume(IEnumerable<string> source)
+    private IEnumerable<KnowledgePublicationEntry> Consume(IEnumerable<KnowledgePublicationEntry> source)
     {
         foreach (var item in source)
         {
-            lock (gate) queuedBytes -= Encoding.UTF8.GetByteCount(item);
+            lock (gate) queuedBytes -= item.Bytes.Length;
             yield return item;
         }
     }
@@ -62,7 +89,7 @@ internal sealed class KnowledgeEntryQueue : IDisposable
     public void Dispose() => items.Dispose();
 }
 
-// The producer owns Verse DTOs; after TryEnqueueSerialized returns the writer only sees strings.
+// The producer owns mutable DTOs; the writer only sees frozen bytes and index fields.
 internal sealed class KnowledgeStreamingPublisher : IDisposable
 {
     private readonly KnowledgeEntryQueue entries = new KnowledgeEntryQueue();
@@ -75,7 +102,7 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
     private int completed;
     // Counters only: the game thread takes snapshots; the writer never calls Verse.
     private int progressStage;
-    private long writtenEntries, writtenBytes, entryProcessingTicks, writeStarted, writeFinished, hashStarted, hashFinished, readyStarted, readyFinished;
+    private long writtenEntries, writtenBytes, entryProcessingTicks, hashTicks, writeStarted, writeFinished, readyStarted, readyFinished;
 
     private static double Milliseconds(long start, long end) => start == 0 ? 0 :
         (double)((end == 0 ? Stopwatch.GetTimestamp() : end) - start) * 1000 / Stopwatch.Frequency;
@@ -89,7 +116,8 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
             ["written_bytes"] = Interlocked.Read(ref writtenBytes),
             ["entry_processing_elapsed_ms"] = (double)Interlocked.Read(ref entryProcessingTicks) * 1000 / Stopwatch.Frequency,
             ["write_elapsed_ms"] = Milliseconds(Interlocked.Read(ref writeStarted), Interlocked.Read(ref writeFinished)),
-            ["hash_elapsed_ms"] = Milliseconds(Interlocked.Read(ref hashStarted), Interlocked.Read(ref hashFinished)),
+            ["hash_mode"] = "streaming_sha256",
+            ["hash_elapsed_ms"] = (double)Interlocked.Read(ref hashTicks) * 1000 / Stopwatch.Frequency,
             ["ready_elapsed_ms"] = Milliseconds(Interlocked.Read(ref readyStarted), Interlocked.Read(ref readyFinished))
         };
     }
@@ -104,11 +132,11 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
     internal Exception? Failure => Volatile.Read(ref failure);
     internal bool IsFailed => Failure != null || cancellation.IsCancellationRequested;
 
-    internal bool TryEnqueueSerialized(string json)
+    internal bool TryEnqueue(KnowledgePublicationEntry entry)
     {
-        if (json == null) throw new ArgumentNullException(nameof(json));
+        if (entry == null) throw new ArgumentNullException(nameof(entry));
         if (IsFailed || Volatile.Read(ref completed) != 0) return false;
-        return entries.TryAdd(json);
+        return entries.TryAdd(entry);
     }
 
     internal void Complete(KnowledgeSnapshot metadata)
@@ -156,6 +184,7 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
             var utf8 = new UTF8Encoding(false, true);
             var index = new JArray();
             string finalMetadata;
+            string dataHash;
             using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024))
             using (var limited = new StreamingLimitStream(file, KnowledgeSnapshot.MaxSnapshotBytes))
             {
@@ -168,25 +197,10 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
                     var entryStarted = Stopwatch.GetTimestamp();
                     try {
                     if (!first) limited.WriteByte((byte)',');
-                    var bytes = utf8.GetBytes(entry);
+                    var bytes = entry.Bytes;
                     var offset = limited.Position;
-                    var record = JObject.Parse(entry);
-                    var names = new JArray();
-                    var seenNames = new HashSet<string>(StringComparer.Ordinal);
-                    Action<string?> addName = value => { if (!string.IsNullOrEmpty(value) && seenNames.Add(value!)) names.Add(value); };
-                    addName((string?)record["def_name"]);
-                    addName((string?)record["label"]);
-                    var descriptions = new List<string> { (string?)record["description"] ?? "" };
-                    if (record["facts"] is JArray facts)
-                        foreach (var fact in facts)
-                        {
-                            var name = (string?)fact["name"] ?? "";
-                            var leaf = name.Substring(name.LastIndexOf('.') + 1);
-                            if (leaf.Equals("label", StringComparison.OrdinalIgnoreCase)) addName((string?)fact["value"]);
-                            else if (leaf.Equals("description", StringComparison.OrdinalIgnoreCase)) descriptions.Add((string?)fact["value"] ?? "");
-                        }
-                    index.Add(new JObject { ["key"] = record["key"], ["names"] = names,
-                        ["description"] = string.Join(" ", descriptions), ["offset"] = offset,
+                    index.Add(new JObject { ["key"] = entry.Key, ["names"] = new JArray(entry.Names),
+                        ["description"] = entry.Description, ["offset"] = offset,
                         ["length"] = bytes.Length, ["sha256"] = Digest(bytes) });
                     limited.Write(bytes, 0, bytes.Length);
                     Interlocked.Exchange(ref writtenBytes, limited.Position);
@@ -201,17 +215,13 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
                 var ending = utf8.GetBytes("]," + finalMetadata.Substring(1, finalMetadata.Length - 2) + "}");
                 limited.Write(ending, 0, ending.Length);
                 Interlocked.Exchange(ref writtenBytes, limited.Position);
+                dataHash = limited.FinishHash();
+                Interlocked.Exchange(ref hashTicks, limited.HashTicks);
                 limited.Flush();
                 file.Flush(true);
             }
             cancellation.Token.ThrowIfCancellationRequested();
             Interlocked.Exchange(ref writeFinished, Stopwatch.GetTimestamp());
-            Interlocked.Exchange(ref hashStarted, Stopwatch.GetTimestamp());
-            Volatile.Write(ref progressStage, 2);
-            string dataHash;
-            using (var input = File.OpenRead(temporary))
-            using (var hash = System.Security.Cryptography.SHA256.Create()) dataHash = Hex(hash.ComputeHash(input));
-            Interlocked.Exchange(ref hashFinished, Stopwatch.GetTimestamp());
             Interlocked.Exchange(ref readyStarted, Stopwatch.GetTimestamp());
             Volatile.Write(ref progressStage, 3);
             File.Move(temporary, dataPath);
@@ -270,6 +280,14 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
         private readonly Stream inner;
         private readonly long limit;
         private long written;
+        private readonly System.Security.Cryptography.SHA256 hash = System.Security.Cryptography.SHA256.Create();
+        internal long HashTicks { get; private set; }
+        internal string FinishHash() {
+            var start = Stopwatch.GetTimestamp();
+            hash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+            HashTicks += Stopwatch.GetTimestamp() - start;
+            return Hex(hash.Hash!);
+        }
         internal StreamingLimitStream(Stream inner, long limit) { this.inner = inner; this.limit = limit; }
         public override bool CanRead => false;
         public override bool CanSeek => false;
@@ -284,8 +302,11 @@ internal sealed class KnowledgeStreamingPublisher : IDisposable
         {
             if (count > limit - written) throw new InvalidDataException("Snapshot exceeds byte limit; old snapshot retained.");
             inner.Write(buffer, offset, count);
+            var start = Stopwatch.GetTimestamp();
+            hash.TransformBlock(buffer, offset, count, buffer, offset);
+            HashTicks += Stopwatch.GetTimestamp() - start;
             written += count;
         }
-        protected override void Dispose(bool disposing) { if (disposing) inner.Flush(); base.Dispose(disposing); }
+        protected override void Dispose(bool disposing) { if (disposing) { hash.Dispose(); inner.Flush(); } base.Dispose(disposing); }
     }
 }

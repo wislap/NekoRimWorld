@@ -15,7 +15,7 @@ internal static class VerseKnowledge
     private static bool requested;
     private static KnowledgeSnapshot? snapshot;
     private static KnowledgeStreamingPublisher? publisher;
-    private static string? pendingEntry;
+    private static KnowledgePublicationEntry? pendingEntry;
     private static int pendingEntryBytes;
     private static long entryBytes;
     private static IEnumerator<Type>? databases;
@@ -41,6 +41,10 @@ internal static class VerseKnowledge
         try
         {
             directory = KnowledgeFiles.DirectoryPath();
+            if (StartupPreparation.Current.ReuseKnowledge(directory)) {
+                Log.Message("[N.E.K.O RimWorld] Reusing declared offline Def documentation with its original provenance; not a current-world observation.");
+                producerFinished = true; snapshot = null; return;
+            }
             publisher = new KnowledgeStreamingPublisher(directory);
             snapshot.GameVersion = global::RimWorld.VersionControl.CurrentVersionStringWithRev;
             snapshot.Language = LanguageDatabase.activeLanguage?.folderName ?? "";
@@ -94,15 +98,16 @@ internal static class VerseKnowledge
         }
         if (snapshot == null || databases == null || publisher == null) return;
         var clock = Stopwatch.StartNew();
-        // Cooperative 2 ms / 8 Defs per frame; one field traversal cannot be preempted.
-        for (var processed = 0; processed < 8 && clock.Elapsed.TotalMilliseconds < 2; processed++)
+        // Startup may spend more of a paused frame; the ordinary gameplay budget stays small.
+        var startup = StartupPreparation.Current.IsStudy;
+        for (var processed = 0; processed < (startup ? 128 : 8) && clock.Elapsed.TotalMilliseconds < (startup ? 12 : 2); processed++)
         {
             try
             {
                 if (publisher.IsFailed) { Cleanup(); return; }
                 if (pendingEntry != null)
                 {
-                    if (!publisher.TryEnqueueSerialized(pendingEntry)) { queueBackpressure++; return; }
+                    if (!publisher.TryEnqueue(pendingEntry)) { queueBackpressure++; return; }
                     entryBytes += pendingEntryBytes + 1;
                     enqueuedBytes = entryBytes;
                     enqueuedCount++;
@@ -147,17 +152,17 @@ internal static class VerseKnowledge
                 }
                 finally { extractionTicks += Stopwatch.GetTimestamp() - extractionStarted; }
                 var serializationStarted = Stopwatch.GetTimestamp();
-                string serialized;
-                try { serialized = KnowledgeSnapshot.BoundAndSerialize(entry); }
+                KnowledgePublicationEntry serialized;
+                try { serialized = KnowledgePublicationEntry.Capture(entry); }
                 finally { serializationTicks += Stopwatch.GetTimestamp() - serializationStarted; }
-                var bytes = Encoding.UTF8.GetByteCount(serialized);
+                var bytes = serialized.Bytes.Length;
                 if (entry.Truncated) snapshot.Complete = false;
                 if (entryBytes + bytes + 1 > KnowledgeSnapshot.MaxSnapshotBytes - 8 * 1024 * 1024)
                 {
                     snapshot.Issue("Snapshot byte budget reached; remaining definitions omitted.");
                     Finish(); return;
                 }
-                if (!publisher.TryEnqueueSerialized(serialized))
+                if (!publisher.TryEnqueue(serialized))
                 {
                     queueBackpressure++;
                     pendingEntry = serialized;

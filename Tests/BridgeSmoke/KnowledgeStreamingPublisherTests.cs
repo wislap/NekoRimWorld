@@ -9,6 +9,7 @@ namespace Neko.RimWorld;
 
 internal static class KnowledgeStreamingPublisherTests
 {
+    private static KnowledgePublicationEntry Raw(string text) => new KnowledgePublicationEntry(System.Text.Encoding.UTF8.GetBytes(text), "", Array.Empty<string>(), "");
     internal static void Run()
     {
         WritesCompleteJsonAndPreservesOrder();
@@ -26,12 +27,12 @@ internal static class KnowledgeStreamingPublisherTests
         {
             var metadata = new KnowledgeSnapshot { GameVersion = "fixture", Language = "English" };
             var publisher = new KnowledgeStreamingPublisher(directory);
-            Require(publisher.TryEnqueueSerialized(Entry("one")), "first entry was rejected");
-            Require(publisher.TryEnqueueSerialized(Entry("two")), "second entry was rejected");
+            Require(publisher.TryEnqueue(Entry("one")), "first entry was rejected");
+            Require(publisher.TryEnqueue(Entry("two")), "second entry was rejected");
             metadata.Language = "mutated before completion";
             publisher.Complete(metadata);
             metadata.Language = "changed after handoff";
-            Require(!publisher.TryEnqueueSerialized(Entry("late")), "closed publisher accepted a late entry");
+            Require(!publisher.TryEnqueue(Entry("late")), "closed publisher accepted a late entry");
             publisher.Completion.GetAwaiter().GetResult();
             Require(!publisher.IsFailed, "successful publication was marked failed");
             publisher.Dispose();
@@ -66,23 +67,23 @@ internal static class KnowledgeStreamingPublisherTests
         using (var queue = new KnowledgeEntryQueue())
         {
             for (var index = 0; index < KnowledgeEntryQueue.Capacity; index++)
-                Require(queue.TryAdd("x"), "queue rejected an item below capacity");
-            Require(!queue.TryAdd("x"), "full queue accepted an item without blocking");
+                Require(queue.TryAdd(Raw("x")), "queue rejected an item below capacity");
+            Require(!queue.TryAdd(Raw("x")), "full queue accepted an item without blocking");
             queue.CompleteAdding();
             Require(queue.GetConsumingEnumerable(CancellationToken.None).Count() == 4, "close dropped queued entries");
-            Require(!queue.TryAdd("late"), "closed queue accepted an item");
+            Require(!queue.TryAdd(Raw("late")), "closed queue accepted an item");
         }
         using (var queue = new KnowledgeEntryQueue())
         {
             var large = new string('x', (int)KnowledgeEntryQueue.ByteCapacity);
-            Require(queue.TryAdd(large), "8 MiB entry rejected");
-            Require(!queue.TryAdd("x"), "byte capacity not enforced");
+            Require(queue.TryAdd(Raw(large)), "8 MiB entry rejected");
+            Require(!queue.TryAdd(Raw("x")), "byte capacity not enforced");
             using (var consumer = queue.GetConsumingEnumerable(CancellationToken.None).GetEnumerator())
             {
-                Require(consumer.MoveNext() && consumer.Current == large, "queue changed entry");
-                Require(queue.TryAdd("retry"), "drained bytes not released");
+                Require(consumer.MoveNext() && Encoding.UTF8.GetString(consumer.Current.Bytes) == large, "queue changed entry");
+                Require(queue.TryAdd(Raw("retry")), "drained bytes not released");
                 queue.CompleteAdding();
-                Require(consumer.MoveNext() && consumer.Current == "retry", "retry order changed");
+                Require(consumer.MoveNext() && Encoding.UTF8.GetString(consumer.Current.Bytes) == "retry", "retry order changed");
                 Require(!consumer.MoveNext(), "closed queue did not terminate");
             }
         }
@@ -96,11 +97,11 @@ internal static class KnowledgeStreamingPublisherTests
             var path = Path.Combine(directory, "ready.json");
             File.WriteAllText(path, "old");
             var publisher = new KnowledgeStreamingPublisher(directory);
-            Require(publisher.TryEnqueueSerialized(Entry("cancelled")), "entry rejected before cancellation");
+            Require(publisher.TryEnqueue(Entry("cancelled")), "entry rejected before cancellation");
             Require(!publisher.Completion.IsCompleted, "writer finished without metadata handoff");
             publisher.Fail(new OperationCanceledException("test cancellation"));
             publisher.Completion.GetAwaiter().GetResult();
-            Require(publisher.IsFailed && !publisher.TryEnqueueSerialized(Entry("late")), "cancelled publisher remained open");
+            Require(publisher.IsFailed && !publisher.TryEnqueue(Entry("late")), "cancelled publisher remained open");
             publisher.Dispose();
             Require(File.ReadAllText(path) == "old", "cancelled publication replaced old file");
             Require(Directory.GetFiles(directory, "snapshot-*.json").Length == 0, "cancelled publication leaked an immutable payload");
@@ -117,7 +118,7 @@ internal static class KnowledgeStreamingPublisherTests
             var path = Path.Combine(directory, "ready.json");
             File.WriteAllText(path, "{\"old\":true}", new UTF8Encoding(false));
             var publisher = new KnowledgeStreamingPublisher(directory);
-            publisher.TryEnqueueSerialized(Entry("new"));
+            publisher.TryEnqueue(Entry("new"));
             var metadata = new KnowledgeSnapshot { Language = "\ud800" };
             publisher.Complete(metadata);
             publisher.Completion.GetAwaiter().GetResult();
@@ -137,7 +138,7 @@ internal static class KnowledgeStreamingPublisherTests
         {
             File.WriteAllText(Path.Combine(directory, "ready.json"), "old");
             var publisher = new KnowledgeStreamingPublisher(directory);
-            publisher.TryEnqueueSerialized(Entry("closed"));
+            publisher.TryEnqueue(Entry("closed"));
             publisher.Complete(new KnowledgeSnapshot());
             publisher.Completion.GetAwaiter().GetResult();
             publisher.Dispose();
@@ -179,8 +180,8 @@ internal static class KnowledgeStreamingPublisherTests
         finally { Delete(directory); }
     }
 
-    private static string Entry(string key) => "{\"key\":\"" + key + "\",\"type\":\"Fixture\",\"def_name\":\"" + key +
-        "\",\"label\":\"\",\"description\":\"\",\"source_mod\":\"\",\"package_id\":\"\",\"facts\":[],\"related\":[],\"diagnostics\":[],\"truncated\":false}";
+    private static KnowledgePublicationEntry Entry(string key) => KnowledgePublicationEntry.Capture(
+        new KnowledgeEntry { Key = key, Type = "Fixture", DefName = key });
 
     private static string TemporaryDirectory()
     {

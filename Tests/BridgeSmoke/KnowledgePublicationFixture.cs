@@ -17,8 +17,8 @@ internal static class KnowledgePublicationFixture
         {
             foreach (var entry in snapshot.Entries)
             {
-                var record = KnowledgeSnapshot.BoundAndSerialize(entry);
-                while (!publisher.TryEnqueueSerialized(record))
+                var record = KnowledgePublicationEntry.Capture(entry);
+                while (!publisher.TryEnqueue(record))
                 {
                     if (publisher.IsFailed) throw publisher.Failure ?? new InvalidOperationException("Publication cancelled.");
                     Thread.Yield();

@@ -51,6 +51,7 @@ internal static class Program
             WorldContractTests.Run();
             ActionContractTests.Run();
             ReadDependencyTests.Run();
+            StartupPreparationTests.Run();
             WorldPresentationTests.Run();
             ObservationSemanticsTests.Run();
             QueryEngineTests.Run();

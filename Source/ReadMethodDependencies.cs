@@ -11,6 +11,8 @@ namespace Neko.RimWorld;
 internal static class ReadMethodDependencies
 {
     private static readonly ConcurrentDictionary<Assembly,Type[]> AssemblyTypes = new();
+    private static readonly ConcurrentDictionary<(string Assemblies,Module Module,int Token,string Signature),Lazy<MethodBase[]>> OutgoingEdges = new();
+    internal static int CachedEdgeCount => OutgoingEdges.Count;
     private static readonly ConcurrentDictionary<Assembly,Lazy<int>> DefinitionBounds = new();
     private static readonly ConcurrentDictionary<(Module,int,string),MethodBase> Definitions = new();
     private static readonly ConcurrentDictionary<Type,Lazy<Dictionary<int,MethodBase>>> DeclaredMethods = new();
@@ -73,55 +75,65 @@ internal static class ReadMethodDependencies
             if(!visited.Add(Identity(method)))continue;
             found.Add(method);
             if(method.MetadataToken!=0 && ++definitionsVisited>bound)throw new InvalidOperationException("Read dependency graph exceeds its finite assembly definition boundary");
-            var bytes=method.DeclaringType?.IsArray==true?null:method.GetMethodBody()?.GetILAsByteArray();if(bytes==null)continue;
-            for(int offset=0;offset<bytes.Length;) {
-                short code=bytes[offset++];if(code==0xfe)code=(short)(0xfe00|bytes[offset++]);
-                if(!Codes.TryGetValue(code,out var op))throw new InvalidOperationException("Unknown IL instruction");
-                int size=op.OperandType switch {
-                    OperandType.InlineNone=>0, OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar=>1,
-                    OperandType.InlineVar=>2,OperandType.InlineI8 or OperandType.InlineR=>8,
-                    OperandType.InlineSwitch=>4+4*BitConverter.ToInt32(bytes,offset),_=>4
-                };
-                if(op.OperandType is OperandType.InlineMethod or OperandType.InlineTok) {
-                    var typeArgs=method.DeclaringType?.IsGenericType==true?method.DeclaringType.GetGenericArguments():null;
-                    var methodArgs=method.IsGenericMethod?method.GetGenericArguments():null;
-                    var member=method.Module.ResolveMember(BitConverter.ToInt32(bytes,offset),typeArgs,methodArgs);
-                    if(member is MethodBase dependency) {
-                        if(dependency.DeclaringType!=null && allowed.Contains(dependency.DeclaringType.Assembly))dependency=Definition(dependency);
-                        pending.Enqueue(dependency);
-                        if(dependency is MethodInfo virtualMethod && virtualMethod.IsVirtual && allowed.Contains(virtualMethod.DeclaringType!.Assembly)) {
-                            var implementationKey=assemblyKey+":"+virtualMethod.Module.ModuleVersionId+":"+virtualMethod.MetadataToken;
-                            var implementations=VirtualImplementations.GetOrAdd(implementationKey,_=>new Lazy<MethodBase[]>(()=> {
-                            if(!virtualMethod.DeclaringType!.IsInterface) {
-                                var index=DispatchIndexes.GetOrAdd(assemblyKey,__=>new Lazy<Dictionary<(Module,int,string),MethodBase[]>>(()=>DispatchIndex(types))).Value;
-                                return index.TryGetValue(Identity(Definition(virtualMethod.GetBaseDefinition())),out var overrides)?overrides:Array.Empty<MethodBase>();
-                            }
-                            var collected=new HashSet<MethodBase>();
-                            var interfaceDefinition=virtualMethod.DeclaringType!;
-                            foreach(var type in types.Where(t=>!t.IsInterface && !t.IsAbstract)) {
-                                // The IL walk uses open definitions. Assignability to
-                                // IReader<> misses classes implementing IReader<int>.
-                                // Map each actual interface, then compare IL identities
-                                // so explicit, inherited and generic implementations
-                                // remain reachable without executing any game code.
-                                foreach(var implemented in type.GetInterfaces()) {
-                                    var definition=implemented.IsGenericType?implemented.GetGenericTypeDefinition():implemented;
-                                    if(definition!=interfaceDefinition)continue;
-                                    var map=type.GetInterfaceMap(implemented);
-                                    for(int i=0;i<map.InterfaceMethods.Length;i++)
-                                        if(Identity(Definition(map.InterfaceMethods[i]))==Identity(virtualMethod))
-                                            collected.Add(map.TargetMethods[i]);
-                                }
-                            }
-                            return collected.Select(Definition).Distinct().ToArray();
-                            })).Value;
-                            foreach(var implementation in implementations)pending.Enqueue(implementation);
-                        }
-                    }
-                }
-                offset+=size;
-            }
+            var identity=Identity(method);
+            var outgoing=OutgoingEdges.GetOrAdd((assemblyKey,identity.Module,identity.Token,identity.SyntheticSignature),
+                _=>new Lazy<MethodBase[]>(()=>ResolveEdges(method,allowed,types,assemblyKey))).Value;
+            foreach(var dependency in outgoing)pending.Enqueue(dependency);
         }
         return found;
     }
+    private static MethodBase[] ResolveEdges(MethodBase method, HashSet<Assembly> allowed, Type[] types, string assemblyKey)
+    {
+        var edges=new HashSet<MethodBase>();
+        var bytes=method.DeclaringType?.IsArray==true?null:method.GetMethodBody()?.GetILAsByteArray();if(bytes==null)return Array.Empty<MethodBase>();
+        for(int offset=0;offset<bytes.Length;) {
+            short code=bytes[offset++];if(code==0xfe)code=(short)(0xfe00|bytes[offset++]);
+            if(!Codes.TryGetValue(code,out var op))throw new InvalidOperationException("Unknown IL instruction");
+            int size=op.OperandType switch {
+                OperandType.InlineNone=>0, OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar=>1,
+                OperandType.InlineVar=>2,OperandType.InlineI8 or OperandType.InlineR=>8,
+                OperandType.InlineSwitch=>4+4*BitConverter.ToInt32(bytes,offset),_=>4
+            };
+            if(op.OperandType is OperandType.InlineMethod or OperandType.InlineTok) {
+                var typeArgs=method.DeclaringType?.IsGenericType==true?method.DeclaringType.GetGenericArguments():null;
+                var methodArgs=method.IsGenericMethod?method.GetGenericArguments():null;
+                var member=method.Module.ResolveMember(BitConverter.ToInt32(bytes,offset),typeArgs,methodArgs);
+                if(member is MethodBase dependency) {
+                    if(dependency.DeclaringType!=null && allowed.Contains(dependency.DeclaringType.Assembly))dependency=Definition(dependency);
+                    edges.Add(dependency);
+                    if(dependency is MethodInfo virtualMethod && virtualMethod.IsVirtual && allowed.Contains(virtualMethod.DeclaringType!.Assembly)) {
+                        var implementationKey=assemblyKey+":"+virtualMethod.Module.ModuleVersionId+":"+virtualMethod.MetadataToken;
+                        var implementations=VirtualImplementations.GetOrAdd(implementationKey,_=>new Lazy<MethodBase[]>(()=> {
+                        if(!virtualMethod.DeclaringType!.IsInterface) {
+                            var index=DispatchIndexes.GetOrAdd(assemblyKey,__=>new Lazy<Dictionary<(Module,int,string),MethodBase[]>>(()=>DispatchIndex(types))).Value;
+                            return index.TryGetValue(Identity(Definition(virtualMethod.GetBaseDefinition())),out var overrides)?overrides:Array.Empty<MethodBase>();
+                        }
+                        var collected=new HashSet<MethodBase>();
+                        var interfaceDefinition=virtualMethod.DeclaringType!;
+                        foreach(var type in types.Where(t=>!t.IsInterface && !t.IsAbstract)) {
+                            // The IL walk uses open definitions. Assignability to
+                            // IReader<> misses classes implementing IReader<int>.
+                            // Map each actual interface, then compare IL identities
+                            // so explicit, inherited and generic implementations
+                            // remain reachable without executing any game code.
+                            foreach(var implemented in type.GetInterfaces()) {
+                                var definition=implemented.IsGenericType?implemented.GetGenericTypeDefinition():implemented;
+                                if(definition!=interfaceDefinition)continue;
+                                var map=type.GetInterfaceMap(implemented);
+                                for(int i=0;i<map.InterfaceMethods.Length;i++)
+                                    if(Identity(Definition(map.InterfaceMethods[i]))==Identity(virtualMethod))
+                                        collected.Add(map.TargetMethods[i]);
+                            }
+                        }
+                        return collected.Select(Definition).Distinct().ToArray();
+                        })).Value;
+                        foreach(var implementation in implementations)edges.Add(implementation);
+                    }
+                }
+            }
+            offset+=size;
+        }
+        return edges.ToArray();
+    }
+
 }

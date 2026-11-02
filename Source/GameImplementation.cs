@@ -55,27 +55,41 @@ internal static class GameImplementation
     internal static string Source(string symbol) => (AssemblyHash.Value ?? "unavailable") + "/" + symbol;
 
     private static readonly Dictionary<string,Task<IReadOnlyCollection<MethodBase>>> dependencies = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string,double> preparationMilliseconds = new();
     internal static void PrepareBehaviorReads()
     {
         // Reflection and IL only, prepared before a player's model execution.
         // Predicate calls still verify the binary and current patches each time.
-        foreach(var action in ActionInspectionContract.Actions) Prepare(ActionInspection.ReadDependencies(action));
-        Prepare(new[] { (typeof(GenHostility),nameof(GenHostility.AnyHostileActiveThreatToPlayer)) });
-        Prepare(new[] { (typeof(GenHostility),nameof(GenHostility.IsActiveThreatToPlayer)) });
+        foreach(var operation in StartupPreparation.Current.RequiredOperations) Prepare(OperationCalls(operation));
     }
+    private static (Type Type,string Method)[] OperationCalls(string operation) => operation switch {
+        "equip" or "wear" or "ingest" => ActionInspection.ReadDependencies(operation),
+        "hostile_active" => new[] { (typeof(GenHostility),nameof(GenHostility.AnyHostileActiveThreatToPlayer)) },
+        "active_threat" => new[] { (typeof(GenHostility),nameof(GenHostility.IsActiveThreatToPlayer)) },
+        _ => throw new ArgumentException("Unknown behavior operation", nameof(operation))
+    };
+    private static string DependencyKey((Type Type,string Method)[] calls) => string.Join(";",calls.Select(c=>c.Type.FullName+"."+c.Method));
     private static JObject PreparationStatus() => new() {
         ["scheduled"] = dependencies.Count,
         ["pending"] = dependencies.Values.Count(task=>!task.IsCompleted),
         ["failed"] = dependencies.Values.Count(task=>task.IsFaulted || task.IsCanceled),
-        ["ready"] = dependencies.Count>0 && dependencies.Values.All(task=>task.Status==TaskStatus.RanToCompletion),
+        ["cached_outgoing_methods"] = ReadMethodDependencies.CachedEdgeCount,
+        ["required_operations"] = new JArray(StartupPreparation.Current.RequiredOperations),
+        ["ready"] = StartupPreparation.Current.RequiredOperations.All(operation =>
+            dependencies.TryGetValue(DependencyKey(OperationCalls(operation)), out var task) && task.Status==TaskStatus.RanToCompletion),
+        ["operations"] = new JObject(StartupPreparation.BehaviorOperations.Select(operation => {
+            dependencies.TryGetValue(DependencyKey(OperationCalls(operation)), out var task);
+            return new JProperty(operation, task == null ? "not_started" : task.Status.ToString());
+        })),
         ["entries"] = new JArray(dependencies.Select(entry=>new JObject {
             ["roots"] = entry.Key,
             ["status"] = entry.Value.Status.ToString(),
             ["method_definitions"] = entry.Value.Status==TaskStatus.RanToCompletion ? entry.Value.Result.Count : (int?)null,
+            ["elapsed_ms"] = preparationMilliseconds.TryGetValue(entry.Key,out var milliseconds) ? milliseconds : (double?)null,
             ["error_type"] = entry.Value.Exception?.GetBaseException().GetType().Name,
             ["error"] = entry.Value.Exception?.GetBaseException().Message
         })),
-        ["meaning"] = "Metadata preparation only; readiness does not authorize a patched predicate or establish action eligibility."
+        ["meaning"] = "Required metadata preparation only; optional operations prepare on use. Binary and current patch checks remain mandatory per invocation."
     };
     internal static void RequireKnownBinary()
     {
@@ -95,10 +109,12 @@ internal static class GameImplementation
     }
     private static Task<IReadOnlyCollection<MethodBase>> Prepare((Type Type,string Method)[] calls)
     {
-        var key=string.Join(";",calls.Select(c=>c.Type.FullName+"."+c.Method));
+        var key=DependencyKey(calls);
         if(!dependencies.TryGetValue(key,out var inspection)) {
             var requested=calls.ToArray();
             inspection=Task.Run<IReadOnlyCollection<MethodBase>>(()=> {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            try {
             var roots=new List<MethodBase>();
             foreach(var call in requested) {
                 var matches=call.Method==".ctor"?call.Type.GetConstructors(BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic).Cast<MethodBase>().ToArray()
@@ -109,6 +125,7 @@ internal static class GameImplementation
             // IL/reflection metadata only; no game object or method invocation.
             // The main thread must never wait for this graph traversal.
             return ReadMethodDependencies.Collect(roots,GameAssembly);
+            } finally { preparationMilliseconds[key] = clock.Elapsed.TotalMilliseconds; }
             });
             dependencies[key]=inspection;
         }

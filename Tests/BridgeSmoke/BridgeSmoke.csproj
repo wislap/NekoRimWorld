@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <Compile Include="../../Source/AttentionSignals.cs" Link="AttentionSignals.cs" />
+    <Compile Include="../../Source/StartupPreparation.cs" Link="StartupPreparation.cs" />
     <Compile Include="../../Source/AttentionSamplingMetrics.cs" Link="AttentionSamplingMetrics.cs" />
     <Compile Include="../../Source/AttentionFacts.cs" Link="AttentionFacts.cs" />
     <None Include="../fixtures/colony-attention-v1/vectors.json" Link="colony-attention-v1/vectors.json" CopyToOutputDirectory="PreserveNewest" />

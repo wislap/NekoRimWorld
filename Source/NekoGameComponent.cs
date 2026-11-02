@@ -177,9 +177,11 @@ public sealed class NekoGameComponent : GameComponent
             return;
         }
 
-        if (attentionSubscribed && AttentionFacts.CapabilityAvailable(NativeEventHookSupport.Ready(), SituationAlertObservations.HookMatched)) attentionSignals.Sample(data => NekoRimWorldMod.Runtime.EmitEvent(CurrentSession(), data));
+        // One fresh capability inspection for this update; action guards still
+        // perform their own inspections at the point of use.
+        bool hooksReady = NekoRimWorldMod.RefreshNativeCapabilities();
+        if (attentionSubscribed && AttentionFacts.CapabilityAvailable(hooksReady, SituationAlertObservations.HookMatched)) attentionSignals.Sample(data => NekoRimWorldMod.Runtime.EmitEvent(CurrentSession(), data));
         VerseKnowledge.Update();
-        NekoRimWorldMod.RefreshNativeCapabilities();
         RefreshPolicy();
         ObservePause();
         if (Stopwatch.GetTimestamp() - lastEventHeartbeat >= Stopwatch.Frequency * 2) {
@@ -221,6 +223,14 @@ public sealed class NekoGameComponent : GameComponent
             processed++;
             HandleInbound(runtime, request);
         }
+    }
+
+    internal JObject CaptureWriteLedgerSnapshot() {
+        if (!UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing || LongEventHandler.AnyEventNowOrWaiting)
+            throw new InvalidOperationException("Ledger snapshot is unavailable.");
+        var resolver = new VerseWriteFieldResolver(new VerseGameData());
+        return writeLedger.ReadSnapshot(writeLedgerSave.Valid, writeTargets, WriteTargetReferences.Destroyed,
+            (id, field, target, value) => field == "production_bills" ? resolver.ResolveLedgerProductionBills(id, target, value) : resolver.ResolveHeldLedgerField(id, field, target) ?? resolver.ResolveLedgerField(id, field));
     }
 
     private void StartSession(string source)
@@ -340,9 +350,7 @@ public sealed class NekoGameComponent : GameComponent
             else if (!UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing || LongEventHandler.AnyEventNowOrWaiting)
                 result = QueryOutcome.Failure("unavailable", "Ledger snapshot is unavailable.");
             else {
-                var resolver = new VerseWriteFieldResolver(new VerseGameData());
-                result = new QueryOutcome { Data = writeLedger.ReadSnapshot(writeLedgerSave.Valid, writeTargets, WriteTargetReferences.Destroyed,
-                    (id, field, target, value) => field == "production_bills" ? resolver.ResolveLedgerProductionBills(id, target, value) : resolver.ResolveHeldLedgerField(id, field, target) ?? resolver.ResolveLedgerField(id, field)) };
+                result = new QueryOutcome { Data = CaptureWriteLedgerSnapshot() };
             }
             Publish(runtime, request, sample, result); return;
         }

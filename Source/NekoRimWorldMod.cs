@@ -110,11 +110,12 @@ public sealed class NekoRimWorldMod : Mod
         ApplyRuntimeConfiguration();
     }
 
-    internal static void RefreshNativeCapabilities() {
-        var mod = activeMod; if (mod == null) return;
+    internal static bool RefreshNativeCapabilities() {
+        var mod = activeMod; if (mod == null) return false;
         bool ready = NativeEventHookSupport.Ready();
         bool attentionReady = SituationAlertObservations.HookMatched;
         if (ready != mod.hooksReady || attentionReady != mod.attentionHookReady) { mod.hooksReady = ready; mod.attentionHookReady = attentionReady; mod.ApplyRuntimeConfiguration(); }
+        return ready;
     }
 
     private string[] AdvertisedCapabilities() {

@@ -45,7 +45,7 @@
     <Compile Include="../../Source/KnowledgeSnapshot.cs;../../Source/KnowledgeFields.cs;../../Source/KnowledgeStreamingPublisher.cs" Link="%(Filename)%(Extension)" />
     <None Include="../fixtures/colony-write-v1/vectors.json" Link="colony-write-v1/vectors.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../fixtures/native-enums.json" Link="native-enums.json" CopyToOutputDirectory="PreserveNewest" />
-    <Compile Include="../../Source/NativeEnumScalar.cs;../../Source/SelectionInput.cs;../../Source/PublicFields.cs;../../Source/PublicQuery.cs" Link="%(Filename)%(Extension)" />
+    <Compile Include="../../Source/NativeEnumScalar.cs;../../Source/SelectionInput.cs;../../Source/PublicFields.cs;../../Source/PublicQuery.cs;../../Source/PublicQueryModel.cs;../../Source/PublicQueryPlanner.cs;../../Source/PublicQueryExecutor.cs;../../Source/PublicQueryProjector.cs" Link="%(Filename)%(Extension)" />
     <Compile Include="../../Source/SelectionConditions.cs" Link="SelectionConditions.cs" />
     <Compile Include="..\..\Source\ThingSchema.cs" Link="ThingSchema.cs" />
     <Compile Include="..\..\Source\PawnSchema.cs" Link="PawnSchema.cs" />
@@ -64,6 +64,7 @@
     <None Include="../fixtures/colony-write-v1/catalog.json" Link="colony-write-v1/catalog.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="..\..\Source\Protocol.cs" Link="Protocol.cs" />
     <Compile Include="..\..\Source\BridgeRuntime.cs" Link="BridgeRuntime.cs" />
+    <Compile Include="../../Source/BridgeClock.cs;../../Source/BridgeLog.cs;../../Source/BridgeStatus.cs;../../Source/BridgeSettings.cs;../../Source/BridgeMessageQueue.cs;../../Source/SessionLease.cs;../../Source/BridgeConnection.cs;../../Source/EventChannel.cs;../../Source/BridgeWire.cs;../../Source/BridgeHandshake.cs;../../Source/RequestRejection.cs;../../Source/BridgeInboundPump.cs;../../Source/BridgeTransport.cs" Link="%(Filename)%(Extension)" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472"
                       Version="1.0.3"
                       PrivateAssets="all" />

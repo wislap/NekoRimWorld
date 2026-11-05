@@ -449,7 +449,7 @@ public static class ProtocolCodec
         if (envelope is null) throw new ArgumentNullException(nameof(envelope));
         if (envelope.Version != Version)
             throw Error(ProtocolErrorCodes.UnsupportedVersion, $"Expected protocol v{Version}.");
-        if (!IsKnownMessageType(envelope.Type))
+        if (envelope.Type is null || !MessageSpecs.TryGetValue(envelope.Type, out var spec))
             throw Field("type", "is not a protocol v2 message type");
         ValidateGuid(envelope.ConnectionEpoch, "connection_epoch", true);
         ValidateGuid(envelope.ColonyId, "colony_id", false);
@@ -461,26 +461,25 @@ public static class ProtocolCodec
         var hasSession = envelope.ColonyId.Length != 0;
         if (hasSession != (envelope.LoadEpoch.Length != 0))
             throw Field("load_epoch", "must be present exactly when colony_id is present");
-        if (NeedsSession(envelope.Type) && !hasSession)
+        if (spec.NeedsSession && !hasSession)
             throw Field("colony_id", $"is required for {envelope.Type}");
-        if (!AllowsSession(envelope.Type) && hasSession)
+        if (!spec.AllowsSession && hasSession)
             throw Field("colony_id", $"is forbidden for {envelope.Type}");
         if (hasSession && (envelope.GameTick < 0 || envelope.SnapshotSequence < 0))
             throw Field("game_tick", "and snapshot_sequence must be non-negative in a session");
         if (!hasSession && (envelope.GameTick != -1 || envelope.SnapshotSequence != -1))
             throw Field("game_tick", "and snapshot_sequence must be -1 without a session");
-        if (NeedsRequestId(envelope.Type) && envelope.RequestId.Length == 0)
+        if (spec.NeedsRequestId && envelope.RequestId.Length == 0)
             throw Field("request_id", $"is required for {envelope.Type}");
-        if (!AllowsRequestId(envelope.Type) && envelope.RequestId.Length != 0)
+        if (!spec.AllowsRequestId && envelope.RequestId.Length != 0)
             throw Field("request_id", $"is forbidden for {envelope.Type}");
         if (envelope.Payload is null) throw Error(ProtocolErrorCodes.InvalidPayload, "payload is required.");
-        ValidatePayload(envelope);
+        ValidatePayload(envelope, spec.AllowedFields);
     }
-    private static void ValidatePayload(ProtocolEnvelope envelope)
+    private static void ValidatePayload(ProtocolEnvelope envelope, int allowed)
     {
         var payload = envelope.Payload;
         var present = PresentFields(payload);
-        var allowed = AllowedFields(envelope.Type);
         if ((present & ~allowed) != 0) throw Payload($"Payload contains a field not allowed for {envelope.Type}.");
         switch (envelope.Type)
         {
@@ -510,22 +509,19 @@ public static class ProtocolCodec
             case ProtocolMessageTypes.WriteRequest:
                 ColonyWriteContract.ValidateRequest(payload.Mode, payload.Arguments);
                 break;
-            case ProtocolMessageTypes.WriteResult:
-                ValidateQueryResult(payload, envelope);
-                ColonyWriteContract.ValidateResult(payload);
-                break;
             case ProtocolMessageTypes.PolicyRequest:
                 ValidatePolicy(payload.Arguments);
                 break;
+            case ProtocolMessageTypes.QueryResult:
+            case ProtocolMessageTypes.WriteResult:
             case ProtocolMessageTypes.PolicyResult:
+                // Every result shares the query result envelope; write and policy add their domain body.
                 ValidateQueryResult(payload, envelope);
-                if (payload.Status == ProtocolStatuses.Ok) ValidatePolicy(payload.Data, true);
+                if (envelope.Type == ProtocolMessageTypes.WriteResult) ColonyWriteContract.ValidateResult(payload);
+                else if (envelope.Type == ProtocolMessageTypes.PolicyResult && payload.Status == ProtocolStatuses.Ok) ValidatePolicy(payload.Data, true);
                 break;
             case ProtocolMessageTypes.GameEvent:
                 if (payload.Data == null || payload.Data["cursor"]?.Type != JTokenType.Integer || (long)payload.Data["cursor"]! < 1 || payload.Data["kind"]?.Type != JTokenType.String || string.IsNullOrWhiteSpace((string?)payload.Data["kind"])) throw Payload("Invalid game event.");
-                break;
-            case ProtocolMessageTypes.QueryResult:
-                ValidateQueryResult(payload, envelope);
                 break;
             case ProtocolMessageTypes.ProtocolError:
                 Required(payload.ErrorCode, "error_code", 128);
@@ -683,12 +679,45 @@ public static class ProtocolCodec
         }
         throw Error(ProtocolErrorCodes.InvalidJson, "Incomplete JSON envelope.");
     }
-    private static bool IsKnownMessageType(string type) =>
-        type == ProtocolMessageTypes.Hello || type == ProtocolMessageTypes.Challenge ||
-        type == ProtocolMessageTypes.Authenticate || type == ProtocolMessageTypes.Welcome ||
-        type == ProtocolMessageTypes.SessionOpen || type == ProtocolMessageTypes.SessionStale ||
-        type == ProtocolMessageTypes.Heartbeat || type == ProtocolMessageTypes.QueryRequest ||
-        type == ProtocolMessageTypes.QueryResult || type == ProtocolMessageTypes.WriteRequest || type == ProtocolMessageTypes.WriteResult || type == ProtocolMessageTypes.PolicyRequest || type == ProtocolMessageTypes.PolicyResult || type == ProtocolMessageTypes.GameEvent || type == ProtocolMessageTypes.ProtocolError;
+    /// <summary>Per message type: allowed payload fields and envelope session/request_id rules.</summary>
+    private readonly struct MessageSpec
+    {
+        public MessageSpec(int allowedFields, bool needsSession, bool allowsSession, bool needsRequestId, bool allowsRequestId)
+        {
+            AllowedFields = allowedFields;
+            NeedsSession = needsSession;
+            AllowsSession = allowsSession;
+            NeedsRequestId = needsRequestId;
+            AllowsRequestId = allowsRequestId;
+        }
+        public int AllowedFields { get; }
+        public bool NeedsSession { get; }
+        public bool AllowsSession { get; }
+        public bool NeedsRequestId { get; }
+        public bool AllowsRequestId { get; }
+        public static MessageSpec Handshake(int fields) => new(fields, false, false, false, false);
+        public static MessageSpec InSession(int fields) => new(fields, true, true, false, false);
+        public static MessageSpec Correlated(int fields) => new(fields, true, true, true, true);
+    }
+    private const int ResultFields = StatusField | DataField | IssuesField | ErrorCodeField | MessageField;
+    private static readonly Dictionary<string, MessageSpec> MessageSpecs = new(StringComparer.Ordinal)
+    {
+        [ProtocolMessageTypes.Hello] = MessageSpec.Handshake(ModVersionField | GameVersionField | CapabilitiesField | ClientNonceField),
+        [ProtocolMessageTypes.Challenge] = MessageSpec.Handshake(ClientNonceField | ServerNonceField | ProofField),
+        [ProtocolMessageTypes.Authenticate] = MessageSpec.Handshake(ClientNonceField | ServerNonceField | ProofField),
+        [ProtocolMessageTypes.Welcome] = MessageSpec.Handshake(StatusField),
+        [ProtocolMessageTypes.SessionOpen] = MessageSpec.InSession(0),
+        [ProtocolMessageTypes.SessionStale] = MessageSpec.InSession(ReasonField),
+        [ProtocolMessageTypes.GameEvent] = MessageSpec.InSession(DataField),
+        [ProtocolMessageTypes.Heartbeat] = new(0, false, true, false, false),
+        [ProtocolMessageTypes.QueryRequest] = MessageSpec.Correlated(QueryField | ArgumentsField),
+        [ProtocolMessageTypes.QueryResult] = MessageSpec.Correlated(ResultFields | ExecutionField),
+        [ProtocolMessageTypes.WriteRequest] = MessageSpec.Correlated(ModeField | ArgumentsField),
+        [ProtocolMessageTypes.WriteResult] = MessageSpec.Correlated(ResultFields),
+        [ProtocolMessageTypes.PolicyRequest] = MessageSpec.Correlated(ArgumentsField),
+        [ProtocolMessageTypes.PolicyResult] = MessageSpec.Correlated(ResultFields),
+        [ProtocolMessageTypes.ProtocolError] = new(ErrorCodeField | MessageField, false, true, false, true),
+    };
     private static int PresentFields(ProtocolPayload payload)
     {
         var fields = 0;
@@ -709,26 +738,6 @@ public static class ProtocolCodec
         if (payload.Message is not null) fields |= MessageField;
         if (payload.Reason is not null) fields |= ReasonField;
         return fields;
-    }
-    private static int AllowedFields(string type)
-    {
-        if (type == ProtocolMessageTypes.Hello)
-            return ModVersionField | GameVersionField | CapabilitiesField | ClientNonceField;
-        if (type == ProtocolMessageTypes.Challenge || type == ProtocolMessageTypes.Authenticate)
-            return ClientNonceField | ServerNonceField | ProofField;
-        if (type == ProtocolMessageTypes.Welcome) return StatusField;
-        if (type == ProtocolMessageTypes.SessionStale) return ReasonField;
-        if (type == ProtocolMessageTypes.QueryRequest) return QueryField | ArgumentsField;
-        if (type == ProtocolMessageTypes.WriteRequest) return ModeField | ArgumentsField;
-        if (type == ProtocolMessageTypes.PolicyRequest) return ArgumentsField;
-        if (type == ProtocolMessageTypes.PolicyResult) return StatusField | DataField | IssuesField | ErrorCodeField | MessageField;
-        if (type == ProtocolMessageTypes.GameEvent) return DataField;
-        if (type == ProtocolMessageTypes.WriteResult) return StatusField | DataField | IssuesField | ErrorCodeField | MessageField;
-        if (type == ProtocolMessageTypes.QueryResult)
-            return StatusField | DataField | IssuesField | ExecutionField | ErrorCodeField | MessageField;
-        if (type == ProtocolMessageTypes.ProtocolError)
-            return ErrorCodeField | MessageField;
-        return 0;
     }
     private static bool IsKnownStatus(string? status) =>
         status == ProtocolStatuses.Ok || status == ProtocolStatuses.Partial ||
@@ -758,26 +767,10 @@ public static class ProtocolCodec
             !string.Equals(value, parsed.ToString("N"), StringComparison.Ordinal))
             throw Field(name, "must be a lowercase N-format UUID");
     }
-    private static bool NeedsSession(string type) =>
-        type == ProtocolMessageTypes.SessionOpen || type == ProtocolMessageTypes.SessionStale ||
-        type == ProtocolMessageTypes.QueryRequest || type == ProtocolMessageTypes.QueryResult ||
-        type == ProtocolMessageTypes.WriteRequest || type == ProtocolMessageTypes.WriteResult || type == ProtocolMessageTypes.PolicyRequest || type == ProtocolMessageTypes.PolicyResult || type == ProtocolMessageTypes.GameEvent;
-    private static bool AllowsSession(string type) =>
-        NeedsSession(type) || type == ProtocolMessageTypes.Heartbeat ||
-        type == ProtocolMessageTypes.ProtocolError;
-    private static bool NeedsRequestId(string type) =>
-        type == ProtocolMessageTypes.QueryRequest || type == ProtocolMessageTypes.QueryResult ||
-        type == ProtocolMessageTypes.WriteRequest || type == ProtocolMessageTypes.WriteResult || type == ProtocolMessageTypes.PolicyRequest || type == ProtocolMessageTypes.PolicyResult;
-    private static bool AllowsRequestId(string type) =>
-        NeedsRequestId(type) || type == ProtocolMessageTypes.ProtocolError;
     private static void Required(string? value, string field, int maxLength)
     {
         if (string.IsNullOrWhiteSpace(value) || value!.Length > maxLength)
             throw Payload($"{field} must contain 1-{maxLength} characters.");
-    }
-    private static void Optional(string? value, string field, int maxLength)
-    {
-        if (value is not null) Required(value, field, maxLength);
     }
     private static void CanonicalHex(string? value, string field)
     {

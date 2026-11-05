@@ -145,7 +145,7 @@ internal sealed class ThingSchema
         Root(root, "thing", Thing, new QueryArguments(Text("id", true), Text("mapId")));
         // PublicQuery owns source enumeration. These source declarations have no
         // native-root resolver and do not retain the retired GraphQL execution path.
-        root.AddField(PublicQuery.ThingsRoot(Thing));
+        root.AddField(PublicQueryPlanner.ThingsRoot(Thing));
         Root(root, "thing_def", Def, new QueryArguments(Text("defName", true)));
         root.AddField(new FieldType { Name = "thing_defs", ResolvedType = Def, Arguments = new QueryArguments(Text("name"), Text("categoryDefName"),
             GameArguments.Create("exactNames", new ListGraphType(new NonNullGraphType(new StringGraphType())),

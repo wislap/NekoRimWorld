@@ -12,7 +12,7 @@ internal static class PlanetReadings
 {
     internal static IEnumerable<WorldObject> KnownObjects() => Find.WorldObjects.AllWorldObjects
         .Where(item => item != null && !item.Destroyed && item.Tile.Valid && item.def.selectable &&
-            (item.Faction == null || !item.Faction.Hidden || NativeFactions.IsPlayer(item.Faction)));
+            (item.Faction == null || !item.Faction.Hidden || item.Faction.IsPlayer));
 
     internal static IEnumerable<Caravan> PlayerCaravans() => KnownObjects().OfType<Caravan>().Where(item => item.IsPlayerControlled);
 

@@ -16,21 +16,21 @@ internal static class FactionReadings
         ColonyReadContract.RequireAspects(aspects, "identity", "relations", "settlements");
         var factions = ColonyReadContract.Select(Find.FactionManager.AllFactionsListForReading.Where(f => !f.Hidden), args, f => f.GetUniqueLoadID(), f => f.Name);
         var rows = factions.Select(f => {
-            var row = new JObject { ["id"] = f.GetUniqueLoadID(), ["name"] = f.Name, ["def"] = f.def.defName, ["is_player"] = NativeFactions.IsPlayer(f) };
+            var row = new JObject { ["id"] = f.GetUniqueLoadID(), ["name"] = f.Name, ["def"] = f.def.defName, ["is_player"] = f.IsPlayer };
             if (aspects.Contains("identity")) { row["defeated"] = f.defeated; row["temporary"] = f.temporary; row["leader"] = f.leader == null ? null : new JObject { ["id"] = f.leader.GetUniqueLoadID(), ["name"] = f.leader.LabelShortCap.ToString() }; }
             if (aspects.Contains("relations")) {
-                var relation = NativeFactions.IsPlayer(f) ? null : f.RelationWith(Faction.OfPlayer, allowNull: true);
-                bool goodwillApplies = !NativeFactions.IsPlayer(f) && f.HasGoodwill && Faction.OfPlayer.HasGoodwill;
+                var relation = f.IsPlayer ? null : f.RelationWith(Faction.OfPlayer, allowNull: true);
+                bool goodwillApplies = !f.IsPlayer && f.HasGoodwill && Faction.OfPlayer.HasGoodwill;
                 var cache = (Dictionary<Faction, List<GoodwillSituationManager.CachedSituation>>)GoodwillCache.GetValue(Find.GoodwillSituationManager)!;
                 int? goodwill = null;
                 if (goodwillApplies && relation != null && cache.TryGetValue(f, out var situations)) goodwill = System.Math.Min(relation.baseGoodwill, situations.Aggregate(100, (value, situation) => System.Math.Min(value, situation.maxGoodwill)));
-                row["relation_to_player"] = new JObject { ["kind"] = NativeFactions.IsPlayer(f) ? "self" : relation?.kind.ToString(),
-                    ["status"] = NativeFactions.IsPlayer(f) || relation != null ? "ok" : "unavailable", ["goodwill_applicable"] = goodwillApplies,
+                row["relation_to_player"] = new JObject { ["kind"] = f.IsPlayer ? "self" : relation?.kind.ToString(),
+                    ["status"] = f.IsPlayer || relation != null ? "ok" : "unavailable", ["goodwill_applicable"] = goodwillApplies,
                     ["base_goodwill"] = goodwillApplies && relation != null ? (JToken)relation.baseGoodwill : null,
                     ["goodwill"] = goodwill.HasValue ? (JToken)goodwill.Value : null,
                     ["goodwill_status"] = !goodwillApplies ? "not_applicable" : goodwill.HasValue ? "ok" : "native_situation_cache_not_ready",
                     ["permanent_enemy"] = f.def.permanentEnemy,
-                    ["goodwill_locked_by_quest"] = !NativeFactions.IsPlayer(f) && QuestUtility.IsGoodwillLockedByQuest(f, Faction.OfPlayer),
+                    ["goodwill_locked_by_quest"] = !f.IsPlayer && QuestUtility.IsGoodwillLockedByQuest(f, Faction.OfPlayer),
                     ["kind_thresholds"] = goodwillApplies ? new JObject { ["become_hostile_at_or_below"] = -75, ["become_ally_at_or_above"] = 75,
                         ["hostile_returns_neutral_at_or_above"] = 0, ["ally_returns_neutral_at_or_below"] = 0,
                         ["source"] = "FactionRelation.CheckKindThresholds; thresholds use effective goodwill, not a prediction that an offered reward is paid or applies unchanged." } : null };

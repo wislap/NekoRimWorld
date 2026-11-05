@@ -34,7 +34,7 @@ internal static class TradeReadings
             foreach (var ship in map.passingShipManager.passingShips.OfType<TradeShip>().Where(ship => ship.WasAnnounced && !ship.Departed))
                 yield return new Partner { Trader = ship, Id = ship.GetUniqueLoadID(), Name = ship.TraderName, Channel = "orbital", Map = map };
         }
-        foreach (var settlement in PlanetReadings.KnownObjects().OfType<Settlement>().Where(item => item.Faction != null && !NativeFactions.IsPlayer(item.Faction) && item.TraderKind != null && item.EverVisited))
+        foreach (var settlement in PlanetReadings.KnownObjects().OfType<Settlement>().Where(item => item.Faction != null && !item.Faction.IsPlayer && item.TraderKind != null && item.EverVisited))
             yield return new Partner { Trader = settlement, Id = settlement.GetUniqueLoadID(), Name = settlement.Label, Channel = "settlement", Settlement = settlement };
     }
 

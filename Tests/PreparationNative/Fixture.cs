@@ -32,14 +32,13 @@ namespace RimWorld {
     internal class Designator_PlantsCut:Verse.Designator {public override AcceptanceReport CanDesignateThing(Verse.Thing t)=>new(t is Verse.Plant&&!t.NativeRejected);public override void DesignateThing(Verse.Thing t){foreach(var d in t.Map.designationManager.AllDesignationsOn(t).ToArray())t.Map.designationManager.RemoveDesignation(d);t.Map.designationManager.AddDesignation(new(t,DesignationDefOf.CutPlant));}}
 }
 namespace Neko.RimWorld {
-    internal interface IPreparedWriteField {string ObjectId{get;}string Field{get;}bool IsDestroyed{get;}bool MayChangeByGame{get;}object? NativeTarget{get;}JToken Read();void Validate(JToken value);void Write(JToken value);void Restore(JToken value);}
-    internal class ResolvedWriteField {internal ResolvedWriteField(IPreparedWriteField f,JToken expected,JToken value){}}
     internal static class GameWorldReferences {public static Verse.Map ResolveMap(string? id)=>Verse.Find.Maps.Single(m=>id==m.Id||id=="current"&&m==Verse.Find.CurrentMap);}
-    internal sealed partial class VerseWriteFieldResolver {
-        private sealed class Registration {internal JObject Spec;internal Registration(JObject spec,Func<VerseWriteFieldResolver,JObject,IReadOnlyList<ResolvedWriteField>> resolve){Spec=spec;}}
-        private static IReadOnlyList<ResolvedWriteField> One(IPreparedWriteField field,JObject operation)=>new[]{new ResolvedWriteField(field,operation["expect"]!,operation["value"]!)};
-        private static bool Official(Verse.ThingDef def)=>def.Official;
-        internal IPreparedWriteField ResolveTest(string kind,Verse.Thing thing,string? map=null)=>ResolvePreparation(new JObject{["op"]="set_"+kind,["thing"]=thing.Id,["map"]=map??thing.Map.Id},kind);
-        internal static JObject[] Specs()=>PreparationCatalog.Select(r=>r.Spec).ToArray();
+    internal static class OfficialContent {internal static bool Contains(Verse.ThingDef def)=>def.Official;}
+    internal sealed class WriteFieldsHarness {
+        private readonly PreparationWriteFields fields=new();private readonly WriteFieldDispatcher dispatcher;
+        internal WriteFieldsHarness(){dispatcher=new(new IWriteFieldSet[]{fields},Specs().Select(s=>(string)s["op"]!));}
+        internal IPreparedWriteField ResolveTest(string kind,Verse.Thing thing,string? map=null)=>dispatcher.Resolve(new JObject{["op"]="set_"+kind,["thing"]=thing.Id,["map"]=map??thing.Map.Id,["expect"]=false,["value"]=false}).Single().Field;
+        internal IPreparedWriteField? ResolveLedger(string id,string field,object? target)=>(IPreparedWriteField?)fields.ResolveLedger(id,field,target,JValue.CreateNull());
+        internal static JObject[] Specs()=>PreparationWriteCatalog.Operations;
     }
 }

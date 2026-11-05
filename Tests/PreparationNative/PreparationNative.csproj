@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><LangVersion>latest</LangVersion><Nullable>enable</Nullable><ImplicitUsings>disable</ImplicitUsings><RestorePackagesWithLockFile>true</RestorePackagesWithLockFile></PropertyGroup>
-  <ItemGroup><Compile Include="../../Source/ConstructionPreparation.cs" Link="ConstructionPreparation.cs" /><PackageReference Include="Newtonsoft.Json" Version="13.0.3" /></ItemGroup>
+  <ItemGroup><Compile Include="../../Source/ConstructionPreparation.cs" Link="ConstructionPreparation.cs" /><Compile Include="../../Source/PreparationWriteCatalog.cs" Link="PreparationWriteCatalog.cs" /><Compile Include="../../Source/PreparationWriteFields.cs" Link="PreparationWriteFields.cs" /><Compile Include="../../Source/WriteFields.cs" Link="WriteFields.cs" /><Compile Include="../../Source/WriteFieldDispatcher.cs" Link="WriteFieldDispatcher.cs" /><Compile Include="../../Source/NativeThingState.cs" Link="NativeThingState.cs" /><PackageReference Include="Newtonsoft.Json" Version="13.0.3" /></ItemGroup>
 </Project>

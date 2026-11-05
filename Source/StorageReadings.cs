@@ -11,7 +11,7 @@ internal static class StorageReadings
     internal static (ISlotGroupParent storage, Thing? thing, Zone_Stockpile? zone) Resolve(string id, string? mapId)
     {
         var maps = Find.Maps.Where(m => mapId == null || m.GetUniqueLoadID() == mapId).ToArray();
-        var things = maps.SelectMany(m => m.listerThings.AllThings).Where(t => t.GetUniqueLoadID() == id && t.Faction == Faction.OfPlayer && t is ISlotGroupParent).ToArray();
+        var things = maps.SelectMany(m => m.listerThings.AllThings).Where(t => t.GetUniqueLoadID() == id && NativeFactions.IsPlayer(t.Faction) && t is ISlotGroupParent).ToArray();
         var zones = maps.SelectMany(m => m.zoneManager.AllZones).OfType<Zone_Stockpile>().Where(z => z.GetUniqueLoadID() == id).ToArray();
         if (things.Length + zones.Length != 1) throw new ArgumentException("Player storage not found or ambiguous.");
         return things.Length == 1 ? ((ISlotGroupParent)things[0], things[0], null) : (zones[0], null, zones[0]);

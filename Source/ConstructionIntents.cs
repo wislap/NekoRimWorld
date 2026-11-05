@@ -93,7 +93,7 @@ internal static class ConstructionFrameTransition
         if (__result && __1 != null && __1.Spawned && __1.Map == __state && __1.Position == __instance.Position
             && (__1 is Frame && __1.def.entityDefToBuild == __instance.def.entityDefToBuild || __1 is Building && __1.def == __instance.def.entityDefToBuild)
             && __1.Stuff == __instance.EntityToBuildStuff() && ConstructionRotation.Matches(__instance, __1))
-            Current.Game?.GetComponent<NekoGameComponent>()?.ConstructionIntents.Transition(__instance, __1);
+            Current.Game?.GetComponent<NekoGameComponent>()?.Save.ConstructionIntents.Transition(__instance, __1);
     }
 }
 // A frame ends in one of two native ways, and each spawns its successor inside this scope:
@@ -119,7 +119,7 @@ internal static class ConstructionBuildingTransition
             && (__result is Building ? __result.def == from.def.entityDefToBuild && __result.Stuff == from.Stuff
                 : __result is Blueprint_Build blueprint && blueprint.def == from.def.entityDefToBuild?.blueprintDef && blueprint.EntityToBuildStuff() == from.Stuff)
             && ConstructionRotation.Matches(from, __result))
-            Current.Game?.GetComponent<NekoGameComponent>()?.ConstructionIntents.Transition(from, __result);
+            Current.Game?.GetComponent<NekoGameComponent>()?.Save.ConstructionIntents.Transition(from, __result);
     }
 }
 [HarmonyPatch(typeof(TerrainGrid), nameof(TerrainGrid.SetTerrain), new Type[] { typeof(IntVec3), typeof(TerrainDef) })]
@@ -145,5 +145,5 @@ internal static class ConstructionTemporaryTerrainTransition
 internal static class ConstructionUserCancellation
 {
     private static bool Prepare() => NativeEventHookSupport.KnownBinary();
-    private static void Postfix(Thing t) { if (t is Blueprint || t is Frame) Current.Game?.GetComponent<NekoGameComponent>()?.ConstructionIntents.CancelledByDesignator(t); }
+    private static void Postfix(Thing t) { if (t is Blueprint || t is Frame) Current.Game?.GetComponent<NekoGameComponent>()?.Save.ConstructionIntents.CancelledByDesignator(t); }
 }

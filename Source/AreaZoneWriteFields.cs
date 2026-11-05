@@ -7,46 +7,12 @@ using Verse;
 
 namespace Neko.RimWorld;
 
-internal sealed partial class VerseWriteFieldResolver
+// Zones and allowed areas on the player's current map: creation, reshaping and
+// removal. Whole-area masks are resolved per cell by AreaCellFlagsWriteFields.
+internal sealed class AreaZoneWriteFields : IWriteFieldSet
 {
-    private static JObject CellSchema() => JObject.Parse("{'type':'array','maxItems':1024,'items':{'type':'object','additionalProperties':false,'properties':{'x':{'type':'integer'},'z':{'type':'integer'}},'required':['x','z']}}");
-    private static Registration AreaZoneRegistration(string op, string? target)
-    {
-        var properties = new JObject { ["op"] = new JObject { ["const"] = op }, ["map"] = new JObject { ["type"] = "string", ["minLength"] = 1 } };
-        var required = new JArray("op", "map", "value");
-        var valueProperties = new JObject { ["cells"] = CellSchema() }; var valueRequired = new JArray("cells");
-        if (target != null) { properties[target] = new JObject { ["type"] = "string", ["minLength"] = 1 }; required.Add(target); }
-        else { if (op == "create_zone") { valueProperties["kind"] = new JObject { ["enum"] = new JArray("stockpile", "growing") }; valueRequired.Add("kind"); } valueProperties["label"] = new JObject { ["type"] = "string", ["minLength"] = 1, ["maxLength"] = 128 }; }
-        properties["value"] = new JObject { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = valueProperties, ["required"] = valueRequired };
-        var expected = target == null ? JObject.Parse("{'type':'object','additionalProperties':false,'properties':{'map_id':{'type':'string','minLength':1},'zone_ids':{'type':'array','items':{'type':'string'}},'allowed_area_ids':{'type':'array','items':{'type':'string'}}},'required':['map_id','zone_ids','allowed_area_ids']}")
-            : new JObject { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = new JObject { ["native_instance"] = new JObject { ["type"] = "string", ["minLength"] = 1 }, ["cells"] = JObject.Parse("{'type':'array','items':{'type':'object','additionalProperties':false,'properties':{'x':{'type':'integer'},'z':{'type':'integer'}},'required':['x','z']}}") }, ["required"] = new JArray("native_instance", "cells") };
-        if (op == "set_area_cells") { expected["properties"]!["manual_revision"] = new JObject { ["type"] = "string" }; ((JArray)expected["required"]!).Add("manual_revision"); }
-        var arguments = new JObject { ["map"] = new JObject { ["arg"] = "map" }, ["limit"] = 100 }; if (target != null) arguments["ids"] = new JArray(new JObject { ["arg"] = target });
-        var extract = new JObject
-        {
-            ["kind"] = "field",
-            ["object_id"] = target == null ? JValue.CreateNull() : new JObject { ["arg"] = target },
-            ["path"] = new JArray(target == null ? "structure" : "write_cells"),
-            ["allow_null"] = false,
-            ["objects_path"] = target == null ? new JArray() : new JArray("objects"),
-            ["identity_path"] = target == null ? new JArray() : new JArray("lookup_id"),
-            ["status_path"] = new JArray("status"),
-            ["status_value"] = target == null ? "ok" : "observed"
-        };
-        if (op == "set_area_cells") extract["require"] = new JArray(new JObject { ["path"] = new JArray("manual_ids_complete"), ["value"] = true });
-        extract["match"] = new JArray(new JObject { ["path"] = new JArray("map_id"), ["value"] = new JObject { ["arg"] = "map" } });
-        return new Registration(new JObject
-        {
-            ["op"] = op,
-            ["schema"] = new JObject { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = properties, ["required"] = required },
-            ["expect_schema"] = expected,
-            ["description"] = "Current player map only, with native designator qualification. Zone edits preserve Home, cannot overlap another zone and require one connected nonempty region. Roof areas cannot clear the opposite roof instruction implicitly.",
-            ["observation"] = new JObject { ["read"] = new JObject { ["tool"] = "inspect_areas", ["arguments"] = arguments, ["native_operation"] = "inspect_areas" }, ["extract"] = extract }
-        }, (r, o) => op == "set_area_cells" ? r.ResolveAreaMaskFields(o) : One(r.ResolveAreaZone(o), o));
-    }
-    // Property avoids cross-partial static initializer ordering.
-    private static Registration[] AreaZoneCatalog => new[] { AreaZoneRegistration("create_zone", null), AreaZoneRegistration("create_allowed_area", null), AreaZoneRegistration("set_zone_cells", "zone"), AreaZoneRegistration("set_area_cells", "area"), AreaRemovalRegistration(true), AreaRemovalRegistration(false) };
-    private IPreparedWriteField ResolveAreaZone(JObject operation)
+    public IEnumerable<WriteOperationBinding> Operations => AreaZoneWriteCatalog.Operations.Select(spec => (string)spec["op"]!).Where(op => op != "set_area_cells").Select(op => WriteOperationBinding.Single(op, ResolveAreaZone));
+    private static IPreparedWriteField ResolveAreaZone(JObject operation)
     {
         if (operation.Properties().Any(p => !new[] { "op", "map", "zone", "area", "expect", "value", "evidence" }.Contains(p.Name))) throw new ArgumentException("Invalid area or zone operation.");
         var map = GameWorldReferences.ResolveMap((string?)operation["map"]); if ((string?)operation["map"] != map.GetUniqueLoadID()) throw new ArgumentException("Use the canonical native map ID for area and zone writes."); var op = (string?)operation["op"];
@@ -58,7 +24,7 @@ internal sealed partial class VerseWriteFieldResolver
 
         throw new ArgumentException("Unsupported area or zone operation.");
     }
-    private static void AreaWriteMap(Map map) { if (map.Disposed || map != Find.CurrentMap) throw new ArgumentException("Native area and zone qualification requires the player's current map."); }
+    internal static void AreaWriteMap(Map map) { if (map.Disposed || map != Find.CurrentMap) throw new ArgumentException("Native area and zone qualification requires the player's current map."); }
     private static IntVec3[] DesiredCells(Map map, JToken value, bool zone, bool newValue = true)
     {
         if (value["cells"] is not JArray cells || newValue && cells.Count > 1024 || zone && cells.Count == 0) throw new ArgumentException("Select at most 1024 cells; a zone must remain nonempty.");
@@ -132,14 +98,14 @@ internal sealed partial class VerseWriteFieldResolver
         public void Restore(JToken original) { if (created != null && map.zoneManager.AllZones.Contains(created)) created.Delete(false); removed = true; }
         public JToken AppliedValue() => Read(); public JToken UndoExpected() => Read(); public IPreparedWriteField CreateUndo() => new ZoneAdditionUndo(this);
         private void Unreferenced() { if (created is Zone_Stockpile grouped && grouped.GetSlotGroup().StorageGroup != null) throw new InvalidOperationException("Grouped stockpile lifecycle is unsupported."); if (created != null && AreaZoneReadings.ZoneReferences(created).Count != 0) throw new InvalidOperationException("Created stockpile is referenced by a production bill."); }
-        private sealed class ZoneAdditionUndo : IPreparedStructuralWrite
+        private sealed class ZoneAdditionUndo : IStructuralWriteField
         {
             private readonly ZoneAddition owner; private IntVec3[]? before; internal ZoneAdditionUndo(ZoneAddition owner) { this.owner = owner; }
             public string ObjectId => owner.ObjectId; public string Field => owner.Field; public bool IsDestroyed => owner.IsDestroyed; public bool MayChangeByGame => true; public object NativeTarget => owner.map; public JToken Read() => owner.Read();
             public void Validate(JToken value) { AreaWriteMap(owner.map); if (owner.created == null || !owner.map.zoneManager.AllZones.Contains(owner.created)) throw new ArgumentException("Original created zone no longer exists."); owner.Unreferenced(); }
             public void Write(JToken value) { Validate(value); before = owner.created!.Cells.ToArray(); owner.Restore(value); }
             public void Restore(JToken value) { if (owner.created == null || before == null) return; owner.map.zoneManager.RegisterZone(owner.created); SetZoneCells(owner.created, before); owner.removed = false; }
-            public JToken AppliedValue() => Read(); public JToken UndoExpected() => Read(); public IPreparedWriteField CreateUndo() => throw new NotSupportedException();
+            public JToken AppliedValue() => Read();
         }
     }
     private sealed class AllowedAreaAddition : IPreparedStructuralWrite, IWriteAggregateScope
@@ -160,7 +126,7 @@ internal sealed partial class VerseWriteFieldResolver
         public void Write(JToken value) { Validate(value); if (!map.areaManager.TryMakeNewAllowed(out created)) throw new InvalidOperationException("Native allowed-area creation refused."); if (value["label"] != null) created.SetLabel((string)value["label"]!); foreach (var c in DesiredCells(map, value, false)) created[c] = true; index = map.areaManager.AllAreas.IndexOf(created); }
         public void Restore(JToken value) { if (created != null && map.areaManager.AllAreas.Contains(created)) { if (AreaZoneReadings.AreaUsers(created).Count != 0) throw new InvalidOperationException("Created area is referenced by a pawn."); created.Delete(); } removed = true; }
         public JToken AppliedValue() => Read(); public JToken UndoExpected() => Read(); public IPreparedWriteField CreateUndo() => new AllowedAreaUndo(this);
-        private sealed class AllowedAreaUndo : IPreparedStructuralWrite
+        private sealed class AllowedAreaUndo : IStructuralWriteField
         {
             private readonly AllowedAreaAddition owner; internal AllowedAreaUndo(AllowedAreaAddition owner) { this.owner = owner; }
             public string ObjectId => owner.ObjectId; public string Field => owner.Field; public object NativeTarget => owner.map; public bool IsDestroyed => owner.IsDestroyed; public bool MayChangeByGame => true;
@@ -168,43 +134,8 @@ internal sealed partial class VerseWriteFieldResolver
             public void Validate(JToken value) { AreaWriteMap(owner.map); if (owner.created == null || !owner.map.areaManager.AllAreas.Contains(owner.created) || AreaZoneReadings.AreaUsers(owner.created).Count != 0) throw new ArgumentException("Only the original unreferenced area can be undone."); }
             public void Write(JToken value) { Validate(value); owner.Restore(value); }
             public void Restore(JToken value) { if (owner.created == null) return; if (!owner.map.areaManager.AllAreas.Contains(owner.created)) { owner.map.areaManager.AllAreas.Insert(owner.index, owner.created); } owner.removed = false; }
-            public JToken AppliedValue() => Read(); public JToken UndoExpected() => Read(); public IPreparedWriteField CreateUndo() => throw new NotSupportedException();
+            public JToken AppliedValue() => Read();
         }
-    }
-    private static Registration AreaRemovalRegistration(bool zone)
-    {
-        var op = zone ? "remove_zone" : "remove_allowed_area"; var target = zone ? "zone" : "area";
-        var expected = JObject.Parse("{'type':'object','additionalProperties':false,'properties':{'map_id':{'type':'string','minLength':1},'zone_ids':{'type':'array','items':{'type':'string'}},'allowed_area_ids':{'type':'array','items':{'type':'string'}},'removed_id':{'type':'string','minLength':1},'removed':{'type':'object'}},'required':['map_id','zone_ids','allowed_area_ids','removed_id','removed']}");
-        var properties = new JObject
-        {
-            ["op"] = new JObject { ["const"] = op },
-            ["map"] = new JObject { ["type"] = "string", ["minLength"] = 1 },
-            [target] = new JObject { ["type"] = "string", ["minLength"] = 1 },
-            ["value"] = new JObject { ["const"] = false }
-        };
-        return new Registration(new JObject
-        {
-            ["op"] = op,
-            ["schema"] = new JObject { ["type"] = "object", ["additionalProperties"] = false, ["properties"] = properties, ["required"] = new JArray("op", "map", target, "value") },
-            ["expect_schema"] = expected,
-            ["description"] = "Remove an ordinary unreferenced zone or allowed area. Ground inventory and plants are retained. Undo retains the original native object and requires its cells, configuration, references and map structure to remain compatible.",
-            ["observation"] = new JObject
-            {
-                ["read"] = new JObject { ["tool"] = "inspect_areas", ["arguments"] = new JObject { ["map"] = new JObject { ["arg"] = "map" }, ["ids"] = new JArray(new JObject { ["arg"] = target }), ["limit"] = 100 }, ["native_operation"] = "inspect_areas" },
-                ["extract"] = new JObject
-                {
-                    ["kind"] = "field",
-                    ["object_id"] = new JObject { ["arg"] = target },
-                    ["path"] = new JArray("delete_guard"),
-                    ["allow_null"] = false,
-                    ["objects_path"] = new JArray("objects"),
-                    ["identity_path"] = new JArray("id"),
-                    ["status_path"] = new JArray("status"),
-                    ["status_value"] = "observed",
-                    ["match"] = new JArray(new JObject { ["path"] = new JArray("map_id"), ["value"] = new JObject { ["arg"] = "map" } })
-                }
-            }
-        }, (r, o) => One(r.ResolveAreaZone(o), o));
     }
     private sealed class RegionRemoval : IPreparedStructuralWrite, IWriteAggregateScope
     {
@@ -265,7 +196,7 @@ internal sealed partial class VerseWriteFieldResolver
             removed = false;
         }
         public JToken AppliedValue() => Read(); public JToken UndoExpected() => Read(); public IPreparedWriteField CreateUndo() => new RegionRestore(this);
-        private sealed class RegionRestore : IPreparedStructuralWrite, IWriteAggregateScope
+        private sealed class RegionRestore : IStructuralWriteField, IWriteAggregateScope
         {
             private readonly RegionRemoval owner; internal RegionRestore(RegionRemoval owner) { this.owner = owner; }
             public string ObjectId => owner.ObjectId; public string Field => owner.Field; public object NativeTarget => owner.map; public bool IsDestroyed => owner.IsDestroyed; public bool MayChangeByGame => true;
@@ -278,35 +209,31 @@ internal sealed partial class VerseWriteFieldResolver
             }
             public void Write(JToken value) { Validate(value); owner.Restore(value); }
             public void Restore(JToken value) => owner.Write(new JValue(false));
-            public JToken AppliedValue() => Read(); public JToken UndoExpected() => Read(); public IPreparedWriteField CreateUndo() => throw new NotSupportedException();
+            public JToken AppliedValue() => Read();
         }
     }
-    private sealed class RegionRemovalLedger : IPreparedWriteField
+    private sealed class RegionRemovalLedger : IReadableWriteField
     {
         private readonly Map map; private readonly string id; private readonly bool zone;
         internal RegionRemovalLedger(Map map, string id, bool zone) { this.map = map; this.id = id; this.zone = zone; }
-        public string ObjectId => map.GetUniqueLoadID(); public string Field => (zone ? "zone_removed:" : "area_removed:") + id; public object NativeTarget => map; public bool IsDestroyed => map.Disposed; public bool MayChangeByGame => true;
+        public string ObjectId => map.GetUniqueLoadID(); public string Field => (zone ? "zone_removed:" : "area_removed:") + id; public bool IsDestroyed => map.Disposed; public bool MayChangeByGame => true;
         public JToken Read() => AreaZoneReadings.RemovalState(map, id, zone);
-        public void Validate(JToken value) => throw new NotSupportedException(); public void Write(JToken value) => throw new NotSupportedException(); public void Restore(JToken value) => throw new NotSupportedException();
     }
-    private sealed class AreaStructureLedger : IPreparedWriteField
+    private sealed class AreaStructureLedger : IReadableWriteField
     {
         private readonly Map map; private readonly string? createdId;
         internal AreaStructureLedger(Map map, JToken recorded) { this.map = map; createdId = (string?)recorded["created"]?["id"]; }
-        public string ObjectId => map.GetUniqueLoadID(); public string Field => "area_structure"; public bool IsDestroyed => map.Disposed; public bool MayChangeByGame => true; public object NativeTarget => map;
+        public string ObjectId => map.GetUniqueLoadID(); public string Field => "area_structure"; public bool IsDestroyed => map.Disposed; public bool MayChangeByGame => true;
         public JToken Read() { var state = AreaZoneReadings.Structure(map); if (createdId != null) { var area = map.areaManager.AllAreas.SingleOrDefault(a => a.GetUniqueLoadID() == createdId); state["created"] = area == null ? JValue.CreateNull() : AreaZoneReadings.AreaState(area); } return state; }
-        public void Validate(JToken value) => throw new NotSupportedException(); public void Write(JToken value) => throw new NotSupportedException(); public void Restore(JToken value) => throw new NotSupportedException();
     }
-    private sealed class ZoneStructureLedger : IPreparedWriteField
+    private sealed class ZoneStructureLedger : IReadableWriteField
     {
         private readonly Map map; private readonly string? createdId; internal ZoneStructureLedger(Map map, JToken recorded) { this.map = map; createdId = (string?)recorded["created"]?["id"]; }
-        public string ObjectId => map.GetUniqueLoadID(); public string Field => "zone_structure"; public bool IsDestroyed => map.Disposed; public bool MayChangeByGame => true; public object NativeTarget => map;
+        public string ObjectId => map.GetUniqueLoadID(); public string Field => "zone_structure"; public bool IsDestroyed => map.Disposed; public bool MayChangeByGame => true;
         public JToken Read() { var state = AreaZoneReadings.Structure(map); if (createdId != null) { var zone = map.zoneManager.AllZones.SingleOrDefault(z => z.GetUniqueLoadID() == createdId); state["created"] = zone == null ? JValue.CreateNull() : AreaZoneReadings.ZoneState(zone); } return state; }
-        public void Validate(JToken value) => throw new NotSupportedException(); public void Write(JToken value) => throw new NotSupportedException(); public void Restore(JToken value) => throw new NotSupportedException();
     }
-    internal IPreparedWriteField? ResolveAreaZoneLedger(string id, string field, object? target, JToken value)
+    public IReadableWriteField? ResolveLedger(string id, string field, object? target, JToken value)
     {
-        var flags = ResolveAreaFlagsLedger(id, field, target, value); if (flags != null) return flags;
         if (target is Zone zone && zone.GetUniqueLoadID() == id && field == "zone_cells") return new CellUpdate(zone.Map, zone);
 
         if (target is Map map && map.GetUniqueLoadID() == id) { if (field == "zone_structure") return new ZoneStructureLedger(map, value); if (field == "area_structure") return new AreaStructureLedger(map, value); if (field.StartsWith("zone_removed:", StringComparison.Ordinal)) return new RegionRemovalLedger(map, field.Substring("zone_removed:".Length), true); if (field.StartsWith("area_removed:", StringComparison.Ordinal)) return new RegionRemovalLedger(map, field.Substring("area_removed:".Length), false); }

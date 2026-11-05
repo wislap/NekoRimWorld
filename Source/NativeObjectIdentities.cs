@@ -97,5 +97,5 @@ internal sealed class NativeObjectIdentityRegistry
 
 internal static class NativeObjectIdentities
 {
-    internal static string Token(object native) => Current.Game.GetComponent<NekoGameComponent>().NativeIdentities.Token(native);
+    internal static string Token(object native) => Current.Game.GetComponent<NekoGameComponent>().Save.NativeIdentities.Token(native);
 }

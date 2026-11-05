@@ -21,7 +21,7 @@ internal static class QueryExecutor
             outcome.Data["manual_area"] = NativeAreaManualHookSupport.Describe();
             outcome.Data["write_ledger_snapshot"] = new JObject { ["capability"] = "colony_write.ledger_snapshot.v1", ["operations"] = new JArray("write_ledger_snapshot", "write_field_identities", "write_undo_fields"),
                 ["selection"] = new JObject { ["capability"] = "colony_write.ledger_snapshot.selection.v1", ["parameters"] = JObject.Parse("{'type':'object','additionalProperties':false,'properties':{'fields':{'type':'array','minItems':1,'maxItems':64,'uniqueItems':true,'items':{'type':'object','additionalProperties':false,'properties':{'object':{'type':'string','minLength':1,'maxLength':256},'field':{'type':'string','minLength':1,'maxLength':256}},'required':['object','field']}}},'required':['fields']}"), ["scope"] = "complete only for the exact selected object/field identities; empty arguments retain the legacy full snapshot" } };
-            outcome.Data["colony_write"] = VerseWriteFieldResolver.DescribeCatalog();
+            outcome.Data["colony_write"] = WriteCatalog.Describe();
             outcome.Data["game_implementation"] = GameImplementation.Describe();
         }
         return outcome;

@@ -31,6 +31,6 @@ internal static class ConstructionTerrainCompletion
         var from = ConstructionCompletionScope.Completing; var map = ConstructionCompletionScope.CompletingMap;
         if (from == null || map == null || map.Disposed || !ReferenceEquals(map.terrainGrid, grid) || from.Position != cell || !cell.InBounds(map)
             || !ReferenceEquals(from.def.entityDefToBuild, terrain) || ConstructionTerrainState.Layer(terrain) != layer || !ReferenceEquals(ConstructionTerrainState.At(map, cell, terrain), terrain)) return;
-        Current.Game?.GetComponent<NekoGameComponent>()?.ConstructionIntents.TerrainCompleted(from, map, cell, terrain);
+        Current.Game?.GetComponent<NekoGameComponent>()?.Save.ConstructionIntents.TerrainCompleted(from, map, cell, terrain);
     }
 }

@@ -18,7 +18,7 @@ $assembly = [Reflection.Assembly]::LoadFrom($dll)
 New-Item -ItemType Directory -Path $outputRoot | Out-Null
 $utf8 = [Text.UTF8Encoding]::new($false)
 foreach ($descriptor in @(
-    @('VerseWriteFieldResolver', 'DescribeCatalog', 'write-catalog.json'),
+    @('WriteCatalog', 'Describe', 'write-catalog.json'),
     @('ColonyManagementContract', 'Catalog', 'colony-management.json'),
     @('ColonyReadContract', 'Catalog', 'colony-state.json'),
     @('NativeAreaManualHookSupport', 'Describe', 'manual-area.json'),

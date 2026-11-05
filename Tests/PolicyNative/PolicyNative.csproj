@@ -2,11 +2,19 @@
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><LangVersion>latest</LangVersion><Nullable>enable</Nullable><ImplicitUsings>disable</ImplicitUsings><RestorePackagesWithLockFile>true</RestorePackagesWithLockFile></PropertyGroup>
   <ItemGroup>
     <Compile Include="../../Source/PolicyReadings.cs" Link="PolicyReadings.cs" />
-    <Compile Include="../../Source/PolicyWrite.cs" Link="PolicyWrite.cs" />
-    <Compile Include="../../Source/BedWrite.cs" Link="BedWrite.cs" />
+    <Compile Include="../../Source/PolicyWriteCatalog.cs" Link="PolicyWriteCatalog.cs" />
+    <Compile Include="../../Source/PolicyWriteFields.cs" Link="PolicyWriteFields.cs" />
+    <Compile Include="../../Source/BedWriteCatalog.cs" Link="BedWriteCatalog.cs" />
+    <Compile Include="../../Source/BedWriteFields.cs" Link="BedWriteFields.cs" />
     <Compile Include="../../Source/AreaZoneReadings.cs" Link="AreaZoneReadings.cs" />
-    <Compile Include="../../Source/AreaZoneWrite.cs" Link="AreaZoneWrite.cs" />
+    <Compile Include="../../Source/AreaZoneWriteCatalog.cs" Link="AreaZoneWriteCatalog.cs" />
+    <Compile Include="../../Source/AreaZoneWriteFields.cs" Link="AreaZoneWriteFields.cs" />
     <Compile Include="../../Source/AreaCellFlags.cs" Link="AreaCellFlags.cs" />
+    <Compile Include="../../Source/AreaCellFlagsWriteCatalog.cs" Link="AreaCellFlagsWriteCatalog.cs" />
+    <Compile Include="../../Source/AreaCellFlagsWriteFields.cs" Link="AreaCellFlagsWriteFields.cs" />
+    <Compile Include="../../Source/WriteFields.cs" Link="WriteFields.cs" />
+    <Compile Include="../../Source/WriteFieldDispatcher.cs" Link="WriteFieldDispatcher.cs" />
+    <Compile Include="../../Source/NativeFactions.cs" Link="NativeFactions.cs" />
     <Compile Include="../../Source/JsonValues.cs" Link="JsonValues.cs" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>

@@ -27,7 +27,7 @@ internal static class TerrainTests
         map.terrainGrid.Foundation = bridge; map.terrainGrid.Top = floor;
         var frame = new Frame { Position = cell, def = new ThingDef { entityDefToBuild = bridge } };
         ConstructionCompletionScope.Completing = frame; ConstructionCompletionScope.CompletingMap = map;
-        Current.Game = new Game(); var registry = Current.Game.Component.ConstructionIntents;
+        Current.Game = new Game(); var registry = Current.Game.Component.Save.ConstructionIntents;
         var bridgeIntent = registry.Register(map, Element(bridge.defName, "bridge", "floor"), frame);
         var unproven = registry.Register(map, Element(bridge.defName, "another", "floor"), new Frame { Position = cell, def = frame.def });
         var temporaryFrame = new Frame { Position = cell, def = new ThingDef { entityDefToBuild = temporary } };
@@ -151,7 +151,8 @@ internal static class TerrainTests
 }
 
 namespace Neko.RimWorld {
-    internal sealed class NekoGameComponent { internal ConstructionIntents ConstructionIntents = new(); }
+    internal sealed class NekoGameComponent { internal NekoSaveState Save = new(); }
+    internal sealed class NekoSaveState { internal ConstructionIntents ConstructionIntents = new(); }
     internal static class NativeEventHookSupport { internal static bool KnownBinary() => true; }
     internal static class GameQueryEngine { internal static string Hash(string value) => value; }
     internal static class GameWorldReferences { internal static Map ResolveMap(string? id) => throw new NotSupportedException(); }

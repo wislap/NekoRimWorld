@@ -7,20 +7,26 @@ using Verse;
 
 namespace Neko.RimWorld;
 
-// Native field directory used by the save-scoped transaction coordinator.
-internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver
+// Pawn work settings, research, forbidden flags, storage settings and the
+// original production bill counters.
+internal sealed class CoreNativeWriteFields : IWriteFieldSet
 {
     private readonly IGameData data;
-    private static bool Official(Def def)
-    {
-        var package = def.modContentPack?.PackageId?.ToLowerInvariant();
-        return package == "ludeon.rimworld" || package == "ludeon.rimworld.royalty" ||
-            package == "ludeon.rimworld.ideology" || package == "ludeon.rimworld.biotech" ||
-            package == "ludeon.rimworld.anomaly" || package == "ludeon.rimworld.odyssey";
-    }
 
-    internal VerseWriteFieldResolver(IGameData data) { this.data = data; }
-    internal IPreparedWriteField? ResolveHeldLedgerField(string id, string field, object? target) {
+    internal CoreNativeWriteFields(IGameData data) { this.data = data; }
+    public IEnumerable<WriteOperationBinding> Operations => new[] {
+        WriteOperationBinding.Single("set_work_priority", ResolveWorkPriority),
+        WriteOperationBinding.Single("set_medical_care", ResolveMedical),
+        new WriteOperationBinding("set_bill", ResolveBillFields),
+        WriteOperationBinding.Single("set_storage_allow", operation => ResolveStorage(operation, "set_storage_allow")),
+        WriteOperationBinding.Single("set_allowed_area", ResolveArea),
+        WriteOperationBinding.Single("set_forbidden", ResolveForbidden),
+        WriteOperationBinding.Single("set_research", ResolveResearch),
+        WriteOperationBinding.Single("set_storage_priority", operation => ResolveStorage(operation, "set_storage_priority")),
+    };
+    public IReadableWriteField? ResolveLedger(string id, string field, object? target, JToken value) => ResolveHeldLedgerField(id, field, target) ?? ResolveLedgerField(id, field);
+
+    private static IReadableWriteField? ResolveHeldLedgerField(string id, string field, object? target) {
         if (target is Pawn pawn && pawn.GetUniqueLoadID() == id) {
             if (field == "medical_care") return new MedicalField(pawn);
             if (field == "allowed_area") return new AreaField(pawn);
@@ -61,7 +67,7 @@ internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver
             throw new ArgumentException("Invalid work priority target.");
         var pawn = data.Colonists().SingleOrDefault(x => x.Id == pawnId)?.Handle as Pawn ?? throw new ArgumentException("Colonist not found.");
         var work = DefDatabase<WorkTypeDef>.GetNamedSilentFail(workName) ?? throw new ArgumentException("Work type not found.");
-        if (!Official(work)) throw new ArgumentException("Only official work types can be changed.");
+        if (!OfficialContent.Contains(work)) throw new ArgumentException("Only official work types can be changed.");
         return new WorkPriorityField(pawn, work);
     }
 
@@ -86,7 +92,7 @@ internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver
             if (value.Type == JTokenType.Null) return;
             if (value.Type != JTokenType.String) throw new ArgumentException("Research must be a project name or null.");
             var project = DefDatabase<ResearchProjectDef>.GetNamedSilentFail((string)value!) ?? throw new ArgumentException("Research project not found.");
-            if (!Official(project) || project.baseCost <= 0 || project.knowledgeCategory != null || ResearchReadings.CanStartReadOnly(project) != true) throw new ArgumentException("Research project cannot be started.");
+            if (!OfficialContent.Contains(project) || project.baseCost <= 0 || project.knowledgeCategory != null || ResearchReadings.CanStartReadOnly(project) != true) throw new ArgumentException("Research project cannot be started.");
         }
         public void Write(JToken value) {
             var manager = Find.ResearchManager;
@@ -206,7 +212,7 @@ internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver
         public void Validate(JToken value) {
             if (!valid() || value.Type != JTokenType.Boolean) throw new ArgumentException("Invalid storage filter value.");
             var parent = settings.owner?.GetParentStoreSettings();
-            NativeWriteSafety.RequireStorageItem(Official(item), item.virtualDefs != null && item.virtualDefs.Count != 0,
+            NativeWriteSafety.RequireStorageItem(OfficialContent.Contains(item), item.virtualDefs != null && item.virtualDefs.Count != 0,
                 parent == null || parent.AllowedToAccept(item));
         }
         public void Write(JToken value) => settings.filter.SetAllow(item, (bool)value);
@@ -224,7 +230,7 @@ internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver
             .SingleOrDefault(x => x.bill.GetUniqueLoadID() == id);
         if (pair.bill == null) throw new ArgumentException("Production bill on a player worktable not found.");
         if (operation["worktable"] != null && (string.IsNullOrWhiteSpace((string?)operation["worktable"]) || pair.table.GetUniqueLoadID() != (string?)operation["worktable"])) throw new ArgumentException("Bill worktable does not match.");
-        if (!Official(pair.bill.recipe)) throw new ArgumentException("Only official recipes can be changed.");
+        if (!OfficialContent.Contains(pair.bill.recipe)) throw new ArgumentException("Only official recipes can be changed.");
         return new BillField(pair.table, pair.bill, value.Properties().Select(p => p.Name).ToArray());
     }
 
@@ -313,5 +319,24 @@ internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver
         }
         public void Write(JToken value) => pawn.workSettings.SetPriority(work, (int)value);
         public void Restore(JToken original) => pawn.workSettings.SetPriority(work, (int)original);
+    }
+
+    // Recover the exact same field implementation used by writes; no validation or setter is invoked.
+    private IReadableWriteField? ResolveLedgerField(string id, string field) {
+        JObject op = new() { ["value"] = JValue.CreateNull(), ["expect"] = JValue.CreateNull() };
+        IPreparedWriteField result;
+        if (field == "current_project" && id == "research:current") { op["research"] = "current"; result = ResolveResearch(op); }
+        else if (field == "medical_care") { op["pawn"] = id; result = ResolveMedical(op); }
+        else if (field == "allowed_area") { op["pawn"] = id; result = ResolveArea(op); }
+        else if (field == "forbidden_flag") { op["thing"] = id; result = ResolveForbidden(op); }
+        else if (field.StartsWith("work_priority:", StringComparison.Ordinal)) { op["pawn"] = id; op["work"] = field.Substring(14); result = ResolveWorkPriority(op); }
+        else if (field == "storage_priority") { op["storage"] = id; result = ResolveStorage(op, "set_storage_priority"); }
+        else if (field.StartsWith("storage_allow:", StringComparison.Ordinal)) { op["storage"] = id; op["item"] = field.Substring(14); result = ResolveStorage(op, "set_storage_allow"); }
+        else if (field.StartsWith("bill:", StringComparison.Ordinal)) {
+            var name = field.Substring(5);
+            op["bill"] = id; op["value"] = new JObject { [name] = JValue.CreateNull() }; op["expect"] = new JObject { [name] = JValue.CreateNull() };
+            result = ResolveBillFields(op).Single().Field;
+        } else return null;
+        return result.ObjectId == id && result.Field == field ? result : null;
     }
 }

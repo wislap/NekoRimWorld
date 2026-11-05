@@ -1,11 +1,6 @@
-using System;
 using System.Diagnostics;
-using System.Threading;
 using Verse;
-using RimWorld;
 using Newtonsoft.Json.Linq;
-using System.Collections.Generic;
-using System.Linq;
 
 namespace Neko.RimWorld;
 
@@ -16,180 +11,37 @@ namespace Neko.RimWorld;
 /// </summary>
 public sealed class NekoGameComponent : GameComponent
 {
-    private const int MaxQueriesPerUpdate = 1;
-    private static readonly long QueryBudgetStopwatchTicks =
-        Math.Max(1L, Stopwatch.Frequency * 2L / 1000L);
-
-    private string colonyId = string.Empty;
-    private string loadEpoch = string.Empty;
-    private long snapshotSequence;
-    private IFrameQueryOperation? activeOperation;
-    private ProtocolEnvelope? activeRequest;
-    private SessionDescriptor? activeSession;
-    private readonly WriteLedgerSaveState writeLedgerSave = new();
-    private readonly WriteLedger writeLedger = new();
-    private readonly WriteTargetIndex writeTargets = new(WriteTargetReferences.Destroyed);
-    private readonly WriteTargetReferences writeTargetReferences = new();
-    internal ConstructionIntents ConstructionIntents { get; } = new();
+    internal NekoSaveState Save { get; } = new();
+    private readonly NekoSession session;
+    internal PauseObserver Pause { get; }
+    internal ManualAreaObserver ManualAreas { get; }
+    private readonly LedgerSnapshotService ledgerSnapshots;
+    private readonly RequestDispatcher requests;
     private readonly ColonyObservations colonyObservations = new(ColonyObservationReadings.Sample, ColonyObservationReadings.Qualify, beginRead: spec => (string?)spec["kind"] == "resources" ? new ResourceObservation(spec) : null);
-    internal NativeObjectIdentityRegistry NativeIdentities { get; } = new();
-    internal NativeAreaManualRegistry NativeManualAreas { get; } = new();
-    private bool manualAreaFaulted;
-    internal bool ManualAreaDataValid => !manualAreaFaulted && NativeManualAreas.Valid;
-    internal bool TrackedAreaFlag(string id, string field) => writeLedger.Find(id, field) != null;
-    internal JObject[] TrackedAreaFields(string id) => writeLedger.AreaFields(id);
-    internal bool EnsureAreaManualInterest(Area area, IntVec3 cell) {
-        if (!ManualAreaDataValid) return false;
-        if (TrackedAreaFlag(area.GetUniqueLoadID(), AreaCellFlags.FieldName(cell))) NativeManualAreas.EnsureTracked(area, cell);
-        return NativeManualAreas.HasArea(area);
-    }
-    internal void BumpManualArea(Area area) { if (ManualAreaDataValid && NativeManualAreas.HasArea(area)) NativeManualAreas.Bump(area); }
-    internal void ObserveManualAreaChange(Area area, IntVec3 cell, bool before, bool after, string command) {
-        try {
-            if (!ManualAreaDataValid) return;
-            var field = AreaCellFlags.FieldName(cell); var prior = writeLedger.Find(area.GetUniqueLoadID(), field);
-            if (prior != null) NativeManualAreas.EnsureTracked(area, cell);
-            var ownership = prior == null ? null : new JObject { ["changeset_id"] = prior["changeset_id"]!.DeepClone(), ["value"] = prior["value"]!.DeepClone() };
-            var source = NativeManualAreas.Change(area, cell, before, after, command, ownership, Find.TickManager?.TicksGame ?? 0, loadEpoch);
-            if (source == null) return;
-            if (prior != null) writeLedger.RecordManualChange(area.GetUniqueLoadID(), field, source);
-            Emit("area_manual_changed", new JObject { ["source"] = "user_designator", ["changes"] = new JArray(source) });
-        } catch (Exception e) when (ReadContext.Recoverable(e)) { manualAreaFaulted = true; Log.WarningOnce("[N.E.K.O RimWorld] Native manual area provenance is unavailable; guarded area writing is disabled.", 0x4e4b4134); }
-    }
-    private WriteCoordinator? writeCoordinator;
-    private string policyConnection = "";
-    private string sessionSource = "";
-    private long sessionStartTick;
-    private readonly PausePolicy pausePolicy = new();
     private readonly AttentionSignals attentionSignals = new();
     internal JObject AttentionSamplingMetrics() => attentionSignals.Metrics();
     private bool attentionSubscribed;
-    private bool lastSpeedPaused;
-    private bool lastForcePaused;
-    private bool lastWindowPaused;
     private long lastEventHeartbeat;
-    private bool loadPausePristine;
-    private long sessionInitialPauseTransitionRevision;
-
-    internal void ObserveUserPause(bool before) {
-        var tm = Find.TickManager; if (tm == null) return;
-        bool after = tm.CurTimeSpeed == TimeSpeed.Paused;
-        if (before != after) { pausePolicy.Observe(after ? "user" : "none"); lastSpeedPaused = after; EmitPause("user", tm); }
-    }
-    internal void ReceiveLetter(Letter letter) {
-        var tm = Find.TickManager; if (tm == null || letter?.def == null) return;
-        RefreshPolicy();
-        string level = letter.def.pauseMode.ToString();
-        bool matched = NativeEventHookSupport.Ready() && pausePolicy.Matches(letter.def.defName);
-        bool reflected = false;
-        if (matched && tm.CurTimeSpeed != TimeSpeed.Paused) { tm.TogglePaused(); if (tm.CurTimeSpeed == TimeSpeed.Paused) { reflected = true; pausePolicy.Observe("reflex"); lastSpeedPaused = true; EmitPause("reflex", tm); } }
-        Emit("letter", new JObject { ["letter_id"] = letter.GetUniqueLoadID(), ["def"] = letter.def.defName, ["auto_pause_mode"] = level, ["is_choice_letter"] = letter is ChoiceLetter, ["reflected"] = reflected });
-    }
-    internal void ObserveLetterPause(bool before) {
-        var tm = Find.TickManager; if (tm == null) return;
-        bool after = tm.CurTimeSpeed == TimeSpeed.Paused;
-        if (!before && after && !lastSpeedPaused) { pausePolicy.Observe("automatic_letter"); lastSpeedPaused = true; EmitPause("automatic_letter", tm); }
-    }
-    private void RefreshPolicy() { var connection = NekoRimWorldMod.Runtime.ReadyConnectionEpoch; if (policyConnection != connection) policyConnection = connection; pausePolicy.Bind(connection, colonyId, loadEpoch); }
-    private void Emit(string kind, JObject data) { data["kind"] = kind; NekoRimWorldMod.Runtime.EmitEvent(CurrentSession(), data); }
-    private void EmitPause(string source, TickManager tm) {
-        loadPausePristine = false;
-        Emit("pause_changed", new JObject {
-        ["paused"] = tm.Paused, ["speed_paused"] = tm.CurTimeSpeed == TimeSpeed.Paused,
-        ["force_paused"] = tm.ForcePaused, ["windows_force_paused"] = Find.WindowStack?.WindowsForcePause ?? false, ["source"] = source,
-        ["pause_windows"] = NativePauseWindows.Capture(),
-        ["pause_state"] = PauseEvidenceWithoutObservation(tm),
-        ["pause_revision"] = pausePolicy.Revision
-        });
-    }
-    // Native ownership metadata, also inspected by the isolated study controller.
-    // This observes state only; it is not a model recovery capability.
-    private JObject PauseEvidenceWithoutObservation(TickManager tm) {
-        if (!NativeEventHookSupport.Ready() || Find.WindowStack == null || Current.ProgramState != ProgramState.Playing ||
-            NekoRimWorldMod.Runtime.ReadyConnectionEpoch != policyConnection)
-            return new JObject { ["status"] = "unavailable" };
-        var state = pausePolicy.Evidence(policyConnection, colonyId, loadEpoch, tm.TicksGame,
-            tm.Paused, tm.CurTimeSpeed == TimeSpeed.Paused, tm.ForcePaused, Find.WindowStack.WindowsForcePause);
-        state["monotonic"] = MonotonicEvidence.Capture();
-        return state;
-    }
-    internal JObject PauseEvidence() {
-        try {
-            CapturePauseState();
-            return PauseEvidenceWithoutObservation(Find.TickManager);
-        } catch (Exception) { return new JObject { ["status"] = "unavailable" }; }
-    }
-    internal JObject CapturePauseState() {
-        if (!UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing ||
-            !NativeEventHookSupport.Ready() || Find.TickManager == null || Find.WindowStack == null)
-            throw new InvalidOperationException("Native pause ownership metadata is unavailable.");
-        RefreshPolicy(); ObservePause();
-        var tm = Find.TickManager;
-        var state = pausePolicy.State(policyConnection, colonyId, loadEpoch, tm.TicksGame,
-            tm.Paused, tm.CurTimeSpeed == TimeSpeed.Paused, tm.ForcePaused, Find.WindowStack.WindowsForcePause);
-        state["monotonic"] = MonotonicEvidence.Capture();
-        state["load_pause_pristine"] = loadPausePristine;
-        state["session_initial_pause_transition_revision"] = sessionInitialPauseTransitionRevision;
-        state["session_source"] = sessionSource;
-        state["session_start_tick"] = sessionStartTick;
-        state["pause_windows"] = NativePauseWindows.Capture();
-        return state;
-    }
-    private void ObservePause() {
-        var tm = Find.TickManager; if (tm == null) return;
-        bool speed = tm.CurTimeSpeed == TimeSpeed.Paused, force = tm.ForcePaused;
-        bool window = Find.WindowStack?.WindowsForcePause ?? false;
-        bool speedChanged = speed != lastSpeedPaused, windowChanged = window != lastWindowPaused;
-        if (speedChanged || force != lastForcePaused || windowChanged) {
-            if (speedChanged) pausePolicy.Observe(speed ? "unknown" : "none");
-            string source = PausePolicy.ObservedSource(speedChanged, windowChanged);
-            lastSpeedPaused = speed; lastForcePaused = force; lastWindowPaused = window; EmitPause(source, tm);
-        }
-    }
-    private QueryOutcome SetPaused(JObject args) {
-        if (!NativeEventHookSupport.Ready()) return QueryOutcome.Failure("unsupported", "Native pause hooks are unavailable.", ProtocolStatuses.Unsupported);
-        var tm = Find.TickManager; bool paused = (bool)args["paused"]!; string role = (string)args["role"]!;
-        if (tm == null || !UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing || LongEventHandler.AnyEventNowOrWaiting) return QueryOutcome.Failure("unavailable", "Pause control is unavailable.");
-        ObservePause(); bool before = tm.CurTimeSpeed == TimeSpeed.Paused;
-        if (!paused && tm.ForcePaused) return QueryOutcome.Failure("force_paused", "A native force pause is active.");
-        string? expectedOwner = (string?)args["expected_owner"];
-        if (expectedOwner != null && (!before || !pausePolicy.CanResumeExpected(expectedOwner))) return QueryOutcome.Failure("pause_owner_changed", "The expected agent pause is no longer current.");
-        if (!paused && before && !pausePolicy.CanResume) return QueryOutcome.Failure("pause_owned", "A user or unknown pause cannot be released by an agent.");
-        if (before != paused) { tm.TogglePaused(); if ((tm.CurTimeSpeed == TimeSpeed.Paused) != paused) return QueryOutcome.Failure("pause_rejected", "Native pause control rejected the request."); pausePolicy.Observe(paused ? role : "none"); lastSpeedPaused = paused; EmitPause(role, tm); }
-        var data = new JObject { ["paused"] = paused, ["role"] = role };
-        if (expectedOwner != null) data["expected_owner"] = expectedOwner;
-        return new QueryOutcome { Data = data };
-    }
-
 
     // RimWorld discovers GameComponents with this exact constructor signature.
     // Do not retain the Game reference: the process-scoped runtime must never
     // keep an old game graph alive after returning to the main menu or loading.
     public NekoGameComponent(Game game)
     {
+        session = new NekoSession(Save);
+        Pause = new PauseObserver(session);
+        ManualAreas = new ManualAreaObserver(Save, session);
+        NativeWriteFields WriteFields() => new(new VerseGameData());
+        ledgerSnapshots = new LedgerSnapshotService(Save, ManualAreas, WriteFields);
+        requests = new RequestDispatcher(Save, session, Pause, ManualAreas, ledgerSnapshots, colonyObservations, WriteFields,
+            () => { attentionSignals.Reset(); attentionSubscribed = true; });
     }
 
-    public override void ExposeData()
-    {
-        Scribe_Values.Look(ref colonyId, "nekoColonyId", string.Empty);
-        if (Scribe.mode == LoadSaveMode.Saving) {
-            if (writeLedgerSave.Valid) writeTargets.Prune(writeLedger);
-            writeLedgerSave.PrepareSave(writeLedger);
-        }
-        Scribe_Values.Look(ref writeLedgerSave.Data, "nekoWriteLedger", string.Empty);
-        if (Scribe.mode == LoadSaveMode.LoadingVars) {
-            writeLedgerSave.Loaded(writeLedger);
-            if (!writeLedgerSave.Valid) {
-                Log.Warning("[N.E.K.O RimWorld] Invalid write ledger; writing is disabled for this save.");
-            }
-        }
-        ConstructionIntents.ExposeData();
-        NativeIdentities.ExposeData();
-        // Policy business IDs use restored saved tokens. Native Scribe refs
-        // still resolve the policy's current label-bearing load ID first.
-        writeTargetReferences.ExposeData(writeTargets);
-        NativeManualAreas.ExposeData();
-    }
+    // Read by the isolated study controller through reflection.
+    internal JObject CaptureWriteLedgerSnapshot() => ledgerSnapshots.Capture(null);
+    internal JObject CapturePauseState() => Pause.CaptureState();
+
+    public override void ExposeData() => Save.ExposeData();
 
     public override void StartedNewGame()
     {
@@ -203,7 +55,7 @@ public sealed class NekoGameComponent : GameComponent
 
     public override void GameComponentUpdate()
     {
-        if (string.IsNullOrEmpty(loadEpoch))
+        if (string.IsNullOrEmpty(session.LoadEpoch))
         {
             return;
         }
@@ -211,321 +63,43 @@ public sealed class NekoGameComponent : GameComponent
         // One fresh capability inspection for this update; action guards still
         // perform their own inspections at the point of use.
         bool hooksReady = NekoRimWorldMod.RefreshNativeCapabilities();
-        if (attentionSubscribed && AttentionFacts.CapabilityAvailable(hooksReady, SituationAlertObservations.HookMatched)) attentionSignals.Sample(data => NekoRimWorldMod.Runtime.EmitEvent(CurrentSession(), data));
+        if (attentionSubscribed && AttentionFacts.CapabilityAvailable(hooksReady, SituationAlertObservations.HookMatched)) attentionSignals.Sample(data => NekoRimWorldMod.Runtime.EmitEvent(session.Current(), data));
         VerseKnowledge.Update();
-        RefreshPolicy();
-        ObservePause();
-        colonyObservations.Advance(NekoRimWorldMod.Runtime.ReadyConnectionEpoch, Find.TickManager?.TicksGame ?? 0, data => NekoRimWorldMod.Runtime.EmitEvent(CurrentSession(), data), Find.TickManager?.Paused ?? false);
+        Pause.RefreshPolicy();
+        Pause.ObservePause();
+        colonyObservations.Advance(NekoRimWorldMod.Runtime.ReadyConnectionEpoch, Find.TickManager?.TicksGame ?? 0, data => NekoRimWorldMod.Runtime.EmitEvent(session.Current(), data), Find.TickManager?.Paused ?? false);
         if (Stopwatch.GetTimestamp() - lastEventHeartbeat >= Stopwatch.Frequency * 2) {
             lastEventHeartbeat = Stopwatch.GetTimestamp();
             var tm = Find.TickManager;
-            Emit("heartbeat", new JObject { ["pause_state"] = tm == null ? new JObject { ["status"] = "unavailable" } : PauseEvidenceWithoutObservation(tm) });
+            session.Emit("heartbeat", new JObject { ["pause_state"] = tm == null ? new JObject { ["status"] = "unavailable" } : Pause.EvidenceWithoutObservation(tm) });
         }
 
         var runtime = NekoRimWorldMod.Runtime;
-        var tickManager = Find.TickManager;
         runtime.TouchSession(
-            loadEpoch,
-            tickManager?.TicksGame ?? 0,
-            snapshotSequence);
-
-        if (activeOperation != null) {
-            if (activeRequest!.Type == ProtocolMessageTypes.WriteRequest && !runtime.IsActiveRequest(activeRequest)) { activeOperation.Dispose(); activeOperation = null; activeRequest = null; activeSession = null; return; }
-            if (activeOperation.Advance()) {
-                var completed = activeOperation;
-                var request = activeRequest!;
-                var sample = activeSession!;
-                if (request.Type == ProtocolMessageTypes.WriteRequest)
-                    sample = WriteReceiptSession.AtTick(sample, Find.TickManager?.TicksGame ?? sample.GameTick);
-                // Completion owns no queue slot during delivery. Even an
-                // unexpected publication error cannot replay it every frame.
-                activeOperation = null; activeRequest = null; activeSession = null;
-                try { Publish(runtime, request, sample, completed.Outcome!); }
-                finally { completed.Dispose(); }
-            }
-            return;
-        }
-        var startedAt = Stopwatch.GetTimestamp();
-        var processed = 0;
-
-        while (processed < MaxQueriesPerUpdate &&
-               Stopwatch.GetTimestamp() - startedAt < QueryBudgetStopwatchTicks &&
-               runtime.TryDequeueInbound(out var request))
-        {
-            processed++;
-            HandleInbound(runtime, request);
-        }
-    }
-
-    internal JObject CaptureWriteLedgerSnapshot() => CaptureScopedWriteLedgerSnapshot(null);
-    private JObject CaptureScopedWriteLedgerSnapshot(JArray? fields) {
-        if (!UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing || LongEventHandler.AnyEventNowOrWaiting)
-            throw new InvalidOperationException("Ledger snapshot is unavailable.");
-        var resolver = new VerseWriteFieldResolver(new VerseGameData());
-        var snapshot = writeLedger.ReadSnapshot(writeLedgerSave.Valid, writeTargets, WriteTargetReferences.Destroyed,
-            (id, field, target, value) => field == "production_bills" ? resolver.ResolveLedgerProductionBills(id, target, value) : resolver.ResolveLedgerProductionField(id, field, target) ?? resolver.ResolvePolicyLedger(id, field, target, value) ?? resolver.ResolveBedLedger(id, field, target) ?? resolver.ResolveConstructionLedger(id, field, target, value) ?? resolver.ResolveAreaZoneLedger(id, field, target, value) ?? resolver.ResolvePreparationLedger(id, field, target) ?? resolver.ResolveHeldLedgerField(id, field, target) ?? resolver.ResolveLedgerField(id, field), fields);
-        var manual = NativeManualAreas.Snapshot(fields);
-        foreach (var source in manual.OfType<JObject>()) {
-            source["current_status"] = "unresolved"; source["current_value"] = JValue.CreateNull();
-            if (!ManualAreaDataValid || source["cell"] is not JObject cell || cell["x"]?.Type != JTokenType.Integer || cell["z"]?.Type != JTokenType.Integer) continue;
-            var map = Find.Maps.SingleOrDefault(m => !m.Disposed && m.GetUniqueLoadID() == (string?)source["map_id"]);
-            var area = map?.areaManager.AllAreas.SingleOrDefault(a => a.GetUniqueLoadID() == (string?)source["object"]);
-            var position = new IntVec3((int)cell["x"]!, 0, (int)cell["z"]!);
-            if (area == null || !position.InBounds(map!) || NativeObjectIdentities.Token(area) != (string?)source["new_value"]?["native_instance"]) continue;
-            source["current_status"] = "observed";
-            source["current_value"] = new JObject { ["native_instance"] = NativeObjectIdentities.Token(area), ["enabled"] = area[position], ["manual_id"] = NativeManualAreas.ManualId(area, position) is string id ? new JValue(id) : JValue.CreateNull() };
-        }
-        bool relevant = fields == null || fields.Any(field => ((string?)field["field"])?.StartsWith("area_flag:", StringComparison.Ordinal) == true);
-        snapshot["manual_sources"] = manual; snapshot["manual_sources_complete"] = !relevant || ManualAreaDataValid;
-        snapshot["manual_tracking_scope"] = "explicitly_observed_or_committed_area_cells";
-        return snapshot;
+            session.LoadEpoch,
+            Find.TickManager?.TicksGame ?? 0,
+            session.SnapshotSequence);
+        requests.Update(runtime);
     }
 
     private void StartSession(string source)
     {
         colonyObservations.Clear();
-        activeOperation?.Dispose(); activeOperation = null; activeRequest = null; activeSession = null;
-        sessionSource = source;
-        sessionStartTick = Find.TickManager?.TicksGame ?? 0;
+        requests.Reset();
         WorldObservation.Clear();
         SituationAlertObservations.Clear();
         attentionSignals.ClearMetrics();
         attentionSignals.Reset(); attentionSubscribed = false;
         VerseKnowledge.StartOnce();
         GameImplementation.PrepareBehaviorReads();
-        NormalizeOrCreateColonyId();
+        Save.NormalizeOrCreateColonyId();
 
-        loadEpoch = Guid.NewGuid().ToString("N");
-        writeCoordinator = new WriteCoordinator(writeLedger, writeTargets);
-        writeCoordinator.StartEpoch(loadEpoch);
-        snapshotSequence = 0;
-        policyConnection = ""; pausePolicy.Bind("", colonyId, loadEpoch); pausePolicy.Observe("unknown");
-        sessionInitialPauseTransitionRevision = pausePolicy.TransitionRevision;
-        lastSpeedPaused = Find.TickManager?.CurTimeSpeed == TimeSpeed.Paused;
-        lastForcePaused = Find.TickManager?.ForcePaused ?? false;
-        lastWindowPaused = Find.WindowStack?.WindowsForcePause ?? false;
-        loadPausePristine = true;
+        session.Start(source, Find.TickManager?.TicksGame ?? 0);
+        Pause.Start();
         lastEventHeartbeat = 0;
-        NekoRimWorldMod.Runtime.AttachSession(CurrentSession(), writerReady: writeLedgerSave.Valid);
+        NekoRimWorldMod.Runtime.AttachSession(session.Current(), writerReady: Save.LedgerSave.Valid);
         Log.Message($"[N.E.K.O RimWorld] Game session attached ({source}).");
     }
 
-    private void HandleInbound(
-        BridgeRuntime runtime,
-        ProtocolEnvelope request)
-    {
-        var session = CurrentSession();
-        if (writeLedgerSave.Valid && request.Payload.Operation != "write_ledger_snapshot" && request.Payload.Operation != "write_field_identities" && request.Payload.Operation != "write_undo_fields") writeTargets.Prune(writeLedger);
-
-        bool writing = string.Equals(request.Type, ProtocolMessageTypes.WriteRequest, StringComparison.Ordinal);
-        bool policy = request.Type == ProtocolMessageTypes.PolicyRequest;
-        if (!writing && !policy && !string.Equals(request.Type, ProtocolMessageTypes.QueryRequest, StringComparison.Ordinal))
-        {
-            EnqueueProtocolError(
-                runtime,
-                request,
-                session,
-                "invalid_message_type",
-                "The game-thread queue accepts query_request messages only.");
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(request.RequestId) || !Guid.TryParse(request.RequestId, out _))
-        {
-            EnqueueProtocolError(
-                runtime,
-                request,
-                session,
-                "invalid_request_id",
-                "request_id must be a UUID.");
-            return;
-        }
-
-        if (!string.Equals(request.ColonyId, colonyId, StringComparison.Ordinal) ||
-            !string.Equals(request.LoadEpoch, loadEpoch, StringComparison.Ordinal))
-        {
-            if (policy) { runtime.EnqueueControl(ProtocolEnvelope.Create(ProtocolMessageTypes.PolicyResult, request.ConnectionEpoch, 0, new ProtocolPayload { Status = ProtocolStatuses.StaleSession, ErrorCode = "stale_epoch", Message = "The requested colony load is no longer active.", Issues = Array.Empty<QueryIssue>() }, session, request.RequestId)); return; }
-            if (writing) {
-                runtime.EnqueueControl(ColonyWriteContract.UnavailableResult(request, session, true));
-                return;
-            }
-            runtime.EnqueueControl(ProtocolEnvelope.CreateQueryResult(
-                request,
-                request.ConnectionEpoch,
-                sequence: 0,
-                session,
-                status: ProtocolStatuses.StaleSession,
-                errorCode: "stale_session",
-                message: "The requested colony load is no longer active."));
-            return;
-        }
-
-        if (policy) {
-            if (!NativeEventHookSupport.Ready()) {
-                runtime.EnqueueControl(ProtocolEnvelope.Create(ProtocolMessageTypes.PolicyResult, request.ConnectionEpoch, 0, new ProtocolPayload { Status = ProtocolStatuses.Unsupported, ErrorCode = "unsupported", Message = "Native event hooks are unavailable.", Issues = Array.Empty<QueryIssue>() }, session, request.RequestId)); return;
-            }
-            RefreshPolicy();
-            if (policyConnection != request.ConnectionEpoch || !runtime.EnableEvents(request, out bool firstSubscription)) return;
-            if (firstSubscription) { attentionSignals.Reset(); attentionSubscribed = true; Emit("session_snapshot", new JObject { ["origin"] = sessionSource, ["start_tick"] = sessionStartTick, ["pause_state"] = PauseEvidence() }); }
-            if ((string?)request.Payload.Arguments!["source"] == "planner") {
-                var registered = colonyObservations.Replace(request.Payload.Arguments, request.ConnectionEpoch, Find.TickManager.TicksGame);
-                runtime.EnqueueControl(ProtocolEnvelope.Create(ProtocolMessageTypes.PolicyResult, request.ConnectionEpoch, 0, new ProtocolPayload { Status = ProtocolStatuses.Ok, Data = registered, Issues = Array.Empty<QueryIssue>() }, session, request.RequestId)); return;
-            }
-            pausePolicy.Set(((JArray)request.Payload.Arguments!["pause_on_letter_defs"]!).Values<string>()!);
-            var data = (JObject)request.Payload.Arguments.DeepClone();
-            Emit("policy_changed", (JObject)data.DeepClone());
-            runtime.EnqueueControl(ProtocolEnvelope.Create(ProtocolMessageTypes.PolicyResult, request.ConnectionEpoch, 0, new ProtocolPayload { Status = ProtocolStatuses.Ok, Data = data, Issues = Array.Empty<QueryIssue>() }, session, request.RequestId)); return;
-        }
-        if (!writing && !policy && (request.Payload.Operation == "write_field_identities" || request.Payload.Operation == "write_undo_fields")) {
-            var sample = new SessionDescriptor(colonyId, loadEpoch, Find.TickManager?.TicksGame ?? 0, checked(snapshotSequence + 1));
-            QueryOutcome result;
-            try {
-                if (!UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing || LongEventHandler.AnyEventNowOrWaiting) throw new InvalidOperationException("World unavailable.");
-                var args = request.Payload.Arguments ?? throw new ArgumentException("Arguments required.");
-                JObject data;
-                if (request.Payload.Operation == "write_undo_fields") {
-                    ColonyWriteContract.ValidateRequest("undo", args);
-                    data = writeCoordinator!.UndoFields((string)args["token"]!);
-                } else {
-                    if (args.Properties().Count() != 1 || args["changeset"] is not JObject changeset) throw new ArgumentException("changeset required.");
-                    if ((string?)changeset["load_epoch"] != loadEpoch) throw new ArgumentException("Stale changeset epoch.");
-                    data = WriteCoordinator.FieldIdentities(changeset, new VerseWriteFieldResolver(new VerseGameData()));
-                }
-                result = new QueryOutcome { Data = data };
-            } catch (Exception error) when (IsRecoverable(error)) { result = QueryOutcome.Failure("identity_unavailable", "Field identities could not be resolved."); }
-            Publish(runtime, request, sample, result); return;
-        }
-        if (!writing && !policy && request.Payload.Operation == "write_ledger_snapshot") {
-            var sample = new SessionDescriptor(colonyId, loadEpoch, Find.TickManager?.TicksGame ?? 0, checked(snapshotSequence + 1));
-            QueryOutcome result;
-            if (request.Payload.Arguments == null)
-                result = QueryOutcome.Failure("invalid_arguments", "write_ledger_snapshot requires arguments.");
-            else if (!UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing || LongEventHandler.AnyEventNowOrWaiting)
-                result = QueryOutcome.Failure("unavailable", "Ledger snapshot is unavailable.");
-            else {
-                try { result = new QueryOutcome { Data = CaptureScopedWriteLedgerSnapshot(WriteLedger.Selection(request.Payload.Arguments)) }; }
-                catch (ArgumentException error) { result = QueryOutcome.Failure("invalid_arguments", error.Message); }
-            }
-            Publish(runtime, request, sample, result); return;
-        }
-        var next = checked(snapshotSequence + 1);
-        var sampledSession = new SessionDescriptor(colonyId, loadEpoch, session.GameTick, next);
-        if (writing && request.Payload.Mode == "set_paused") {
-            Publish(runtime, request, sampledSession, SetPaused(request.Payload.Arguments!)); return;
-        }
-        if (writing) {
-            var args = (Newtonsoft.Json.Linq.JObject)request.Payload.Arguments!.DeepClone();
-            var mode = request.Payload.Mode!;
-            var coordinator = writeCoordinator!;
-            activeOperation = new CoordinatedWriteOperation(() => NativeAreaManualChanges.WithinModelWrite(() => coordinator.Execute(mode, args, new VerseWriteFieldResolver(new VerseGameData()), () => loadEpoch,
-                () => writeLedgerSave.Valid && UnityData.IsInMainThread && Current.ProgramState == ProgramState.Playing && !LongEventHandler.AnyEventNowOrWaiting,
-                Find.TickManager?.TicksGame ?? 0)));
-            activeRequest = request; activeSession = sampledSession;
-            return;
-        }
-        if (Array.IndexOf(ColonyManagementContract.Operations, request.Payload.Operation) >= 0 || Array.IndexOf(ColonyReadContract.Operations, request.Payload.Operation) >= 0 || request.Payload.Operation == SituationSnapshotContract.Operation || request.Payload.Operation == "query" || Array.IndexOf(WorldObservationContract.Operations, request.Payload.Operation) >= 0 || Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0) {
-            activeOperation = request.Payload.Operation == SituationSnapshotContract.Operation ? new SituationSnapshot(request.Payload.Arguments!, sampledSession)
-                : Array.IndexOf(ColonyReadContract.Operations, request.Payload.Operation) >= 0 ? new ColonyReadOperation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession)
-                : Array.IndexOf(ColonyManagementContract.Operations, request.Payload.Operation) >= 0 ? new ColonyManagementOperation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession)
-                : request.Payload.Operation == "query" ? QueryExecutor.BeginPublicQuery(request.Payload.Arguments!,sampledSession)
-                : Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0 ? new NativeBehaviorOperation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession)
-                : new WorldObservation.Operation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession);
-            activeRequest = request; activeSession = sampledSession;
-            return;
-        }
-        QueryOutcome outcome;
-        try
-        {
-            outcome = QueryExecutor.Execute(request.Payload.Operation!, request.Payload.Arguments!, sampledSession);
-        }
-        catch (Exception exception) when (IsRecoverable(exception))
-        {
-            Log.WarningOnce($"[N.E.K.O RimWorld] Query read failed: {exception.GetType().Name}", 0x4e4b5110);
-            outcome = QueryOutcome.Failure("query_failed", "The game-thread query could not complete.");
-        }
-        Publish(runtime, request, sampledSession, outcome);
-    }
-
-    private void Publish(BridgeRuntime runtime, ProtocolEnvelope request, SessionDescriptor sampledSession, QueryOutcome outcome)
-    {
-        var next = sampledSession.SnapshotSequence;
-        snapshotSequence = next;
-        runtime.TouchSession(loadEpoch, sampledSession.GameTick, next);
-        ProtocolEnvelope response;
-        if (request.Type == ProtocolMessageTypes.WriteRequest) {
-            try {
-                response = ProtocolEnvelope.Create(ProtocolMessageTypes.WriteResult, request.ConnectionEpoch, 0,
-                    new ProtocolPayload { Status = outcome.Status, Data = outcome.Data, Issues = outcome.Issues, ErrorCode = outcome.ErrorCode, Message = outcome.Message }, sampledSession, request.RequestId);
-                ProtocolCodec.Serialize(response);
-            } catch (ProtocolException error) {
-                response = ProtocolEnvelope.Create(ProtocolMessageTypes.WriteResult, request.ConnectionEpoch, 0,
-                    new ProtocolPayload { Status = ProtocolStatuses.Failed, ErrorCode = error.ErrorCode, Message = "The write result could not be encoded.", Issues = Array.Empty<QueryIssue>() }, sampledSession, request.RequestId);
-            }
-        } else response = QueryResultDelivery.Build(request, sampledSession, outcome);
-        runtime.EnqueueControl(response);
-        if (request.Type == ProtocolMessageTypes.WriteRequest && outcome.Status == ProtocolStatuses.Ok && (string?)outcome.Data?["status"] == "committed" && outcome.Data?["readback"] is JArray readback) {
-            foreach (var row in readback.OfType<JObject>().Where(row => (string?)row["field"] == "area_structure" && row["value"]?["created"] is JObject)) {
-                var created = (JObject)row["value"]!["created"]!;
-                var map = Find.Maps.SingleOrDefault(m => m.GetUniqueLoadID() == (string?)row["object"]);
-                var area = map?.areaManager.AllAreas.SingleOrDefault(a => a.GetUniqueLoadID() == (string?)created["id"]);
-                if (area == null || NativeObjectIdentities.Token(area) != (string?)created["native_instance"] || created["cells"] is not JArray cells) continue;
-                foreach (var cell in cells.OfType<JObject>()) NativeManualAreas.EnsureTracked(area, new IntVec3((int)cell["x"]!, 0, (int)cell["z"]!));
-            }
-        }
-        if (request.Type == ProtocolMessageTypes.WriteRequest && request.Payload.Mode != "set_paused" && !outcome.IsReplay && outcome.Status == ProtocolStatuses.Ok && (string?)outcome.Data?["status"] is "committed" or "undone")
-            Emit("write", new JObject { ["mode"] = request.Payload.Mode, ["request_id"] = request.RequestId, ["receipt"] = outcome.Data!.DeepClone() });
-    }
-
-    private static void EnqueueProtocolError(
-        BridgeRuntime runtime,
-        ProtocolEnvelope request,
-        SessionDescriptor session,
-        string errorCode,
-        string message)
-    {
-        var requestIdIsSafe =
-            !string.IsNullOrWhiteSpace(request.RequestId) &&
-            Guid.TryParse(request.RequestId, out _);
-        runtime.EnqueueControl(ProtocolEnvelope.CreateProtocolError(
-            request.ConnectionEpoch,
-            sequence: 0,
-            errorCode,
-            message,
-            request: requestIdIsSafe ? request : null,
-            session));
-    }
-
-    private SessionDescriptor CurrentSession()
-    {
-        var tickManager = Find.TickManager;
-        return new SessionDescriptor(
-            colonyId,
-            loadEpoch,
-            tickManager?.TicksGame ?? 0,
-            snapshotSequence);
-    }
-    internal SessionDescriptor ObservationSession() => CurrentSession();
-
-    private void NormalizeOrCreateColonyId()
-    {
-        if (Guid.TryParse(colonyId, out var parsed) && parsed != Guid.Empty)
-        {
-            colonyId = parsed.ToString("N");
-            return;
-        }
-
-        var invalidPersistedValue = !string.IsNullOrWhiteSpace(colonyId);
-        colonyId = Guid.NewGuid().ToString("N");
-        if (invalidPersistedValue)
-        {
-            Log.WarningOnce(
-                "[N.E.K.O RimWorld] Invalid persisted colony_id was replaced with a new UUID.",
-                0x4e4b5111);
-        }
-    }
-
-    private static bool IsRecoverable(Exception exception) =>
-        exception is not OutOfMemoryException &&
-        exception is not AccessViolationException &&
-        exception is not ThreadAbortException;
+    internal SessionDescriptor ObservationSession() => session.Current();
 }

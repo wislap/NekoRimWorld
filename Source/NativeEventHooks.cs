@@ -37,7 +37,7 @@ internal static class NativeTimeControlEvents
 {
     private static bool Prepare() => NativeEventHookSupport.KnownBinary();
     private static void Prefix(out bool __state) => __state = Find.TickManager?.CurTimeSpeed == TimeSpeed.Paused;
-    private static void Postfix(bool __state) => Current.Game?.GetComponent<NekoGameComponent>()?.ObserveUserPause(__state);
+    private static void Postfix(bool __state) => Current.Game?.GetComponent<NekoGameComponent>()?.Pause.ObserveUserPause(__state);
 }
 
 [HarmonyPatch(typeof(LetterStack), nameof(LetterStack.ReceiveLetter), new Type[] { typeof(Letter), typeof(string), typeof(int), typeof(bool) })]
@@ -50,8 +50,8 @@ internal static class NativeLetterEvents
     private static void Postfix(Letter let, int delayTicks, bool __state) {
         if (delayTicks <= 0 && let != null && Find.LetterStack.LettersListForReading.Contains(let)) {
             var component = Current.Game?.GetComponent<NekoGameComponent>();
-            component?.ObserveLetterPause(__state);
-            component?.ReceiveLetter(let);
+            component?.Pause.ObserveLetterPause(__state);
+            component?.Pause.ReceiveLetter(let);
         }
     }
 }

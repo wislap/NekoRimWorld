@@ -19,13 +19,13 @@ internal static class ProductionTests
         if (bill != null) op["bill"] = bill.GetUniqueLoadID(); return op;
     }
     private static JObject Run(JObject op, bool dry = false) {
-        using var operation = new AtomicWriteOperation(new VerseWriteFieldResolver(), new JObject { ["load_epoch"] = "e", ["ops"] = new JArray(op) }, () => "e", dry);
+        using var operation = new AtomicWriteOperation(ProductionDispatch.Create(), new JObject { ["load_epoch"] = "e", ["ops"] = new JArray(op) }, () => "e", dry);
         operation.Advance(); return operation.Outcome!.Data!;
     }
     internal static void Main()
     {
         var map = new Map(); Find.Maps.Add(map); var table = new Building_WorkTable { MapHeld = map }; map.listerBuildings.allBuildingsColonist.Add(table);
-        Check(VerseWriteFieldResolver.TestProductionCatalog().Where(s => (string?)s["op"] != "set_production_bill").All(s => (string?)s["expect_schema"]?["type"] == "object"), "structural guards use object expectation schemas independently of boolean intent");
+        Check(ProductionWriteCatalog.Operations.Where(s => (string?)s["op"] != "set_production_bill").All(s => (string?)s["expect_schema"]?["type"] == "object"), "structural guards use object expectation schemas independently of boolean intent");
         var steel = new ThingDef { defName = "Steel" }; var wood = new ThingDef { defName = "Wood" }; DefDatabase<ThingDef>.Values.AddRange(new[] { steel, wood });
         foreach (var name in new[] { "Forever", "RepeatCount", "TargetCount" }) DefDatabase<BillRepeatModeDef>.Values.Add(new BillRepeatModeDef { defName = name });
         foreach (var name in new[] { "DropOnFloor", "BestStockpile", "SpecificStockpile" }) DefDatabase<BillStoreModeDef>.Values.Add(new BillStoreModeDef { defName = name });
@@ -64,12 +64,12 @@ internal static class ProductionTests
         Check((string?)Run(Op("reorder_production_bills", table, oldOrder, newOrder))["status"] == "applied", "reorder uses complete identity permutation");
         Check((string?)Run(Op("reorder_production_bills", table, oldOrder, newOrder))["status"] == "conflict", "stale queue CAS rejected");
         Check((string?)Run(Op("reorder_production_bills", table, newOrder, new JObject { ["bill_ids"] = new JArray(first.GetUniqueLoadID(), first.GetUniqueLoadID()) }))["status"] == "write_failed", "duplicate identities rejected");
-        var boundRemoval = Op("remove_production_bill", table, VerseWriteFieldResolver.ProductionRemovalGuard(table, second), new JValue(false), second);
+        var boundRemoval = Op("remove_production_bill", table, ProductionWriteFields.RemovalGuard(table, second), new JValue(false), second);
         Check((string?)Run(boundRemoval)["status"] == "write_failed", "removing bound unfinished work rejected");
         var pawn = new Pawn(); pawn.jobs.curJob = new Job { bill = first }; map.mapPawns.AllPawns.Add(pawn);
-        var removal = Op("remove_production_bill", table, VerseWriteFieldResolver.ProductionRemovalGuard(table, first), new JValue(false), first);
+        var removal = Op("remove_production_bill", table, ProductionWriteFields.RemovalGuard(table, first), new JValue(false), first);
         Check((string?)Run(removal)["status"] == "write_failed", "current Job protects bill deletion"); pawn.jobs.curJob = null;
-        var prepared = (IPreparedStructuralWrite)new VerseWriteFieldResolver().Resolve(removal).Single().Field;
+        var prepared = (IPreparedStructuralWrite)ProductionDispatch.Create().Resolve(removal).Single().Field;
         var original = prepared.Read().DeepClone(); prepared.Validate(new JValue(false)); prepared.Write(new JValue(false)); var undo = prepared.CreateUndo();
         Check(JToken.DeepEquals(undo.Read(), prepared.UndoExpected()), "deletion undo guard reads live queue");
         undo.Validate(original); undo.Write(original); Check(JToken.DeepEquals(undo.Read(), original) && table.BillStack.Bills.Contains(first), "deletion undo restores the same native bill and order");
@@ -77,10 +77,10 @@ internal static class ProductionTests
         Check(!JToken.DeepEquals(prepared.Read(), original), "bill mutation changes deletion guard");
         second.style = new Def { defName = "Style" }; second.globalStyle = true; second.graphicIndexOverride = 2;
         second.RenamableLabel = "Reserve coats";
-        var copyOperation = Op("copy_production_bill", table, VerseWriteFieldResolver.ProductionCopyGuard(table, second), new JValue(true), second);
+        var copyOperation = Op("copy_production_bill", table, ProductionWriteFields.CopyGuard(table, second), new JValue(true), second);
         second.targetCount++;
         Check((string?)Run(copyOperation)["status"] == "conflict", "copy compares the source configuration as well as the queue"); second.targetCount--;
-        var copyField = (IPreparedStructuralWrite)new VerseWriteFieldResolver().Resolve(copyOperation).Single().Field;
+        var copyField = (IPreparedStructuralWrite)ProductionDispatch.Create().Resolve(copyOperation).Single().Field;
         var copyOriginal = copyField.Read().DeepClone(); copyField.Validate(new JValue(true)); copyField.Write(new JValue(true));
         var copied = (Bill_ProductionWithUft)table.BillStack.Bills.Last();
         Check(!ReferenceEquals(copied, second) && copied.BoundUft == null && JToken.DeepEquals(ProductionReadings.Settings(copied), ProductionReadings.Settings(second)), "copy preserves production policy and allocates independent identity without unfinished binding");
@@ -95,14 +95,9 @@ internal static class ProductionTests
 }
 
 namespace Neko.RimWorld {
-    internal sealed partial class VerseWriteFieldResolver : IWriteFieldResolver {
-        private sealed class Registration { internal JObject Spec; internal Registration(JObject spec, Func<VerseWriteFieldResolver,JObject,IReadOnlyList<ResolvedWriteField>> resolve) { Spec=spec; } }
-        internal static IEnumerable<JObject> TestProductionCatalog() => ProductionRegistrations.Select(r => r.Spec);
-        private static bool Official(Def def) => true;
-        private static IReadOnlyList<ResolvedWriteField> One(IPreparedWriteField field, JObject op) => new[] { new ResolvedWriteField(field, op["expect"]!, op["value"]!) };
-        public IReadOnlyList<ResolvedWriteField> Resolve(JObject op) => (string?)op["op"] switch {
-            "add_production_bill" => One(ResolveProductionBill(op),op), "set_production_bill" => ResolveProductionSettings(op),
-            "reorder_production_bills" => One(ResolveProductionOrder(op),op), "remove_production_bill" => One(ResolveProductionRemoval(op),op), "copy_production_bill" => One(ResolveProductionCopy(op),op), _ => throw new ArgumentException() };
+    internal static class OfficialContent { internal static bool Contains(Def def) => true; }
+    internal static class ProductionDispatch {
+        internal static WriteFieldDispatcher Create() => new(new IWriteFieldSet[] { new ProductionWriteFields() }, ProductionWriteCatalog.Operations.Select(s => (string)s["op"]!).Append("add_production_bill"));
     }
     internal interface IFrameQueryOperation : IDisposable { bool Advance(); QueryOutcome? Outcome { get; } }
     internal sealed class QueryOutcome { internal JObject? Data; internal static QueryOutcome Failure(string code,string message,string? status=null) => new() { Data = new JObject { ["status"] = code, ["message"] = message } }; }

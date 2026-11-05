@@ -54,7 +54,7 @@ internal static class ResourceReadings
                 identity = new JObject { ["id"] = seller.Id, ["name"] = seller.Name, ["channel"] = seller.Channel };
             }
             else if (item.Spawned) { source = "spawned_ground"; sourceId = map.GetUniqueLoadID(); }
-            else if (ThingData.HeldByPawn(item) is Pawn pawn && pawn.Faction == Faction.OfPlayer)
+            else if (ThingData.HeldByPawn(item) is Pawn pawn && NativeFactions.IsPlayer(pawn.Faction))
             {
                 source = "player_pawn_held"; sourceId = pawn.GetUniqueLoadID();
                 identity = new JObject { ["id"] = sourceId, ["name"] = pawn.LabelShort };

@@ -26,7 +26,7 @@ internal sealed class ColonyManagementOperation : FrameQueryOperation
             var rows = new List<JObject>(); foreach (var t in all.Skip((int?)args["offset"] ?? 0).Take((int?)args["limit"] ?? 20)) { rows.Add(ProductionReadings.Read(t)); yield return 0; }
             result = new JObject { ["format"] = "production_observation.v1", ["objects"] = new JArray(rows), ["total"] = all.Length, ["complete"] = rows.Count == all.Length, ["map_id"] = map.GetUniqueLoadID() };
         }
-        else result = op switch { "inspect_food_policies" => PolicyReadings.Read(args), "inspect_areas" => AreaZoneReadings.Read(args), "construction_catalog" => ConstructionReadings.Catalog(args, session), "preview_construction" => ConstructionReadings.Preview(args), "inspect_construction_intents" => Current.Game.GetComponent<NekoGameComponent>().ConstructionIntents.Read(args), _ => throw new ArgumentException("Unknown management operation.") };
+        else result = op switch { "inspect_food_policies" => PolicyReadings.Read(args), "inspect_areas" => AreaZoneReadings.Read(args), "construction_catalog" => ConstructionReadings.Catalog(args, session), "preview_construction" => ConstructionReadings.Preview(args), "inspect_construction_intents" => Current.Game.GetComponent<NekoGameComponent>().Save.ConstructionIntents.Read(args), _ => throw new ArgumentException("Unknown management operation.") };
         yield return 0;
     }
     protected override void RestartReadSlice() { }

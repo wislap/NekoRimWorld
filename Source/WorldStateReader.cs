@@ -52,7 +52,7 @@ internal sealed class WorldStateReader
         ["position_kind"] = t.Spawned ? "own" : "holder",
         ["holder_type"] = t.ParentHolder?.GetType().FullName, ["holder_chain"] = HolderChain(t),
         ["pawn_membership"] = t is Pawn member ? new JObject{["is_colonist"]=member.IsColonist,["is_free_colonist"]=member.IsFreeColonist,["is_prisoner"]=member.IsPrisonerOfColony,["is_slave"]=member.IsSlaveOfColony}:null,
-        ["faction"] = t.Faction == null ? null : new JObject { ["name"] = t.Faction.Name, ["definition"] = t.Faction.def.defName, ["is_player"] = t.Faction == Faction.OfPlayer },
+        ["faction"] = t.Faction == null ? null : new JObject { ["name"] = t.Faction.Name, ["definition"] = t.Faction.def.defName, ["is_player"] = NativeFactions.IsPlayer(t.Faction) },
         ["capabilities"] = new JArray(ThingCapabilities.For(t)),
         ["capability_meanings"] = t is IBillGiver ? WorldObservationContract.CapabilityMeanings() : null
     };
@@ -66,7 +66,7 @@ internal sealed class WorldStateReader
         value["held_by"] = holder == null ? null : new JObject { ["id"] = holder.GetUniqueLoadID(), ["runtime_type"] = holder.GetType().FullName };
         JObject? FactionInfo(Faction? faction) => faction == null ? null : new JObject {
             ["name"] = faction.Name, ["def_name"] = faction.def.defName,
-            ["is_player"] = faction == Faction.OfPlayer, ["player_relation"] = faction.PlayerRelationKind.ToString()
+            ["is_player"] = NativeFactions.IsPlayer(faction), ["player_relation"] = faction.PlayerRelationKind.ToString()
         };
         value["faction"] = FactionInfo(thing.Faction);
         value["held_by_faction"] = FactionInfo(holder?.Faction);
@@ -75,11 +75,9 @@ internal sealed class WorldStateReader
 
     private static JObject HolderChain(Thing t)
     {
-        var rows = new JArray(); var seen = new HashSet<IThingHolder>(); var h = t.ParentHolder;
-        while (h != null && rows.Count < 24 && seen.Add(h)) {
-            rows.Add(new JObject { ["runtime_type"] = h.GetType().FullName, ["thing_id"] = (h as Thing)?.GetUniqueLoadID() }); h = h.ParentHolder;
-        }
-        return new JObject { ["rows"] = rows, ["complete"] = h == null, ["meaning"] = "Current containment chain, not ownership or walking access." };
+        var chain = NativeHolders.Ancestors(t, 24, out var complete);
+        var rows = new JArray(chain.Select(h => new JObject { ["runtime_type"] = h.GetType().FullName, ["thing_id"] = (h as Thing)?.GetUniqueLoadID() }));
+        return new JObject { ["rows"] = rows, ["complete"] = complete, ["meaning"] = "Current containment chain, not ownership or walking access." };
     }
     internal JObject CellReservations(IntVec3 cell)
     {

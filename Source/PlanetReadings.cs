@@ -12,7 +12,7 @@ internal static class PlanetReadings
 {
     internal static IEnumerable<WorldObject> KnownObjects() => Find.WorldObjects.AllWorldObjects
         .Where(item => item != null && !item.Destroyed && item.Tile.Valid && item.def.selectable &&
-            (item.Faction == null || !item.Faction.Hidden || item.Faction.IsPlayer));
+            (item.Faction == null || !item.Faction.Hidden || NativeFactions.IsPlayer(item.Faction)));
 
     internal static IEnumerable<Caravan> PlayerCaravans() => KnownObjects().OfType<Caravan>().Where(item => item.IsPlayerControlled);
 
@@ -55,7 +55,7 @@ internal static class PlanetReadings
         }
         bool targeted = args["ids"] != null || args["names"] != null;
         if (kind == "world" && !targeted && category == null)
-            population = population.Where(item => item.Faction == Faction.OfPlayer || item.questTags?.Count > 0);
+            population = population.Where(item => NativeFactions.IsPlayer(item.Faction) || item.questTags?.Count > 0);
         ColonyReadContract.RequireAspects(aspects, "identity", "location", "places", "route", "supplies");
         IEnumerable<WorldObject> selected = ColonyReadContract.Select(population, args, value => value.GetUniqueLoadID(), value => value.Label);
         PlanetTile? origin = null;

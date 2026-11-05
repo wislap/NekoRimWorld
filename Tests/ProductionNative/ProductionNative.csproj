@@ -10,7 +10,12 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../Source/ProductionBillWrite.cs" />
-    <Compile Include="../../Source/ProductionBillFields.cs" />
+    <Compile Include="../../Source/ProductionWriteFields.cs" />
+    <Compile Include="../../Source/ProductionBillSettings.cs" />
+    <Compile Include="../../Source/ProductionWriteCatalog.cs" />
+    <Compile Include="../../Source/WriteFields.cs" />
+    <Compile Include="../../Source/WriteFieldDispatcher.cs" />
+    <Compile Include="../../Source/NativeFactions.cs" />
     <Compile Include="../../Source/ProductionReadings.cs" />
     <Compile Include="../../Source/JsonValues.cs" />
     <Compile Include="../../Source/AtomicWriteOperation.cs" />

@@ -69,11 +69,6 @@ internal sealed class KnowledgeSnapshot
 
     internal static string BoundAndSerialize(KnowledgeEntry entry) => BoundCore(entry);
 
-    internal static void Bound(KnowledgeEntry entry)
-    {
-        BoundCore(entry);
-    }
-
     private static string BoundCore(KnowledgeEntry entry)
     {
         if (entry.Key == null || entry.Type == null || entry.DefName == null ||

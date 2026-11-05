@@ -8,10 +8,10 @@
     <Deterministic>true</Deterministic>
     <DebugType>portable</DebugType>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <OutputPath>..\1.6\Assemblies\</OutputPath>
+    <OutputPath>..\artifacts\build\$(Configuration)\</OutputPath>
     <AssemblyName>NekoRimWorld</AssemblyName>
     <RootNamespace>Neko.RimWorld</RootNamespace>
-    <Version>3.2.0</Version>
+    <Version>3.4.0</Version>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 

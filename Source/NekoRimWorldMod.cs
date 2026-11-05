@@ -10,7 +10,7 @@ namespace Neko.RimWorld;
 public sealed class NekoRimWorldMod : Mod
 {
     public const string PackageId = "neko.rimworld.bridge";
-    public const string ModVersion = "3.2.0";
+    public const string ModVersion = BridgeRuntime.ModVersion;
 
     private static readonly string[] Capabilities =
     {
@@ -18,13 +18,17 @@ public sealed class NekoRimWorldMod : Mod
         "native_behavior.v1",
         "situation_snapshot.v1",
         "colony_state.v1",
+        "colony_management.v1",
         "colony_write.transactions.v1",
         "colony_write.ledger_snapshot.v1",
+        "colony_write.ledger_snapshot.selection.v1",
     };
 
     private static NekoRimWorldMod? activeMod;
     private bool hooksReady;
     private bool attentionHookReady;
+    private bool manualAreaHookReady;
+    internal static bool ManualAreaSourcesReady => activeMod?.manualAreaHookReady == true;
     private readonly NekoRimWorldSettings settings;
     private string portBuffer;
     private Vector2 settingsScrollPosition;
@@ -43,6 +47,7 @@ public sealed class NekoRimWorldMod : Mod
         activeMod = this;
         hooksReady = NativeEventHookSupport.Ready();
         attentionHookReady = SituationAlertObservations.HookMatched;
+        manualAreaHookReady = NativeAreaManualHookSupport.Ready();
         ApplyRuntimeConfiguration();
         Log.Message("[N.E.K.O RimWorld] Bridge mod loaded; enable and pair it in Mod Settings to connect.");
     }
@@ -114,13 +119,15 @@ public sealed class NekoRimWorldMod : Mod
         var mod = activeMod; if (mod == null) return false;
         bool ready = NativeEventHookSupport.Ready();
         bool attentionReady = SituationAlertObservations.HookMatched;
-        if (ready != mod.hooksReady || attentionReady != mod.attentionHookReady) { mod.hooksReady = ready; mod.attentionHookReady = attentionReady; mod.ApplyRuntimeConfiguration(); }
+        bool manualReady = NativeAreaManualHookSupport.Ready();
+        if (ready != mod.hooksReady || attentionReady != mod.attentionHookReady || manualReady != mod.manualAreaHookReady) { mod.hooksReady = ready; mod.attentionHookReady = attentionReady; mod.manualAreaHookReady = manualReady; mod.ApplyRuntimeConfiguration(); }
         return ready;
     }
 
     private string[] AdvertisedCapabilities() {
         var capabilities = hooksReady
-            ? Capabilities.Concat(new[] { "colony_events.v1", "colony_pause.v1", "colony_pause.policy.v1", "colony_pause.resume_guard.v1" }) : Capabilities;
+            ? Capabilities.Concat(new[] { "colony_events.v1", "colony_pause.v1", "colony_pause.policy.v1", "colony_pause.resume_guard.v1", "colony_observation.v1" }) : Capabilities;
+        if (manualAreaHookReady) capabilities = capabilities.Concat(new[] { "colony_write.manual_area.v1" });
         return AttentionFacts.CapabilityAvailable(hooksReady, attentionHookReady) ? capabilities.Concat(new[] { "colony_attention.v1" }).ToArray() : capabilities.ToArray();
     }
 

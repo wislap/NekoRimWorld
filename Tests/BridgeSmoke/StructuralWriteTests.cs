@@ -21,7 +21,9 @@ internal static class StructuralWriteTests
         public void Validate(JToken value) { if (value is not JObject) throw new ArgumentException(); }
         public void Write(JToken value) { id = "generated-" + ++state.Next; state.Ids.Add(id); if (state.ThrowAfterAdd) throw new InvalidOperationException(); applied = Snapshot(); }
         public JToken AppliedValue() => Result();
-        public JToken UndoExpected() => applied!;
+        // The coordinator must freeze this native guard at commit, rather than
+        // resampling the player's later configuration when undo is requested.
+        public JToken UndoExpected() => Snapshot();
         public void Restore(JToken original) { if (id != null) state.Ids.Remove(id); id = null; }
         public IPreparedWriteField CreateUndo() => new Removal(this);
         private sealed class Removal : IPreparedWriteField, IWriteAggregateScope {

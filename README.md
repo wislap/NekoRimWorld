@@ -1,4 +1,4 @@
-# N.E.K.O RimWorld Bridge v3.2.0
+# N.E.K.O RimWorld Bridge v3.4.0
 
 Players: [中文安装与使用](README.zh-CN.md) · [English installation and use](README.en.md).
 
@@ -16,7 +16,7 @@ pwsh -NoProfile -File Tools/Build-Package.ps1
 ```
 
 The script performs locked restore, an isolated Release build and net8.0 bridge
-smoke tests. It writes `artifacts/packages/NekoRimWorld-3.2.0/` containing the Mod
+smoke tests. It writes `artifacts/packages/NekoRimWorld-3.4.0/` containing the Mod
 ZIP, SHA-256, file manifest and validation logs. Use `-OutputDirectory <directory>`
 to choose another parent directory. Existing version directories are rejected;
 failed attempts keep their logs and work files for inspection. It does not change
@@ -37,12 +37,12 @@ translations, missing dependency links/licenses or existing output. It requires
 only Python's standard library alongside the build tools, retains evidence and
 prints its location; `NEKO_MOD_PACKAGE_TEST_OUTPUT` selects a new evidence folder.
 
-Product version: **3.2.0**. v3.2 includes the selected native situation
+Source version: **3.4.0**, pending release validation and publication. It retains the selected native situation
 background, world/faction/quest/trade/research consultation, and the exact-read,
 resource-source and loaded-journey improvements. Product and protocol versions
 are independent; the supported wire contracts below retain their meanings.
 
-Unreleased v3.3 source adds `colony_pause.resume_guard.v1` when native pause
+v3.3 source provides `colony_pause.resume_guard.v1` when native pause
 hooks are available. A planner recovery can include `expected_owner`; the game
 checks that the named agent source still owns a speed pause in the same main-thread
 action before resuming. Guarded recovery rejects user, unknown, policy and forced
@@ -71,10 +71,16 @@ speed-pause changes while proving its own action on the Unity thread. This is
 read-only metadata; the model's resume permissions and native force/user guards
 remain the same.
 
-Read-only RimWorld 1.6 bridge for the N.E.K.O plugin. The v2 transport supports
+RimWorld 1.6 bridge for the N.E.K.O plugin. Ordinary consultation is read-only; explicit autoplay permits the directory's guarded colony, production and construction operations. The v2 transport supports
 public_query.v2, world_observation.v2.3, native_behavior.v1 and the internal
 situation_snapshot.v1 consultation background. Reads run on the
 game thread; the bridge does not issue player orders.
+
+## Product and study startup
+
+Normal startup prepares the five supported behavior-read metadata graphs and publishes definitions with a 2ms/8-entry per-frame budget. Only an explicit private study declaration can reduce required graphs, reuse verified immutable documentation and use the 12ms/128-entry study budget. Runtime binary, dependency and patch checks remain mandatory. Study cold-start timing does not certify normal player startup. No study fixture, resource top-up, speed selection or fault-recovery operator is part of ordinary installation.
+
+The matching plugin defaults to read-only consultation; autoplay requires explicit activation. S7 completed seven-day execution but retained a reload/daily mechanism gap. The plugin now contains a source fix; no new real seven-day or normal-package acceptance is claimed by this version update.
 
 ## Current reads
 
@@ -174,8 +180,7 @@ cannot be hard-preempted.
 
 ## Build and validation
 
-The target is RimWorld 1.6.4871 / .NET Framework 4.7.2. Verification builds must
-override output paths so they do not deploy into `1.6/Assemblies`. When overriding
+The target is RimWorld 1.6.4871 / .NET Framework 4.7.2. Default source builds now write `artifacts/build/<Configuration>`; they do not deploy into `1.6/Assemblies`. Verification and package builds still use explicitly isolated outputs. When overriding
 BaseIntermediateOutputPath, also exclude the existing `**/obj/**` tree from Compile
 items. A running game keeps its loaded assembly until a normal restart.
 
@@ -198,3 +203,5 @@ FrozenWorld supports public-query diagnostics only. Retired execution and captur
 implementations live in the workspace archive; current code does not load them.
 
 See [PROTOCOL.md](PROTOCOL.md) for the wire contract. [MIT](LICENSE).
+
+Runtime identity uses `BridgeRuntime.ModVersion` (3.4.0) for Mod configuration and the TCP hello. Package preparation verifies that identity against About metadata and the project version; the loopback smoke checks the emitted hello. Protocol versions remain independent. This source change requires an explicit later deployment to affect an installed game DLL.

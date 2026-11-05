@@ -13,6 +13,7 @@ namespace Neko.RimWorld;
 /// </summary>
 public sealed class BridgeRuntime
 {
+    public const string ModVersion = "3.4.0";
     public const string Host = "127.0.0.1";
     public const int DefaultPort = 48919;
     public const int SessionLeaseMilliseconds = 5_000;
@@ -45,7 +46,7 @@ public sealed class BridgeRuntime
     private bool enabled;
     private int port = DefaultPort;
     private string token = string.Empty;
-    private string modVersion = "3.2.0";
+    private string modVersion = ModVersion;
     private string gameVersion = "unknown";
     private string[] capabilities = Array.Empty<string>();
     private long configGeneration;

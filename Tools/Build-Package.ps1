@@ -118,6 +118,9 @@ Get-Command dotnet -ErrorAction Stop | Out-Null
 [xml]$project = Get-Content -LiteralPath (Join-Path $root 'Source/NekoRimWorld.csproj') -Raw
 $version = [string]$about.ModMetaData.modVersion
 if ($version -notmatch '^\d+\.\d+\.\d+$' -or $version -ne [string]$project.Project.PropertyGroup.Version) { throw 'Mod metadata and project versions must match (X.Y.Z).' }
+$runtimeSource = Get-Content -LiteralPath (Join-Path $root 'Source/BridgeRuntime.cs') -Raw
+$runtimeVersion = [regex]::Match($runtimeSource, 'public const string ModVersion\s*=\s*"([^"]+)";').Groups[1].Value
+if ($runtimeVersion -ne $version) { throw 'Runtime handshake version differs from Mod metadata.' }
 if ([string]$about.ModMetaData.packageId -ne 'neko.rimworld.bridge') { throw 'Unexpected Mod packageId.' }
 if ($about.DocumentElement.LocalName -ne 'ModMetaData' -or [string]::IsNullOrWhiteSpace([string]$about.ModMetaData.name)) { throw 'Expected ModMetaData with a non-empty name.' }
 if ([string]$about.ModMetaData.name -match '\(Dev\)') { throw 'Package metadata still uses the development name.' }

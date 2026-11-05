@@ -6,7 +6,7 @@ namespace Neko.RimWorld;
 
 internal static class AtomicWriteOperationTests
 {
-    private sealed class FieldProbe : IPreparedWriteField {
+    private class FieldProbe : IPreparedWriteField {
         public string ObjectId { get; set; } = ""; public string Field => "value"; public bool MayChangeByGame => false;
         public bool IsDestroyed => false;
         public object? NativeTarget => this;
@@ -16,9 +16,15 @@ internal static class AtomicWriteOperationTests
         public void Write(JToken value) { if (!IgnoreWrite) Value = (int)value; Writes++; NativeEffect?.Invoke(); if (FailWrite) throw new InvalidOperationException("after mutation"); }
         public void Restore(JToken original) { if (FailRestore) throw new InvalidOperationException("restore failed"); Value = (int)original; }
     }
+    private sealed class ClaimedField : FieldProbe, IWriteConflictScope {
+        internal string Claim = "";
+        public bool ConflictsWith(IPreparedWriteField other) => other is ClaimedField field && Claim == field.Claim;
+    }
     private sealed class Resolver : IWriteFieldResolver {
         public readonly Dictionary<string, FieldProbe> Fields = new();
+        internal bool CollectionConflict;
         public IReadOnlyList<ResolvedWriteField> Resolve(JObject op) {
+            if (CollectionConflict && (string?)op["thing"] == "b") throw new WritePreconditionConflictException(new JObject { ["cells"] = new JArray() }, new JObject { ["cells"] = new JArray("changed") });
             if ((string?)op["thing"] == "both") return new[] {
                 new ResolvedWriteField(Fields["a"], op["expect"]!["a"]!, op["value"]!["a"]!),
                 new ResolvedWriteField(Fields["b"], op["expect"]!["b"]!, op["value"]!["b"]!) };
@@ -31,6 +37,8 @@ internal static class AtomicWriteOperationTests
             new JObject { ["thing"] = "b", ["expect"] = expected2, ["value"] = 4 }) };
     internal static void Run() {
         NativeSafety();
+        SpatialClaims();
+        WholeCollectionPrecondition();
         FieldRollbackDoesNotReconstructNativeActions();
         var a = new FieldProbe { ObjectId = "a", Value = 1 }; var b = new FieldProbe { ObjectId = "b", Value = 2 };
         var resolver = new Resolver(); resolver.Fields.Add("a", a); resolver.Fields.Add("b", b);
@@ -65,6 +73,20 @@ internal static class AtomicWriteOperationTests
         var thread = new System.Threading.Thread(() => wrongThread.Advance()); thread.Start(); thread.Join();
         Require(wrongThread.Outcome!.ErrorCode == "write_failed" && a.Value == 3 && b.Value == 4, "Wrong thread executed transaction.");
         Console.WriteLine("Atomic write tests passed: conflict, validation, rollback, epoch and single advance.");
+    }
+    private static void WholeCollectionPrecondition() {
+        var a = new FieldProbe { ObjectId = "a", Value = 1 }; var b = new FieldProbe { ObjectId = "b", Value = 2 };
+        var resolver = new Resolver { CollectionConflict = true }; resolver.Fields.Add("a", a); resolver.Fields.Add("b", b);
+        using var operation = new AtomicWriteOperation(resolver, Request(), () => "epoch", false);
+        operation.Advance(); var data = operation.Outcome!.Data!;
+        Require((string?)data["status"] == "conflict" && (int?)data["op"] == 1 && data["observed"]?["cells"]?[0]?.Value<string>() == "changed" && a.Writes == 0 && b.Writes == 0, "Whole native collection CAS lost its conflict evidence or wrote another field.");
+    }
+    private static void SpatialClaims() {
+        var a = new ClaimedField { ObjectId = "a", Value = 1, Claim = "same-cell-layer" }; var b = new ClaimedField { ObjectId = "b", Value = 2, Claim = "same-cell-layer" };
+        var resolver = new Resolver(); resolver.Fields.Add("a", a); resolver.Fields.Add("b", b);
+        using (var conflicting = new AtomicWriteOperation(resolver, Request(), () => "epoch", false)) { conflicting.Advance(); Require(conflicting.Outcome!.ErrorCode == "write_failed" && a.Writes == 0 && b.Writes == 0, "Spatial conflict mutated part of a construction batch."); }
+        b.Claim = "another-cell-layer";
+        using (var compatible = new AtomicWriteOperation(resolver, Request(), () => "epoch", false)) { compatible.Advance(); Require(compatible.Outcome!.ErrorCode == null && a.Value == 3 && b.Value == 4, "Independent spatial claims could not share one native transaction."); }
     }
     private static void FieldRollbackDoesNotReconstructNativeActions()
     {

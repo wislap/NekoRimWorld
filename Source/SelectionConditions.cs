@@ -87,13 +87,6 @@ internal sealed class SelectionConditions
         ["rules"] = "All supplied clauses are AND. all/any accept nonempty condition arrays; not accepts one condition. Object: fields:{nativeField:condition}, is_null, match, types:{publicConcreteType:condition}. Field arguments go in arguments and use its existing schema/defaults. Boolean:eq/ne. Number:eq/ne/in/gt/gte/lt/lte. String/ID:eq/ne/in/contains/starts_with/ends_with, ordinal case-sensitive (case_sensitive:false opts into ordinal ignore-case). Enum:eq/ne/in over all declared values. Native flags also support has_all/has_any over comma-separated declared names. Nullable:is_null; null differs from failed read. Collection:some/every/none over its complete source before display paging. Empty every/none are true; a null collection does not satisfy a quantifier. Unknown reads use three-valued logic; undecidable membership makes the collection unavailable, never an observed empty set. reach:{field, some/every/none, include_self?, arguments?} traverses any public same-type reference/collection with shared cycle/depth/node limits; use parent for ancestors or a declared child collection for descendants. Wrapper items/nodes are display windows: apply where at their source field, not to a returned page. Exact selectors and where intersect. No purpose/category defaults.",
     };
 
-    internal static JObject DescribeField(FieldType field) => new() {
-        ["value_type"] = Bare(field.ResolvedType!).Name,
-        ["element_type"] = Element(field)?.Name,
-        ["display_window"] = field.Metadata.ContainsKey("collection_view"),
-        ["value_domain"] = NativeEnumScalar.For(field)?.Describe(),
-    };
-
     public Predicate Compile(string typeName, object? raw)
     {
         var type = schema.AllTypes[typeName] ?? throw Error("Unknown predicate type: " + typeName);

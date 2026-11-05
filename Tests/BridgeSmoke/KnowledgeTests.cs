@@ -58,7 +58,7 @@ internal static class KnowledgeTests
         Require(!entry.Diagnostics.Exists(d => d.Kind == "incomplete"), "unexpected incomplete diagnostic");
         entry.Description = new string('界', 8000000);
         for (var i = 0; i < 96; i++) entry.Facts.Add(new KnowledgeFact { Name = "long", Value = new string('界', 768) });
-        KnowledgeSnapshot.Bound(entry);
+        KnowledgeSnapshot.BoundAndSerialize(entry);
         Require(entry.Truncated, "entry size clipping was not reported");
         var snapshot = new KnowledgeSnapshot();
         Require(snapshot.Add(entry) && !snapshot.Complete && snapshot.Entries[0].Truncated, "truncated entry called complete");
@@ -66,7 +66,7 @@ internal static class KnowledgeTests
         for (var i = 0; i < 1000; i++) snapshot.Issue("issue " + i + new string('x', 500));
         Require(snapshot.Issues.Count == KnowledgeSnapshot.MaxIssues && snapshot.Issues.All(i => i.Length <= 512), "issue budget exceeded");
         var identity = Entry(); identity.Key = new string('a', 4097);
-        ExpectFailure(() => KnowledgeSnapshot.Bound(identity));
+        ExpectFailure(() => KnowledgeSnapshot.BoundAndSerialize(identity));
         Require(identity.Key.Length == 4097, "identity silently aliased");
         var count = new KnowledgeSnapshot();
         for (var i = 0; i < KnowledgeSnapshot.MaxEntries; i++) count.Entries.Add(Entry());

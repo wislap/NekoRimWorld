@@ -29,6 +29,11 @@
     <Compile Include="../../Source/FrameQueryOperation.cs" Link="FrameQueryOperation.cs" />
     <Compile Include="../../Source/SituationSnapshotContract.cs" Link="SituationSnapshotContract.cs" />
     <Compile Include="../../Source/ColonyReadContract.cs" Link="ColonyReadContract.cs" />
+    <Compile Include="../../Source/ColonyManagementContract.cs" Link="ColonyManagementContract.cs" />
+    <Compile Include="../../Source/SpatialCellGroups.cs" Link="SpatialCellGroups.cs" />
+    <Compile Include="../../Source/JsonValues.cs" Link="JsonValues.cs" />
+    <Compile Include="../../Source/ColonyObservationContract.cs" Link="ColonyObservationContract.cs" />
+    <Compile Include="../../Source/ColonyObservations.cs" Link="ColonyObservations.cs" />
     <Compile Include="../../Source/StorageMapSelection.cs" Link="StorageMapSelection.cs" />
     <Compile Include="../../Source/DefinitionCandidates.cs" Link="DefinitionCandidates.cs" />
     <Compile Include="../../Source/WorldPresentation.cs" Link="WorldPresentation.cs" />

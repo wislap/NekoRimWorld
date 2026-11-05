@@ -26,10 +26,26 @@ internal sealed partial class VerseWriteFieldResolver
         new Registration(JObject.Parse("{\"op\":\"set_research\",\"schema\":{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"op\":{\"const\":\"set_research\"},\"research\":{\"const\":\"current\"},\"value\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"op\",\"research\",\"value\"]},\"observation\":{\"read\":{\"tool\":\"look\",\"arguments\":{\"object\":{\"kind\":\"research\"},\"aspects\":[\"progress\"]},\"native_operation\":\"inspect_research\"},\"extract\":{\"kind\":\"field\",\"object_id\":null,\"path\":[\"current_regular_project\"],\"allow_null\":true,\"objects_path\":[],\"identity_path\":[],\"status_path\":[],\"status_value\":\"ok\"}}}"), (r, o) => One(r.ResolveResearch(o), o)),
         new Registration(JObject.Parse("{\"op\":\"set_storage_priority\",\"schema\":{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"op\":{\"const\":\"set_storage_priority\"},\"storage\":{\"type\":\"string\",\"minLength\":1},\"map\":{\"type\":\"string\",\"minLength\":1},\"value\":{\"type\":\"string\",\"minLength\":1}},\"required\":[\"op\",\"storage\",\"map\",\"value\"]},\"observation\":{\"read\":{\"tool\":\"look\",\"arguments\":{\"object\":{\"kind\":\"storage\",\"id\":{\"arg\":\"storage\"},\"map\":{\"arg\":\"map\"}},\"aspects\":[\"priority\"]},\"native_operation\":\"inspect_storage\"},\"extract\":{\"kind\":\"field\",\"object_id\":{\"arg\":\"storage\"},\"path\":[\"priority\"],\"allow_null\":false,\"objects_path\":[\"objects\"],\"identity_path\":[\"id\"],\"status_path\":[\"status\"],\"status_value\":\"observed\",\"match\":[{\"value\":{\"arg\":\"map\"},\"path\":[\"map_id\"]}]}}}"), (r, o) => One(r.ResolveStorage(o, "set_storage_priority"), o)),
     };
+    private static IEnumerable<Registration> AllRegistrations =>
+#if NEKO_SCHEMA_FIXTURE
+        Catalog;
+#else
+        NativeBaseRegistrations().Concat(ProductionRegistrations).Concat(PolicyCatalog).Concat(BedCatalog).Concat(ConstructionCatalog).Concat(AreaZoneCatalog).Concat(AreaCellFlagsCatalog).Concat(PreparationCatalog);
+#endif
+#if !NEKO_SCHEMA_FIXTURE
+    private static IEnumerable<Registration> NativeBaseRegistrations() {
+        foreach (var registration in Catalog) {
+            if ((string?)registration.Spec["op"] != "add_production_bill") { yield return registration; continue; }
+            var spec = (JObject)registration.Spec.DeepClone(); spec["schema"]!["properties"]!["value"]!["properties"]!["settings"] = ProductionSettingsSchema();
+            spec["schema"]!["description"] = "Create a standard production or standard unfinished-item bill with optional complete initial settings. Specialized native bill types are unsupported.";
+            yield return new Registration(spec, registration.Resolve);
+        }
+    }
+#endif
     internal static JObject DescribeCatalog()
     {
         var result = new JObject { ["capability"] = "colony_write.transactions.v1", ["version"] = ColonyWriteContract.Capability,
-            ["modes"] = new JArray("dry_run", "commit", "undo"), ["operations"] = new JArray(Catalog.Select(x => x.Spec.DeepClone())),
+            ["modes"] = new JArray("dry_run", "commit", "undo"), ["operations"] = new JArray(AllRegistrations.Select(x => x.Spec.DeepClone())),
             ["rules"] = JObject.Parse("{\"source\":\"native\",\"missing\":\"unknown\",\"null\":\"unknown unless allow_null is true\",\"issues\":\"affected paths unknown\",\"partial\":\"affected paths unknown\",\"truncation\":\"absence is unknown unless explicitly complete\"}") };
         result["catalog_id"] = GameQueryEngine.Hash(result.ToString(Newtonsoft.Json.Formatting.None));
         return result;
@@ -37,7 +53,7 @@ internal sealed partial class VerseWriteFieldResolver
     public IReadOnlyList<ResolvedWriteField> Resolve(JObject operation)
     {
         var kind = (string?)operation["op"];
-        var entry = Catalog.SingleOrDefault(x => (string?)x.Spec["op"] == kind);
+        var entry = AllRegistrations.SingleOrDefault(x => (string?)x.Spec["op"] == kind);
         if (entry == null) throw new ArgumentException("Unsupported write operation.");
         return entry.Resolve(this, operation);
     }

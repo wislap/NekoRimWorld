@@ -3,7 +3,7 @@
   <name>N.E.K.O RimWorld Bridge</name>
   <author>N.E.K.O Team</author>
   <packageId>neko.rimworld.bridge</packageId>
-  <modVersion>3.2.0</modVersion>
+  <modVersion>3.4.0</modVersion>
   <supportedVersions>
     <li>1.6</li>
   </supportedVersions>
@@ -21,10 +21,10 @@
   <description>
 将 RimWorld 殖民地连接到 N.E.K.O，通过对话了解殖民者、资源、研究、任务、贸易和商队行程，并获取建议。
 需要 Harmony 和 N.E.K.O RimWorld 插件。在 Mod 设置中启用连接，完成配对后载入殖民地即可使用。
-只读取游戏信息，不执行游戏命令。咨询使用插件中配置的模型服务，会向该服务发送相关游戏信息，并可能产生费用。安装步骤见包内 README.zh-CN.md。
+普通咨询只读；用户显式开启自动游玩后，配套插件可通过受保护事务修改九类殖民地配置。模型服务会接收相关游戏信息，并可能产生费用。安装及能力边界见包内 README.zh-CN.md。
 
 Connect your RimWorld colony to N.E.K.O and ask about colonists, resources, research, quests, trade and caravan journeys.
 Requires Harmony and the N.E.K.O RimWorld plugin. Enable the connection in Mod Settings, pair it with the plugin, then load your colony.
-Reads game information without issuing game commands. Consultations send relevant game information to your configured model service and may incur charges. See README.en.md for installation.
+Ordinary consultation is read-only. Explicit autoplay allows the matching plugin to change nine supported colony configuration categories through guarded transactions. Relevant game information is sent to your configured model service and may incur charges. See README.en.md for installation and capability limits.
   </description>
 </ModMetaData>

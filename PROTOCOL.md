@@ -1,6 +1,6 @@
 # N.E.K.O RimWorld protocol v2
 
-The current product source version is **v3.2 / 3.2.0**. This label does not
+The current product source version is **v3.4 / 3.4.0**. This label does not
 change transport v2, public_query.v2, world_observation.v2.3, native_behavior.v1,
 colony_state.v1 or situation_snapshot.v1, and does not imply publication or deployment.
 
@@ -285,3 +285,257 @@ an exception. Pending retries are counted separately. Alert reads use the native
 cache and exclude the native `GetReport` computation; the existing alerts
 `observer_metrics` separately measures detached report observation overhead.
 This diagnostic is not a model-facing situation field and adds no events.
+
+### Colony management (`colony_management.v1`)
+
+The additional `query_catalog.colony_management` directory describes supported
+business reads. It leaves the fixed `colony_state.v1` directory unchanged.
+The native directory is authoritative for argument schemas; consumers must not
+invent native field paths or infer support from a product version string.
+
+| Operation | Native evidence |
+| --- | --- |
+| `inspect_production` | Selected worktables, complete standard production settings and filters, recipe requirements, standard unfinished work and native target counters |
+| `inspect_food_policies` | Native policy identities, complete content, effective assignments, retained references and full affected-user sets |
+| `construction_catalog` | Loaded definitions, rotated-size inputs, costs, research, materials, room boundaries, interaction offsets and physical layers |
+| `inspect_construction` | A visible-cell grid of at most 64 by 64 cells, terrain layers, roof, walkability, areas, zones and full intersecting object footprints |
+| `preview_construction` | Per-element native placement qualification and exact current site evidence; it does not place anything |
+| `inspect_construction_intents` | Saved plan/element identity, original object, confirmed native lifecycle lineage and current native state |
+| `inspect_areas` | Native zone and area identities, membership, settings, references and explicitly scoped cell observations |
+
+Maps in write operations use their canonical `Map.GetUniqueLoadID()` strings.
+Spatial cells include fog/out-of-map unknowns; missing objects in an incomplete
+or fogged region do not establish absence. Samples retain their actual start and
+finish ticks and are not atomic snapshots. Construction spatial output always
+uses literal `cell_groups:[{...cellProperties,_xz:[[worldX,worldZ],...]}]`.
+Every group retains all original properties except `x`/`z`; properties must be
+fully equal to share a group. `_xz` contains absolute world-coordinate pairs.
+Unknown groups keep their original `known:false` and status, and no flat `cells`
+array is also emitted. This self-contained JSON shape has no numbered property
+dictionary or external decoder. Bounds, objects, sample and coverage are
+unchanged. Native management completion checks bytes, node count and depth
+within the existing transport limits; a genuinely dense distinct view that still
+cannot fit returns `observation_result_too_large` with a narrowing request.
+Interaction offsets are native
+rotation offsets; multi-cell occupied rectangles additionally follow
+`GenAdj.AdjustForRotation`'s even-size anchor adjustment. `is_room_boundary`
+uses the audited native region/room classification, separately from movement
+passability and roof support. `interaction_offsets` is the authoritative full
+list, including definitions with multiple native interaction cells.
+
+Construction intent evidence includes `rotation_policy: "native_door"` for
+supported single-cell native doors whose blueprint and finished building set
+their orientation from adjacent cells. `element.rotation` retains the submitted
+rotation and `target.rotation` reports the sampled native object. The policy
+applies only to the exact native replacement chain and its single-cell footprint.
+
+Placement preview calls the audited normal native qualification path. This may
+initialize native definition/PlaceWorker caches, but it does not change research
+progress, configure a pawn, place a blueprint or create a Job. Custom native
+construction runtime classes and non-native PlaceWorkers require separate
+support. Normal placement does not silently clear existing objects, replace
+protected structures, or complete construction.
+
+### Additional transaction operations
+
+The existing `dry_run`, `commit`, `undo`, identity, epoch and idempotency rules
+remain in effect. Structural intent values and native CAS expectations have
+separate schemas in the directory. A structural receipt contains the actual
+created identity/configuration; its undo guard is frozen at commit. User or game
+changes after that boundary are compared against that saved guard, rather than
+resampling a new expected value at undo time.
+
+Standard production supports `add_production_bill` with optional initial
+`settings`, `set_production_bill`, `copy_production_bill`,
+`reorder_production_bills` and `remove_production_bill`. Legacy `set_bill` keeps
+its four-field contract. Standard `Bill_ProductionWithUft` is supported without
+copying or destroying its bound unfinished item. Specialized bills remain
+explicitly unsupported. Removal/undo refuses current or queued Job references
+and bound unfinished work. Full ingredient filters include ordinary definitions,
+special filters, hit points, quality and mental-break-chance ranges. Native target
+counters retain their configured scope; a permitted ingredient is not inventory
+and a bill is not proof of a runnable Job.
+
+Food operations are `create_food_policy`, `copy_food_policy`,
+`set_food_policy_content`, `set_food_policy` and `delete_food_policy`.
+Policy business IDs are stable `food_policy:<saved-native-instance-GUID>` values.
+The native `Policy.GetUniqueLoadID()` contains its label and changes on rename;
+it is exposed only as `native_load_id` for audit, never used as a mutable API or
+ledger identity. Native Scribe references use that current native load ID, then
+the bridge binds restored business IDs after saved native identity resolution.
+There is no name-based or old-native-ID fallback. Rename, assignment, copy,
+delete, ledger and undo refer to the same original policy through its stable ID.
+Unchanged native filter state is preserved without reconstructing it. Existing
+latent allowed definitions remain expressible even when they are not human
+edible; new allowances follow the audited food UI parent's positive abstract
+Nutrition predicate and require an officially loaded definition. This does not
+enable arbitrary newly introduced Mod definitions.
+Shared content changes explicitly choose `fixed_users` with an exact set, or
+`dynamic_shared`; native users are checked again on the commit frame. A
+`native_instance` token distinguishes reused native policy IDs. The same saved
+identity service covers areas and zones: live original references and tokens are
+saved, then rebound after native cross-reference resolution. Deleted originals
+remain available in RAM for same-epoch undo, but are not saved as reusable-ID
+references. Policy structure verification reads the complete native directory,
+including created/removed identities, rather than reading only a copy source.
+
+`set_bed_assignment` is pawn-centric, preserves the previous bed and does not
+evict another owner. `set_bed_medical` requires owners to be cleared explicitly
+before enabling medical use. Areas/zones support normal creation and cell
+changes. Native designation qualification currently requires the player's
+current map; the bridge does not change the selected UI map. Zone edits preserve
+the existing Home area, refuse overlaps with other zones, and keep one connected
+nonempty region. Roof-area changes refuse to clear the opposite roof instruction
+implicitly. Local area flags preserve all unselected cells of a larger Home,
+allowed-area or roof instruction. Each selected cell has the stable field
+`area_flag:x:z` on the real native area object, including its saved instance
+token. Local patches contain at most 64 cells. Whole-mask `set_area_cells`
+compares the complete old mask in the preparation frame, then writes only the
+symmetric difference using those same per-cell identities. More than 64 changed
+cells requires explicit local batches; an unchanged whole mask is rejected as
+`no_changes` without creating ownership. There is no composite hash-mask field
+that can alias a different local patch.
+
+Each per-cell expected value and receipt also contains nullable `manual_id`.
+Desired model cells remain `{x,z,enabled}`; their generation comes from the
+original native evidence. Whole-mask CAS additionally binds the observed opaque
+`manual_revision`. Full rows include sparse `manual_ids` and an explicit
+`manual_ids_complete` flag, including manually cleared false cells. A generation
+change conflicts even if the native boolean has returned to its earlier value.
+
+`colony_write.manual_area.v1` reports the audited native brush commands and the
+manage-areas row's Invert action. Only those UI scopes can label an area change
+`user_designator`; model transactions explicitly exclude that scope. Native
+automatic Home/roof updates remain game changes. `Area.Clear` and `Area.Invert`
+are observed as bulk changes only inside those exact native UI scopes. Current
+1.6 ordinary clear commands are the corresponding clear brushes; arbitrary
+backend calls and unknown UI extensions are not claimed as manual sources.
+Missing/foreign patches or invalid saved provenance disable guarded area writes.
+
+Only explicitly selected cell observations, committed fields and explicitly
+created area cells establish cell fences. Whole-mask reads establish one area
+revision without creating a default per-cell record for the map. A manual source
+has stable `manual_id`, positive per-cell `manual_order`, the original
+`origin_load_epoch`, actual area/field/cell/map, native before/after values and
+the actual UI method. Owned sources preserve the prior AI value and changeset
+under `ownership`; observed but unowned sources have `ownership:null`.
+The latest source is retained by save-scoped original-area reference and native
+instance. It is exposed by both `area_manual_changed` events and ledger snapshots,
+including while autoplay/event delivery is off. Snapshots add current native
+status/value and explicit manual-source completeness. Delayed events are ordered
+within their origin epoch and actual cell/instance; GUIDs and paused game ticks
+are not ordering clocks. Return acceptance binds that exact manual generation.
+
+`colony_write.ledger_snapshot.selection.v1` adds optional
+`write_ledger_snapshot` arguments `fields:[{object,field}]` for 1–64 unique
+identities. Native rows are selected before resolving current values and manual
+sources. Results include `scope:{kind:"fields",fields:[...]}` and any
+`missing_fields`; completeness applies only to that exact scope. A missing AI
+ledger entry does not invent ownership for an observed unowned manual source.
+Empty arguments retain the legacy full-ledger read; large colonies should use
+the exact fields from `write_field_identities` or `write_undo_fields`.
+
+`set_deconstruct`, `set_mine` and `set_cut_plant` create normal work
+designations on exact visible native objects. They neither complete work nor
+enable god mode. They refuse native immediate-destruction paths and conflicting
+instructions/forbidden changes that would otherwise be cleared as side effects.
+`value:false` removes only the exact requested designation.
+
+`place_blueprint` takes one element value containing `plan_id`, `element_id`,
+`definition`, `kind`, `x`, `z`, `rotation` and optional `stuff`.
+The native identity is scoped by map, plan and element; receipts and intent reads
+include its actual `field_identity`. Up to 64 compatible elements can share one
+transaction. All incompatible footprint/replacement claims are rejected before
+any mutation; normal qualification is repeated at each write. A house's later
+work is asynchronous native gameplay, not a single atomic house transaction.
+
+`cancel_blueprint` only removes the exact unchanged unstarted planner blueprint.
+It retains a `model_cancelled` intent and the original for same-epoch undo.
+`restart_blueprint` is explicit, requires a known destroyed/cancelled original
+plus current-site CAS, and refuses unknown or live originals. It restarts the
+same element; it does not implicitly revise a design or override user takeover.
+The planner's adopted-plan and user-return gates apply before requesting it.
+Blueprint-to-frame provenance is transferred only after successful native
+replacement; frame-to-building/floor provenance follows the exact construction
+scope and returned native object or terrain setter. Foundations, temporary
+terrain and top terrain are observed separately. Position matching alone never
+creates ownership. A successful placement receipt is not a completed building.
+The separate `verification_read` descriptor reads saved native intent evidence
+after submission.
+
+### Bounded selected observations (`colony_observation.v1`)
+
+The capability is advertised with the native event-hook subscription support.
+It uses the existing `policy_request` / `policy_result` transport and event
+cursor; frontdesk `pause_on_letter_defs` policy is unchanged. Planner requests
+replace the entire observation set for the current connection and load:
+
+```json
+{
+  "source": "planner",
+  "observations": [{
+    "observation_id": "house-progress",
+    "revision": 1,
+    "conditions": [{
+      "id": "walls",
+      "kind": "construction",
+      "map_id": "Map_0",
+      "plan_id": "house-a",
+      "target_ids": ["wall-1", "wall-2"],
+      "max_samples": 100,
+      "expires_at_tick": 80000,
+      "sample_interval_ticks": 250
+    }]
+  }]
+}
+```
+
+An empty set revokes all registrations. Supported kinds are `construction`
+(plan-local element IDs plus `plan_id`), `production` (worktable IDs),
+`food_policy` (policy IDs) and `resources` (exact loaded definition names).
+Map IDs are required except for global food policies. Limits are 16 observations,
+8 conditions per observation, 64 total targets, 1–1000 samples per condition and
+an expiry no more than 600,000 game ticks ahead. Normal sampling intervals are
+1–60,000 game ticks (default 250). While paused, the same scheduler may sample
+at most once per two seconds of wall time, so same-tick user changes remain
+observable; expiry still follows game ticks and samples still consume budget.
+
+Successful transport returns normalized `observations` plus one registration
+receipt per observation:
+
+```json
+{
+  "observation_id": "house-progress",
+  "revision": 1,
+  "status": "registered",
+  "covered_condition_ids": ["walls"],
+  "receipt_id": "0123456789abcdef0123456789abcdef"
+}
+```
+
+A rejection has `status:"rejected"`, no covered conditions and a reason. Merely
+echoing the requested set is not registration evidence. An unchanged revision
+retains its receipt and remaining budget. Condition changes require a new
+revision; exhausted/expired revisions cannot be resurrected by replacing some
+other registration. Reconnect/load invalidates registration coverage and requires
+fresh receipts.
+
+`game_event` uses `kind:"observation"`, `observation_id`, `revision`,
+`condition_id`, `receipt_id`, `status`, `sample_tick`, `observation` and
+`coverage`. Status is `changed`, `unknown`, `expired` or `exhausted`.
+Complete samples read targets cooperatively, one at a time; an active resource
+read receives one bounded frame slice before another read is started. Coverage
+retains the non-atomic start/finish window. Registration checks native identities
+without taking an uncounted sample. Pending publication is retried without
+another native read, and the delivered baseline advances only after enqueue
+succeeds. Events are capped at 256 KiB; oversized evidence becomes explicit
+unknown/needs-read coverage. Unknown-to-known recovery publishes evidence even
+when the native value matches the last previously known value.
+
+Production and food events are compact native configuration/progress summaries;
+full content is read on demand. Resource events reuse the current resource
+reader and retain ground, player-pawn-held, other-held and trader source
+partitions, exclusions and scope. A zero is valid only within that observed
+scope. Inventory differences do not establish production, consumption, hauling
+or loss causes. No observation registration invokes a model or enables a second
+autonomous service.

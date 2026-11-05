@@ -519,7 +519,7 @@ public static class ProtocolCodec
                 break;
             case ProtocolMessageTypes.PolicyResult:
                 ValidateQueryResult(payload, envelope);
-                if (payload.Status == ProtocolStatuses.Ok) ValidatePolicy(payload.Data);
+                if (payload.Status == ProtocolStatuses.Ok) ValidatePolicy(payload.Data, true);
                 break;
             case ProtocolMessageTypes.GameEvent:
                 if (payload.Data == null || payload.Data["cursor"]?.Type != JTokenType.Integer || (long)payload.Data["cursor"]! < 1 || payload.Data["kind"]?.Type != JTokenType.String || string.IsNullOrWhiteSpace((string?)payload.Data["kind"])) throw Payload("Invalid game event.");
@@ -533,8 +533,9 @@ public static class ProtocolCodec
                 break;
         }
     }
-    private static void ValidatePolicy(JObject? value)
+    private static void ValidatePolicy(JObject? value, bool result = false)
     {
+        if ((string?)value?["source"] == "planner") { ColonyObservationContract.Validate(value!, result); return; }
         if (value == null || value.Properties().Count() != 2 || (string?)value["source"] != "frontdesk" || value["pause_on_letter_defs"] is not JArray levels || levels.Count > 128) throw Payload("Invalid policy.");
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in levels) {
@@ -615,12 +616,15 @@ public static class ProtocolCodec
                 Types(issue, new[] { "path" }, JTokenType.Array);
             }
     }
-    private static void ValidateTree(JToken root)
+    // Leave room for the fixed query envelope and any partial-result issue.
+    // The transport limits themselves remain unchanged.
+    internal static void ValidateQueryDataBudget(JObject data) => ValidateTree(data, MaxItems - 512, MaxJsonDepth - 4);
+    private static void ValidateTree(JToken root, int maxItems = MaxItems, int maxDepth = MaxJsonDepth)
     {
         var count = 0;
         void Visit(JToken value, int depth)
         {
-            if (++count > MaxItems || depth > MaxJsonDepth) throw Payload("JSON resource limit exceeded.");
+            if (++count > maxItems || depth > maxDepth) throw Payload("JSON resource limit exceeded.");
             if (value is JObject obj)
             {
                 foreach (var property in obj.Properties()) { count++; Visit(property.Value, depth + 1); }
@@ -636,7 +640,7 @@ public static class ProtocolCodec
                 throw Payload("Unsupported JSON value.");
         }
         Visit(root, 1);
-        if (count > MaxItems) throw Payload("JSON resource limit exceeded.");
+        if (count > maxItems) throw Payload("JSON resource limit exceeded.");
     }
     private static void ValidateJsonShape(string json)
     {

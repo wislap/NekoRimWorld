@@ -1,6 +1,12 @@
 # N.E.K.O RimWorld Bridge user guide
 
-Connect your colony to N.E.K.O and ask about colonists, resources, research, quests, trade and caravan journeys. The Mod reads game information and offers advice without issuing game commands.
+Connect your colony to N.E.K.O and ask about colonists, resources, research, quests, trade and caravan journeys. Ordinary consultation is read-only. Explicit autoplay in the matching plugin uses guarded native transactions for colony management, construction and production.
+
+## Autoplay scope
+
+Autoplay requires explicit activation in the plugin panel and never starts just because the plugin starts or restarts. The v3.4 candidate adds adopted building plans, normal blueprints and preparation instructions, roof and area management, standard production including unfinished work, complete food policies, bed assignment and medical designation. Selected native observations track progress and resources during play and pauses. Construction progresses through ordinary colonist work. Native eligibility, old-value checks, user takeovers, unknown-write stops and pause ownership remain enforced.
+
+Normal activation does not clear enemies, add supplies, disable the storyteller or force a speed. Study execution has its own scope. Source version 3.4.0 does not imply package publication, DLL deployment or complete mechanism acceptance.
 
 ## Requirements
 
@@ -11,7 +17,7 @@ Connect your colony to N.E.K.O and ask about colonists, resources, research, que
 
 ## Install the Mod
 
-1. Exit the game and extract `NekoRimWorld-3.2.0.zip`.
+1. Exit the game and extract `NekoRimWorld-3.4.0.zip`.
 2. Move the extracted `NekoRimWorld` folder into the game's `Mods` directory.
 3. Check that the resulting path is `RimWorld/Mods/NekoRimWorld/About/About.xml`.
 4. Start the game, enable Harmony and **N.E.K.O RimWorld Bridge**, and restart as prompted.

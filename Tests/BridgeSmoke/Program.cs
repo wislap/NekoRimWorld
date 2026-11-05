@@ -34,8 +34,12 @@ internal static class Program
             AtomicWriteOperationTests.Run();
             StructuralWriteTests.Run();
             WriteLedgerTests.Run();
+            LedgerSelectionTests.Run();
             SituationSnapshotContractTests.Run();
             ColonyReadContractTests.Run();
+            ColonyManagementTests.Run();
+            SpatialCellGroupsTests.Run();
+            JsonValueCasTests.Run();
             StorageMapSelectionTests.Run();
             ColonyWriteContractTests.Run();
             EventContractTests.Run();
@@ -252,6 +256,7 @@ internal static class Program
                 using var client = listener.AcceptTcpClient();
                 using var stream = client.GetStream();
                 var hello = Read(stream);
+                Require(hello.Payload.ModVersion == "3.4.0", "runtime hello version differs from the candidate");
                 Require(hello.Type == ProtocolMessageTypes.Hello, "first frame was not hello");
                 var clientNonce = hello.Payload.ClientNonce!;
                 var serverNonce = new string('b', ProtocolAuthentication.HexLength);
@@ -332,7 +337,7 @@ internal static class Program
             true,
             port,
             Token,
-            "0.1.0-dev",
+            BridgeRuntime.ModVersion,
             "1.6.4871 rev591",
             new[] { "query.execute.v2" });
         runtime.AttachSession(session);

@@ -26,7 +26,7 @@ internal static class KnowledgeBoundsTests
         entry.PackageId = new string('p', 1025);
         entry.Facts.Add(new KnowledgeFact { Name = new string('n', 2049), Value = new string('v', 65537) });
 
-        KnowledgeSnapshot.Bound(entry);
+        KnowledgeSnapshot.BoundAndSerialize(entry);
 
         Require(entry.Truncated, "clipped fields did not mark the entry incomplete");
         Require(entry.Diagnostics.Any(d => d.Path == "$label" && d.Kind == "incomplete"), "label clipping diagnostic missing");
@@ -43,7 +43,7 @@ internal static class KnowledgeBoundsTests
         for (var index = 0; index < 20000; index++)
             entry.Facts.Add(new KnowledgeFact { Name = "fact" + index, Value = new string('x', 500) });
 
-        KnowledgeSnapshot.Bound(entry);
+        KnowledgeSnapshot.BoundAndSerialize(entry);
         var bytes = Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(entry));
         Require(bytes <= KnowledgeSnapshot.MaxEntryBytes, "entry byte budget exceeded");
         Require(entry.Truncated && entry.Diagnostics.Any(d => d.Path == "$entry"), "entry byte clipping diagnostic missing");

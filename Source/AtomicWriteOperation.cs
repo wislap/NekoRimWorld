@@ -4,6 +4,15 @@ using Newtonsoft.Json.Linq;
 
 namespace Neko.RimWorld;
 
+// Some operations compare a complete native collection before projecting its
+// changed members onto ordinary fields. Keep that original CAS conflict shape.
+internal sealed class WritePreconditionConflictException : Exception
+{
+    internal JToken Expected { get; }
+    internal JToken Observed { get; }
+    internal WritePreconditionConflictException(JToken expected, JToken observed) : base("The complete native precondition changed.") { Expected = expected.DeepClone(); Observed = observed.DeepClone(); }
+}
+
 // A prepared field owns the native target only for the duration of one Advance.
 // Implementations must validate without mutation and Restore must tolerate a Write
 // that mutated the field before throwing. The staged coordinator uses this core
@@ -35,6 +44,13 @@ internal interface IWriteAggregateScope
 {
     string AggregateScope { get; }
     bool ChangesStructure { get; }
+}
+
+// Native owners can reject incompatible spatial claims before any mutation,
+// while leaving unrelated elements in the same bounded transaction.
+internal interface IWriteConflictScope
+{
+    bool ConflictsWith(IPreparedWriteField other);
 }
 
 internal sealed class ResolvedWriteField
@@ -78,6 +94,7 @@ internal sealed class AtomicWriteOperation : IFrameQueryOperation
         if (Outcome != null || disposed) return true;
         var prepared = new List<(int Index, IPreparedWriteField Field, JToken Original, JToken Value)>();
         var written = new List<(IPreparedWriteField Field, JToken Original)>();
+        int operationIndex = 0;
         try {
             if (System.Threading.Thread.CurrentThread.ManagedThreadId != ownerThread) throw new InvalidOperationException("Transaction must run on its owning game thread.");
             if (!canExecute()) { Outcome = QueryOutcome.Failure("world_unavailable", "The game is not ready for a transaction."); return true; }
@@ -89,6 +106,7 @@ internal sealed class AtomicWriteOperation : IFrameQueryOperation
             var keys = new HashSet<string>(StringComparer.Ordinal);
             var aggregates = new Dictionary<string, bool>(StringComparer.Ordinal);
             for (var i = 0; i < ops.Count; i++) {
+                operationIndex = i;
                 if (ops[i] is not JObject op || op["expect"] == null || op["value"] == null) throw new ArgumentException("Malformed operation.");
                 var fields = resolver.Resolve(op);
                 if (fields.Count == 0 || fields.Count > 64) throw new ArgumentException("Operation must resolve to 1-64 fields.");
@@ -100,6 +118,7 @@ internal sealed class AtomicWriteOperation : IFrameQueryOperation
                             throw new ArgumentException("A structural change overlaps another operation on the same aggregate.");
                         aggregates[scoped.AggregateScope] = scoped.ChangesStructure;
                     }
+                    foreach (var prior in prepared) if ((field is IWriteConflictScope current && current.ConflictsWith(prior.Field)) || (prior.Field is IWriteConflictScope previous && previous.ConflictsWith(field))) throw new ArgumentException("Construction elements have incompatible overlapping footprints.");
                     var value = resolved.Value.DeepClone();
                     field.Validate(value);
                     var observed = field.Read().DeepClone();
@@ -132,6 +151,9 @@ internal sealed class AtomicWriteOperation : IFrameQueryOperation
                 ? completed(prepared.ConvertAll(item => new AppliedWriteField(item.Index, item.Field, item.Original, item.Value)))
                 : new QueryOutcome { Data = new JObject { ["status"] = dryRun ? "validated" : "applied", ["fields"] = rows } };
         } catch (Exception error) when (ReadContext.Recoverable(error)) {
+            if (error is WritePreconditionConflictException conflict && written.Count == 0) {
+                Outcome = new QueryOutcome { Data = new JObject { ["status"] = "conflict", ["op"] = operationIndex, ["expected"] = conflict.Expected.DeepClone(), ["observed"] = conflict.Observed.DeepClone(), ["last_writer"] = JValue.CreateNull(), ["at_tick"] = JValue.CreateNull() } }; return true;
+            }
             var rollbackFailed = false;
             for (var i = written.Count - 1; i >= 0; i--) {
                 try { written[i].Field.Restore(written[i].Original); if (!JToken.DeepEquals(written[i].Field.Read(), written[i].Original)) rollbackFailed = true; }

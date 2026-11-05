@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><LangVersion>latest</LangVersion><Nullable>enable</Nullable><ImplicitUsings>disable</ImplicitUsings><RestorePackagesWithLockFile>true</RestorePackagesWithLockFile></PropertyGroup>
+  <ItemGroup><Compile Include="../../Source/NativeObjectIdentities.cs" Link="NativeObjectIdentities.cs" /><Compile Include="../../Source/WriteTargetReferences.cs" Link="WriteTargetReferences.cs" /><Compile Include="../../Source/WriteTargetIndex.cs" Link="WriteTargetIndex.cs" /></ItemGroup>
+</Project>

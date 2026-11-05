@@ -22,17 +22,12 @@ internal sealed partial class VerseWriteFieldResolver
         return new ProductionBillAddition(table);
     }
 
-    // This fingerprint covers every instance field on the two supported native
+    // This fingerprint covers every instance field on the supported native
     // bill classes and ThingFilter, including private settings. Referenced game
     // objects/defs are identity values; their internals do not belong to a bill.
     private sealed class BillState
     {
         private const BindingFlags Declared = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
-        private sealed class ReferenceComparer : IEqualityComparer<object> {
-            public new bool Equals(object? a, object? b) => ReferenceEquals(a, b);
-            public int GetHashCode(object value) => RuntimeHelpers.GetHashCode(value);
-        }
-        private readonly Dictionary<object, int> identities = new(new ReferenceComparer());
         private JToken Value(object? value) {
             if (value == null) return JValue.CreateNull();
             if (value is string text) return new JValue(text);
@@ -49,8 +44,7 @@ internal sealed partial class VerseWriteFieldResolver
                 return new JArray(values);
             }
             if (kind.IsValueType) return Fields(value, kind);
-            if (!identities.TryGetValue(value, out var identity)) { identity = identities.Count + 1; identities.Add(value, identity); }
-            return new JObject { ["type"] = kind.FullName, ["identity"] = identity };
+            return new JObject { ["type"] = kind.FullName, ["identity"] = RuntimeHelpers.GetHashCode(value) };
         }
         private JObject Fields(object value, Type type) {
             var result = new JObject();
@@ -62,6 +56,7 @@ internal sealed partial class VerseWriteFieldResolver
         }
         internal string Fingerprint(Bill_Production bill) {
             var state = new JObject { ["bill"] = Fields(bill, typeof(Bill)), ["production"] = Fields(bill, typeof(Bill_Production)) };
+            if (bill is Bill_ProductionWithUft) state["unfinished_binding"] = Fields(bill, typeof(Bill_ProductionWithUft));
             return GameQueryEngine.Hash(state.ToString(Formatting.None));
         }
     }
@@ -76,7 +71,9 @@ internal sealed partial class VerseWriteFieldResolver
             if (matches.Length > 1) throw new InvalidOperationException("Ambiguous bill identity.");
             if (matches.Length == 0) result["created"] = JValue.CreateNull();
             else if (matches[0] is Bill_Production production && production.recipe != null)
-                result["created"] = new JObject { ["bill_id"] = production.GetUniqueLoadID(), ["recipe"] = production.recipe.defName };
+                result["created"] = new JObject { ["bill_id"] = production.GetUniqueLoadID(), ["recipe"] = production.recipe.defName,
+                    ["runtime_type"] = production.GetType().FullName, ["settings"] = ProductionReadings.Settings(production), ["presentation"] = ProductionReadings.Presentation(production),
+                    ["unfinished_id"] = ProductionReadings.Text((production as Bill_ProductionWithUft)?.BoundUft?.GetUniqueLoadID()) };
             else throw new InvalidOperationException("Bill identity cannot be read.");
         }
         return result;
@@ -89,18 +86,20 @@ internal sealed partial class VerseWriteFieldResolver
             if (created is not JObject obj || obj["bill_id"]?.Type != JTokenType.String || string.IsNullOrWhiteSpace((string?)obj["bill_id"])) return null;
             createdId = (string)obj["bill_id"]!;
         }
-        return new ProductionBillLedgerField(table, createdId);
+        var removedId = recorded["removed"]?.Type == JTokenType.String ? (string?)recorded["removed"] : null;
+        return new ProductionBillLedgerField(table, createdId, removedId);
     }
     private sealed class ProductionBillLedgerField : IPreparedWriteField {
         private readonly Building_WorkTable table;
         private readonly string? createdId;
-        internal ProductionBillLedgerField(Building_WorkTable table, string? createdId) { this.table = table; this.createdId = createdId; }
+        private readonly string? removedId;
+        internal ProductionBillLedgerField(Building_WorkTable table, string? createdId, string? removedId) { this.table = table; this.createdId = createdId; this.removedId = removedId; }
         public string ObjectId => table.GetUniqueLoadID();
         public string Field => "production_bills";
         public bool IsDestroyed => table.Destroyed;
         public bool MayChangeByGame => false;
         public object NativeTarget => table;
-        public JToken Read() => ReadProductionBillResult(table, createdId);
+        public JToken Read() { var result = ReadProductionBillResult(table, createdId); if (removedId != null) result["removed"] = removedId; return result; }
         public void Validate(JToken value) => throw new NotSupportedException();
         public void Write(JToken value) => throw new NotSupportedException();
         public void Restore(JToken value) => throw new NotSupportedException();
@@ -109,11 +108,12 @@ internal sealed partial class VerseWriteFieldResolver
     private sealed class ProductionBillAddition : IPreparedStructuralWrite, IWriteAggregateScope
     {
         private readonly Building_WorkTable table;
+        private readonly Bill_Production? presentationSource;
         private readonly BillState state = new();
         private Bill_Production? bill;
         private JObject? applied;
         private JObject? undoExpected;
-        internal ProductionBillAddition(Building_WorkTable table) { this.table = table; }
+        internal ProductionBillAddition(Building_WorkTable table, Bill_Production? presentationSource = null) { this.table = table; this.presentationSource = presentationSource; }
         public string ObjectId => table.GetUniqueLoadID();
         public string Field => "production_bills";
         public bool MayChangeByGame => false;
@@ -132,18 +132,28 @@ internal sealed partial class VerseWriteFieldResolver
         private JObject Result() => ReadProductionBillResult(table, bill?.GetUniqueLoadID());
         public JToken Read() => bill == null ? Order() : Result();
         public void Validate(JToken value) {
-            if (table.Destroyed || table.BillStack.Count >= BillStack.MaxCount || value is not JObject obj || obj.Properties().Count() != 1 || obj["recipe"]?.Type != JTokenType.String) throw new ArgumentException("Invalid production bill request or full worktable.");
+            if (table.Destroyed || table.BillStack.Count >= BillStack.MaxCount || value is not JObject obj || obj.Properties().Any(p => p.Name != "recipe" && p.Name != "settings") || obj["recipe"]?.Type != JTokenType.String) throw new ArgumentException("Invalid production bill request or full worktable.");
             var recipe = DefDatabase<RecipeDef>.GetNamedSilentFail((string)obj["recipe"]!) ?? throw new ArgumentException("Recipe not found.");
             if (!Official(recipe) || !ResearchReadings.UsesRecipe(table.def, recipe) || ResearchReadings.RecipeAvailableReadOnly(recipe) != true) throw new ArgumentException("Recipe is not an available official recipe on this worktable.");
             // Mirror BillUtility.MakeNewBill's subtype selection without allocating an ID.
-            if (recipe.UsesUnfinishedThing || recipe.mechResurrection || recipe.gestationCycles > 0 || recipe.formingTicks > 0) throw new ArgumentException("This recipe requires a specialized bill and is not supported.");
+            if (ProductionReadings.SurgeryReadOnly(recipe) || recipe.mechResurrection || recipe.gestationCycles > 0 || recipe.formingTicks > 0) throw new ArgumentException("This recipe requires a specialized bill and is not supported.");
+            if (obj.TryGetValue("settings", out var settings)) {
+                if (settings is not JObject fields || !fields.HasValues || fields.Properties().Any(p => !ProductionSettingNames.Contains(p.Name))) throw new ArgumentException("Invalid initial production settings.");
+                foreach (var field in fields.Properties()) ValidateProductionSetting(table, recipe, field.Name, field.Value);
+            }
         }
         public void Write(JToken value) {
             var recipe = DefDatabase<RecipeDef>.GetNamed((string)value["recipe"]!);
             var prior = table.BillStack.Bills.ToArray();
             var created = recipe.MakeNewBill();
-            if (created.GetType() != typeof(Bill_Production)) throw new InvalidOperationException("Native bill factory returned an unsupported type.");
+            if (created is not Bill_Production production || !ProductionReadings.Standard(production) || (created is Bill_ProductionWithUft) != recipe.UsesUnfinishedThing) throw new InvalidOperationException("Native bill factory returned an unsupported type.");
             bill = (Bill_Production)created;
+            if (presentationSource != null) ProductionReadings.CopyPresentation(presentationSource, bill);
+            if (value["settings"] is JObject settings) {
+                foreach (var field in settings.Properties()) WriteProductionSetting(table, bill, field.Name, field.Value);
+                var observed = ProductionReadings.Settings(bill);
+                foreach (var field in settings.Properties()) if (!JToken.DeepEquals(observed[field.Name], NormalizeProductionSetting(field.Name, field.Value))) throw new InvalidOperationException("Native initial bill setting differs from its requested value: " + field.Name);
+            }
             table.BillStack.AddBill(bill);
             if (bill.recipe != recipe || bill.deleted || bill.billStack != table.BillStack || table.BillStack.Count != prior.Length + 1 || !table.BillStack.Bills.Take(prior.Length).SequenceEqual(prior) || !ReferenceEquals(table.BillStack.Bills[prior.Length], bill) || table.BillStack.Bills.Count(b => b.GetUniqueLoadID() == bill.GetUniqueLoadID()) != 1) throw new InvalidOperationException("Native bill readback differs from the requested addition.");
             applied = Result();
@@ -170,6 +180,7 @@ internal sealed partial class VerseWriteFieldResolver
             public void Validate(JToken value) {
                 var bill = add.bill ?? throw new ArgumentException("Bill unavailable.");
                 if (add.table.Destroyed) throw new ArgumentException("Worktable unavailable.");
+                if (bill is Bill_ProductionWithUft uft && uft.BoundUft != null) throw new ArgumentException("Bill has bound unfinished work; suspend it instead of undoing its creation.");
                 if (Find.Maps.SelectMany(m => m.mapPawns.AllPawns).Concat(Find.WorldPawns.AllPawnsAliveOrDead).Any(p => p.jobs?.curJob?.bill == bill || p.jobs?.jobQueue.Any(j => j.job?.bill == bill) == true)) throw new ArgumentException("Bill is referenced by a current or queued job.");
             }
             public void Write(JToken value) {

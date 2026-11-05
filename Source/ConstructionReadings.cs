@@ -50,7 +50,7 @@ internal static class ConstructionReadings
             ["work_left"] = t is Frame f ? (JToken)f.WorkLeft : JValue.CreateNull() };
     }
     private static JObject Configuration(Thing t) {
-        var result = new JObject { ["faction"] = JsonValues.Text(t.Faction?.GetUniqueLoadID()), ["hit_points"] = t.HitPoints, ["forbidden"] = t.TryGetComp<CompForbiddable>()?.Forbidden };
+        var result = new JObject { ["faction"] = JsonValues.Text(t.Faction?.GetUniqueLoadID()), ["hit_points"] = t.HitPoints, ["forbidden"] = NativeThingState.Forbidden(t) };
         if (t is Blueprint_Build blueprint) {
             foreach (var name in new[] { "selectedStyleDef", "styleOverridden", "glowerColorOverride" }) { var field = typeof(Blueprint_Build).GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!; var value = field.GetValue(blueprint); result[name] = value is Def def ? new JValue(def.defName) : value == null ? JValue.CreateNull() : JToken.FromObject(value); }
             if (blueprint is Blueprint_Storage) { var field = typeof(Blueprint_Storage).GetField("settings", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!; var settings = field.GetValue(blueprint) as StorageSettings; result["storage"] = settings == null ? JValue.CreateNull() : new JObject { ["priority"] = settings.Priority.ToString(), ["filter"] = PolicyReadings.Filter(settings.filter) }; }

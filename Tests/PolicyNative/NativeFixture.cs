@@ -80,23 +80,17 @@ namespace RimWorld {
     internal static class RestUtility { public static bool CanUseBedEver(Verse.Pawn pawn,Verse.ThingDef def)=>true; }
 }
 namespace Neko.RimWorld {
-    internal interface IPreparedWriteField {string ObjectId{get;}string Field{get;}bool IsDestroyed{get;}bool MayChangeByGame{get;}object? NativeTarget{get;}JToken Read();void Validate(JToken value);void Write(JToken value);void Restore(JToken value);}
-    internal interface IPreparedStructuralWrite:IPreparedWriteField {JToken AppliedValue();JToken UndoExpected();IPreparedWriteField CreateUndo();}
-    internal interface IWriteAggregateScope {string AggregateScope{get;}bool ChangesStructure{get;}}
-    internal interface IWriteConflictScope {bool ConflictsWith(IPreparedWriteField other);}
-    internal sealed class WritePreconditionConflictException:Exception {internal JToken Expected,Observed;internal WritePreconditionConflictException(JToken expected,JToken observed){Expected=expected;Observed=observed;}}
-    internal class ResolvedWriteField {internal IPreparedWriteField Field;internal JToken Expected,Value;internal ResolvedWriteField(IPreparedWriteField f,JToken e,JToken v){Field=f;Expected=e;Value=v;} }
     internal class GameEntity {public string Id="";public object? Handle;}
     internal interface IGameData {IEnumerable<GameEntity> Colonists();}
     internal static class ColonyReadContract {internal static string[] Texts(JObject o,string key)=>o[key] is JArray a?a.Values<string>().Select(x=>x!).ToArray():Array.Empty<string>();}
-    internal sealed partial class VerseWriteFieldResolver {
-        private readonly IGameData data;internal VerseWriteFieldResolver(IGameData data){this.data=data;}
-        private static bool Official(Verse.Def d)=>d.Official;
-        private class Registration {internal readonly JObject Spec;internal Registration(JObject spec,Func<VerseWriteFieldResolver,JObject,IReadOnlyList<ResolvedWriteField>> resolve){Spec=spec;}}
-        private static IReadOnlyList<ResolvedWriteField> One(IPreparedWriteField f,JObject o)=>new[]{new ResolvedWriteField(f,o["expect"]!,o["value"]!)};
-        internal IPreparedWriteField ResolveTest(JObject operation) {var op=(string)operation["op"]!;return op.Contains("zone")||op.Contains("area")?ResolveAreaZone(operation):op.Contains("bed")?ResolveBedOperation(operation):ResolveFoodOperation(operation);}
-        internal IReadOnlyList<ResolvedWriteField> ResolveFieldsTest(JObject operation)=>(string?)operation["op"]=="set_area_cell_flags"?ResolveAreaFlagFields(operation):ResolveAreaMaskFields(operation);
-        internal static JObject[] Specs()=>PolicyCatalog.Concat(BedCatalog).Concat(AreaZoneCatalog).Concat(AreaCellFlagsCatalog).Select(x=>x.Spec).ToArray();
+    internal static class OfficialContent { internal static bool Contains(Verse.Def d)=>d.Official; }
+    internal sealed class WriteFieldsHarness {
+        private readonly WriteFieldDispatcher dispatcher; private readonly LedgerFieldRouter ledger;
+        internal WriteFieldsHarness(IGameData data){var sets=new IWriteFieldSet[]{new PolicyWriteFields(),new BedWriteFields(data),new AreaCellFlagsWriteFields(),new AreaZoneWriteFields()};dispatcher=new(sets,Specs().Select(s=>(string)s["op"]!));ledger=new(sets);}
+        internal IPreparedWriteField ResolveTest(JObject operation)=>dispatcher.Resolve(operation).Single().Field;
+        internal IReadOnlyList<ResolvedWriteField> ResolveFieldsTest(JObject operation)=>dispatcher.Resolve(operation);
+        internal IReadableWriteField? ResolveLedger(string id,string field,object? target,JToken value)=>ledger.Resolve(id,field,target,value);
+        internal static JObject[] Specs()=>PolicyWriteCatalog.Operations.Concat(BedWriteCatalog.Operations).Concat(AreaZoneWriteCatalog.Operations).Concat(AreaCellFlagsWriteCatalog.Operations).ToArray();
     }
 }
 

@@ -22,7 +22,7 @@ internal static class Program
             if (args.Length == 1 && args[0] == "--attention-facts") { AttentionFactsTests.Run(); Console.WriteLine("Attention facts contract tests passed."); return 0; }
             if (args.Length == 2 && args[0] == "--export-native-behavior") { File.WriteAllText(args[1], ActionInspectionContract.Catalog().ToString()); return 0; }
             if (args.Length == 2 && args[0] == "--export-catalog") { QueryEngineTests.ExportCatalog(args[1]); return 0; }
-            if (args.Length == 2 && args[0] == "--export-write-catalog") { File.WriteAllText(args[1], VerseWriteFieldResolver.DescribeCatalog().ToString() + "\n"); return 0; }
+            if (args.Length == 2 && args[0] == "--export-write-catalog") { File.WriteAllText(args[1], WriteCatalog.Describe().ToString() + "\n"); return 0; }
             if (args.Length == 2 && args[0] == "--export-knowledge")
             {
                 KnowledgePublicationFixture.Export(args[1]);

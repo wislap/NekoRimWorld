@@ -11,8 +11,8 @@ internal static class Program
     private const string Command = "RimWorld.Designator_AreaAllowedExpand.DesignateSingleCell";
     private static void Check(bool value,string message){checks++;if(!value)throw new Exception(message);}
     private static Area NewArea(Map map,string id="Area_1"){var a=new Area_Allowed(id,map);map.areaManager.AllAreas.Add(a);return a;}
-    private static void Save(NativeAreaManualRegistry registry){Scribe.mode=LoadSaveMode.Saving;Current.Game.Component.NativeIdentities.ExposeData();registry.ExposeData();Scribe.mode=LoadSaveMode.Inactive;}
-    private static NativeAreaManualRegistry Load(){var result=new NativeAreaManualRegistry();foreach(var mode in new[]{LoadSaveMode.LoadingVars,LoadSaveMode.ResolvingCrossRefs,LoadSaveMode.PostLoadInit}){Scribe.mode=mode;Current.Game.Component.NativeIdentities.ExposeData();result.ExposeData();}Scribe.mode=LoadSaveMode.Inactive;return result;}
+    private static void Save(NativeAreaManualRegistry registry){Scribe.mode=LoadSaveMode.Saving;Current.Game.Component.Save.NativeIdentities.ExposeData();registry.ExposeData();Scribe.mode=LoadSaveMode.Inactive;}
+    private static NativeAreaManualRegistry Load(){var result=new NativeAreaManualRegistry();foreach(var mode in new[]{LoadSaveMode.LoadingVars,LoadSaveMode.ResolvingCrossRefs,LoadSaveMode.PostLoadInit}){Scribe.mode=mode;Current.Game.Component.Save.NativeIdentities.ExposeData();result.ExposeData();}Scribe.mode=LoadSaveMode.Inactive;return result;}
     private static List<Dictionary<string,object?>> Records()=>Scribe.Saved["nekoAreaManualSources"];
     private static void Main()
     {
@@ -68,7 +68,7 @@ internal static class Program
         ((List<string>)Records()[0]["sources"]!)[0]=savedRaw.Last();
         // Force cross-reference resolution to a same-ID new native instance.
         var replacement=new Area_Allowed("Area_2",loadedMap);loadedMap.areaManager.AllAreas.Remove(loadedOwned);loadedMap.areaManager.AllAreas.Add(replacement);Scribe.Bindings["Area_2"]=replacement;
-        Current.Game.Component.NativeIdentities=new NativeObjectIdentityRegistry();NativeObjectIdentities.Token(replacement);
+        Current.Game.Component.Save.NativeIdentities=new NativeObjectIdentityRegistry();NativeObjectIdentities.Token(replacement);
         // Existing native-identity token cannot be replaced by manual-record IDs.
         foreach(var mode in new[]{LoadSaveMode.LoadingVars,LoadSaveMode.ResolvingCrossRefs}){Scribe.mode=mode;invalid.ExposeData();}Scribe.mode=LoadSaveMode.PostLoadInit;invalid.ExposeData();Scribe.mode=LoadSaveMode.Inactive;
         Check(!invalid.Valid,"Area ID cross-ref reuse with a different native instance fails closed");
@@ -99,7 +99,7 @@ namespace Verse {
 }
 namespace RimWorld{internal class FoodPolicy:ILoadReferenceable{public string GetUniqueLoadID()=>"Policy_1";}internal class FoodRestrictionDatabase{internal List<FoodPolicy> AllFoodRestrictions=new();}}
 namespace Neko.RimWorld{
-    internal class NekoGameComponent{internal NativeObjectIdentityRegistry NativeIdentities=new();}
+    internal class NekoGameComponent{internal NekoSaveState Save=new();}internal class NekoSaveState{internal NativeObjectIdentityRegistry NativeIdentities=new();}
     internal static class AreaZoneReadings{internal static string Kind(Area area)=>area is Area_Allowed?"allowed":"unsupported";}
     internal static class AreaCellFlags{internal static string FieldName(IntVec3 cell)=>"area_flag:"+cell.x+":"+cell.z;}
     internal static class ReadContext{internal static bool Recoverable(Exception error)=>true;}

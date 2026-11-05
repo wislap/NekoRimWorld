@@ -86,7 +86,7 @@ internal static class ProductionReadings
         if (!Standard(production)) { row["suspended"] = bill.suspended; row["repeat_mode"] = production.repeatMode?.defName; row["repeat_count"] = production.repeatCount; row["target_count"] = production.targetCount; row["details_status"] = "unsupported_bill_type"; return row; }
         row.Merge(Settings(production));
         row["presentation"] = Presentation(production);
-        if (bill.billStack?.billGiver is Building_WorkTable table) { row["removal_guard"] = VerseWriteFieldResolver.ProductionRemovalGuard(table, production); row["copy_guard"] = VerseWriteFieldResolver.ProductionCopyGuard(table, production); }
+        if (bill.billStack?.billGiver is Building_WorkTable table) { row["removal_guard"] = ProductionWriteFields.RemovalGuard(table, production); row["copy_guard"] = ProductionWriteFields.CopyGuard(table, production); }
         row["paused"] = production.paused;
         var ingredients = bill.recipe.ingredients;
         row["ingredients"] = new JArray(ingredients.Select((ingredient, index) => {

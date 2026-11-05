@@ -17,29 +17,29 @@ internal static class NativeAreaManualChanges
 {
     [ThreadStatic] private static string? source;
     [ThreadStatic] private static int modelWrites;
-    internal static bool Complete => NekoRimWorldMod.ManualAreaSourcesReady && Current.Game?.GetComponent<NekoGameComponent>()?.ManualAreaDataValid == true;
+    internal static bool Complete => NekoRimWorldMod.ManualAreaSourcesReady && Current.Game?.GetComponent<NekoGameComponent>()?.ManualAreas.DataValid == true;
     internal static string? Source => modelWrites == 0 && Complete ? source : null;
     internal static string? Enter(string command) { var before = source; if (modelWrites == 0) source = command; return before; }
     internal static void Exit(string? before) => source = before;
     internal static T WithinModelWrite<T>(Func<T> write) { modelWrites++; try { return write(); } finally { modelWrites--; } }
-    internal static string? ManualId(Area area, IntVec3 cell) => Current.Game?.GetComponent<NekoGameComponent>()?.NativeManualAreas.ManualId(area, cell);
-    internal static JArray Ids(Area area) => Current.Game?.GetComponent<NekoGameComponent>()?.NativeManualAreas.Ids(area) ?? new JArray();
-    internal static string Revision(Area area) => Current.Game?.GetComponent<NekoGameComponent>()?.NativeManualAreas.Revision(area) ?? "unavailable";
+    internal static string? ManualId(Area area, IntVec3 cell) => Current.Game?.GetComponent<NekoGameComponent>()?.ManualAreas.Registry.ManualId(area, cell);
+    internal static JArray Ids(Area area) => Current.Game?.GetComponent<NekoGameComponent>()?.ManualAreas.Registry.Ids(area) ?? new JArray();
+    internal static string Revision(Area area) => Current.Game?.GetComponent<NekoGameComponent>()?.ManualAreas.Registry.Revision(area) ?? "unavailable";
     internal static void RequireAvailable() { if (!Complete) throw new InvalidOperationException("Native manual area provenance is unavailable; guarded area writing is disabled."); }
-    internal static bool Interested(Area area, IntVec3 cell) => Current.Game?.GetComponent<NekoGameComponent>()?.EnsureAreaManualInterest(area, cell) == true;
+    internal static bool Interested(Area area, IntVec3 cell) => Current.Game?.GetComponent<NekoGameComponent>()?.ManualAreas.EnsureInterest(area, cell) == true;
     internal static void Observe(Area area, IntVec3 cell, bool before, string? command) {
         if (command == null || Source == null || !cell.InBounds(area.Map) || !Interested(area, cell)) return;
         bool after = area[cell]; if (before == after) return;
-        Current.Game?.GetComponent<NekoGameComponent>()?.ObserveManualAreaChange(area, cell, before, after, command);
+        Current.Game?.GetComponent<NekoGameComponent>()?.ManualAreas.ObserveChange(area, cell, before, after, command);
     }
     internal static (IntVec3 Cell, bool Value)[] CaptureTracked(Area area) {
         var component = Current.Game?.GetComponent<NekoGameComponent>(); if (Source == null || component == null) return Array.Empty<(IntVec3, bool)>();
-        foreach (var row in component.TrackedAreaFields(area.GetUniqueLoadID())) {
+        foreach (var row in component.ManualAreas.TrackedFields(area.GetUniqueLoadID())) {
             var parts = ((string)row["field"]!).Split(':');
             if (parts.Length != 3 || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int x) || !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int z)) continue;
-            var cell = new IntVec3(x, 0, z); if (cell.InBounds(area.Map)) component.NativeManualAreas.EnsureTracked(area, cell);
+            var cell = new IntVec3(x, 0, z); if (cell.InBounds(area.Map)) component.ManualAreas.Registry.EnsureTracked(area, cell);
         }
-        return component.NativeManualAreas.Watched(area);
+        return component.ManualAreas.Registry.Watched(area);
     }
 }
 
@@ -88,8 +88,8 @@ internal static class NativeAreaManualBulk
     private static IEnumerable<MethodBase> TargetMethods() => new[] { AccessTools.DeclaredMethod(typeof(Area), "Clear"), AccessTools.DeclaredMethod(typeof(Area), "Invert") };
     private static void Prefix(Area __instance, MethodBase __originalMethod, out Tuple<string?, (IntVec3 Cell, bool Value)[], bool> __state) {
         var command = NativeAreaManualChanges.Source; var selected = NativeAreaManualChanges.CaptureTracked(__instance);
-        bool changed = command != null && Current.Game?.GetComponent<NekoGameComponent>()?.NativeManualAreas.HasArea(__instance) == true && (__originalMethod.Name == "Invert" || __instance.ActiveCells.Any());
+        bool changed = command != null && Current.Game?.GetComponent<NekoGameComponent>()?.ManualAreas.Registry.HasArea(__instance) == true && (__originalMethod.Name == "Invert" || __instance.ActiveCells.Any());
         __state = Tuple.Create(command, selected, changed);
     }
-    private static void Postfix(Area __instance, Tuple<string?, (IntVec3 Cell, bool Value)[], bool> __state) { if (__state.Item3) Current.Game?.GetComponent<NekoGameComponent>()?.BumpManualArea(__instance); foreach (var before in __state.Item2) NativeAreaManualChanges.Observe(__instance, before.Cell, before.Value, __state.Item1); }
+    private static void Postfix(Area __instance, Tuple<string?, (IntVec3 Cell, bool Value)[], bool> __state) { if (__state.Item3) Current.Game?.GetComponent<NekoGameComponent>()?.ManualAreas.Bump(__instance); foreach (var before in __state.Item2) NativeAreaManualChanges.Observe(__instance, before.Cell, before.Value, __state.Item1); }
 }

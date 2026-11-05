@@ -55,7 +55,7 @@ internal sealed class WriteLedger
         }
         entries = next;
     }
-    internal JObject ReadSnapshot(bool valid, WriteTargetIndex targets, Func<object, bool> destroyed, Func<string, string, object?, JToken, IPreparedWriteField?> resolve, JArray? fields = null) {
+    internal JObject ReadSnapshot(bool valid, WriteTargetIndex targets, Func<object, bool> destroyed, Func<string, string, object?, JToken, IReadableWriteField?> resolve, JArray? fields = null) {
         var rows = new JArray();
         var selected = fields == null ? null : new HashSet<string>(fields.Select(field => Key((string)field["object"]!, (string)field["field"]!)), StringComparer.Ordinal);
         if (valid) foreach (var source in entries.Where(pair => selected == null || selected.Contains(pair.Key)).OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => x.Value)) {

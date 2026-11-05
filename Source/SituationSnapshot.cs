@@ -61,7 +61,7 @@ internal sealed class SituationSnapshot : FrameQueryOperation
         SituationSnapshotContract.Validate(args);
         GameImplementation.RequireKnownBinary();
         map = GameWorldReferences.ResolveMap((string?)args["map"]);
-        var pauseState = game.GetComponent<NekoGameComponent>()?.PauseEvidence() ?? new JObject { ["status"] = "unavailable" };
+        var pauseState = game.GetComponent<NekoGameComponent>()?.Pause.Evidence() ?? new JObject { ["status"] = "unavailable" };
         // Monotonic evidence is retained in native events, not in model background.
         pauseState.Remove("monotonic");
         result["clock"] = new JObject { ["game_tick"] = startTick, ["absolute_tick"] = Find.TickManager.TicksAbs,

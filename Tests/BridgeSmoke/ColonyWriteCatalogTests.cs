@@ -9,7 +9,7 @@ internal static class ColonyWriteCatalogTests
     internal static void Run()
     {
         var catalog = JObject.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "colony-write-v1", "catalog.json")));
-        if (!JToken.DeepEquals(catalog, VerseWriteFieldResolver.DescribeCatalog())) throw new Exception("Production write catalog differs from fixture.");
+        if (!JToken.DeepEquals(catalog, WriteCatalog.Describe())) throw new Exception("Production write catalog differs from fixture.");
         var id = (string?)catalog["catalog_id"]; catalog.Remove("catalog_id");
         if (id != GameQueryEngine.Hash(catalog.ToString(Newtonsoft.Json.Formatting.None))) throw new Exception("Write catalog hash differs.");
         var ops = (JArray)catalog["operations"]!;

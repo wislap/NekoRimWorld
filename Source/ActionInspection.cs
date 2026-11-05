@@ -71,7 +71,7 @@ internal static class ActionInspection
         foreach (var target in targets.Distinct()) {
             if (target.Destroyed || !target.Spawned || target.Map != map) { rows.Add(new JObject { ["status"] = "unavailable", ["reason"] = "target_changed" }); result["status"] = "partial"; continue; }
             if (target.Position.Fogged(map)) { rows.Add(new JObject { ["requested_id"] = target.GetUniqueLoadID(), ["status"] = "hidden", ["actions"] = new JArray() }); result["status"] = "partial"; continue; }
-            var item = new JObject { ["target"] = WorldStateReader.Identity(target), ["sample_tick"] = Find.TickManager.TicksGame, ["forbidden_flag"] = target.TryGetComp<CompForbiddable>()?.Forbidden };
+            var item = new JObject { ["target"] = WorldStateReader.Identity(target), ["sample_tick"] = Find.TickManager.TicksGame, ["forbidden_flag"] = NativeThingState.Forbidden(target) };
             var options = new JArray(); item["actions"] = options; rows.Add(item);
             foreach (var action in actions) {
                 try { options.Add(Inspect(actor, target, action)); }

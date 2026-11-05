@@ -159,12 +159,8 @@ internal static class ThingData
     /// <summary>最近的持有者 Pawn，沿容器链向上查找；仅沿真实持有关系，不做所有权推断。</summary>
     internal static Pawn? HeldByPawn(Thing thing)
     {
-        var holder = thing.ParentHolder;
-        for (var depth = 0; holder != null && depth < 32; depth++)
-        {
+        foreach (var holder in NativeHolders.Ancestors(thing, 32, out _))
             if (holder is Pawn pawn) return pawn;
-            holder = holder.ParentHolder;
-        }
         return null;
     }
 

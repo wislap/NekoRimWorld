@@ -7,57 +7,11 @@ using Verse;
 
 namespace Neko.RimWorld;
 
-internal sealed partial class VerseWriteFieldResolver
+// Food policies: creation, copy, content, deletion and pawn assignment.
+internal sealed class PolicyWriteFields : IWriteFieldSet
 {
-    private static Registration FoodRegistration(string op, string properties, string required, string path, string? policyArg = null)
-    {
-        var schema = JObject.Parse("{'type':'object','additionalProperties':false,'properties':{'op':{'const':'" + op + "'}," + properties + "},'required':['op'," + required + "]}");
-        var arguments = new JObject { ["object"] = new JObject { ["kind"] = "food_policy" }, ["aspects"] = new JArray("content", "users") };
-        if (policyArg != null) arguments["object"]!["id"] = new JObject { ["arg"] = policyArg };
-        var extract = new JObject
-        {
-            ["kind"] = "field",
-            ["object_id"] = policyArg == null ? JValue.CreateNull() : new JObject { ["arg"] = policyArg },
-            ["path"] = new JArray(path),
-            ["allow_null"] = false,
-            ["objects_path"] = policyArg == null ? new JArray() : new JArray("objects"),
-            ["identity_path"] = policyArg == null ? new JArray() : new JArray("id"),
-            ["status_path"] = new JArray("status"),
-            ["status_value"] = policyArg == null ? "ok" : "observed"
-        };
-        var contentSchema = JObject.Parse("{'type':'object','additionalProperties':false,'properties':{'native_instance':{'type':'string','minLength':1},'label':{'type':'string'},'filter':{'type':'object'},'users':{'type':'array','items':{'type':'string','minLength':1}},'users_complete':{'const':true}},'required':['native_instance','label','filter','users','users_complete']}");
-        JObject expected;
-        if (op == "set_food_policy_content") expected = contentSchema;
-        else
-        {
-            expected = JObject.Parse("{'type':'object','additionalProperties':false,'properties':{'policy_ids':{'type':'array','items':{'type':'string','minLength':1}}},'required':['policy_ids']}");
-            if (policyArg != null)
-            {
-                var name = op == "copy_food_policy" ? "source" : "policy";
-                expected["properties"]![name + "_id"] = JObject.Parse("{'type':'string','minLength':1}");
-                expected["properties"]![name] = contentSchema;
-                ((JArray)expected["required"]!).Add(name + "_id"); ((JArray)expected["required"]!).Add(name);
-            }
-        }
-        return new Registration(new JObject
-        {
-            ["op"] = op,
-            ["schema"] = schema,
-            ["expect_schema"] = expected,
-            ["verification_read"] = new JObject { ["tool"] = "inspect_food_policies", ["native_operation"] = "inspect_food_policies", ["arguments"] = new JObject() },
-            ["observation"] = new JObject { ["read"] = new JObject { ["tool"] = "look", ["arguments"] = arguments, ["native_operation"] = "inspect_food_policies" }, ["extract"] = extract }
-        },
-            (r, o) => One(r.ResolveFoodOperation(o), o));
-    }
-    private static readonly Registration[] PolicyCatalog = {
-        FoodRegistration("create_food_policy", "'policy':{'const':'new'},'value':{'type':'object','additionalProperties':false,'properties':{'label':{'type':'string','minLength':1,'maxLength':128}},'required':['label']}", "'policy','value'", "structure"),
-        FoodRegistration("copy_food_policy", "'policy':{'type':'string','minLength':1},'value':{'type':'object','additionalProperties':false,'properties':{'label':{'type':'string','minLength':1,'maxLength':128}},'required':['label']}", "'policy','value'", "copy_expect", "policy"),
-        FoodRegistration("set_food_policy_content", "'policy':{'type':'string','minLength':1},'value':{'type':'object','additionalProperties':false,'properties':{'label':{'type':'string','minLength':1,'maxLength':128},'filter':{'type':'object'},'impact':{'type':'object'}},'required':['label','filter','impact']}", "'policy','value'", "write_content", "policy"),
-        FoodRegistration("delete_food_policy", "'policy':{'type':'string','minLength':1},'value':{'type':'object','additionalProperties':false,'properties':{'impact':{'type':'object'}},'required':['impact']}", "'policy','value'", "delete_expect", "policy"),
-        new Registration(JObject.Parse(@"{'op':'set_food_policy','schema':{'type':'object','additionalProperties':false,'properties':{'op':{'const':'set_food_policy'},'pawn':{'type':'string','minLength':1},'value':{'type':'object','additionalProperties':false,'properties':{'policy_id':{'type':'string','minLength':1},'native_instance':{'type':'string','minLength':1}},'required':['policy_id','native_instance']}},'required':['op','pawn','value']},'observation':{'read':{'tool':'look','arguments':{'object':{'kind':'pawn','id':{'arg':'pawn'}},'aspects':['work']},'native_operation':'inspect_state'},'extract':{'kind':'field','object_id':{'arg':'pawn'},'path':['facets','work','food_policy_key'],'allow_null':false,'objects_path':['objects'],'identity_path':['target','id'],'status_path':['facets','work','status'],'status_value':'observed'}}}"), (r,o) => One(r.ResolveFoodOperation(o),o))
-    };
-
-    private IPreparedWriteField ResolveFoodOperation(JObject operation)
+    public IEnumerable<WriteOperationBinding> Operations => PolicyWriteCatalog.Operations.Select(spec => WriteOperationBinding.Single((string)spec["op"]!, ResolveFoodOperation));
+    private static IPreparedWriteField ResolveFoodOperation(JObject operation)
     {
         var op = (string?)operation["op"];
         if (operation.Properties().Any(p => p.Name != "op" && p.Name != "policy" && p.Name != "pawn" && p.Name != "expect" && p.Name != "value" && p.Name != "evidence")) throw new ArgumentException("Invalid food policy operation.");
@@ -99,7 +53,7 @@ internal sealed partial class VerseWriteFieldResolver
             // Existing allowances can include latent UI entries and Mod defs.
             // Only newly allowed definitions must pass the native UI parent gate.
             if (def != null && retained.Contains(def)) continue;
-            if (def == null || !Official(def) || !(def.GetStatValueAbstract(StatDefOf.Nutrition, null) > 0)) throw new ArgumentException("New food allowances require a loaded official definition with positive native Nutrition: " + name);
+            if (def == null || !OfficialContent.Contains(def) || !(def.GetStatValueAbstract(StatDefOf.Nutrition, null) > 0)) throw new ArgumentException("New food allowances require a loaded official definition with positive native Nutrition: " + name);
         }
         if (obj["special_filters"] is not JObject specials || specials.Count != DefDatabase<SpecialThingFilterDef>.AllDefsListForReading.Count || specials.Properties().Any(p => p.Value.Type != JTokenType.Boolean || DefDatabase<SpecialThingFilterDef>.GetNamedSilentFail(p.Name) == null)) throw new ArgumentException("Complete native special-filter allowances required.");
         ValidateFoodRange(obj["hitpoints"]!, "hitpoints"); ValidateFoodRange(obj["mental_break_chance"]!, "mental_break_chance");
@@ -208,7 +162,7 @@ internal sealed partial class VerseWriteFieldResolver
         public JToken AppliedValue() => applied ?? throw new InvalidOperationException("Food-policy structure not applied.");
         public JToken UndoExpected() => Read();
         public IPreparedWriteField CreateUndo() => new FoodStructureUndo(this);
-        private sealed class FoodStructureUndo : IPreparedStructuralWrite
+        private sealed class FoodStructureUndo : IStructuralWriteField
         {
             private readonly FoodPolicyStructure owner;
             internal FoodStructureUndo(FoodPolicyStructure owner) { this.owner = owner; }
@@ -224,15 +178,15 @@ internal sealed partial class VerseWriteFieldResolver
                 if (!owner.addition && owner.source != null && list.Contains(owner.source)) list.Remove(owner.source);
                 owner.restored = false;
             }
-            public JToken AppliedValue() => Read(); public JToken UndoExpected() => Read(); public IPreparedWriteField CreateUndo() => throw new NotSupportedException();
+            public JToken AppliedValue() => Read();
         }
     }
-    private sealed class FoodStructureLedger : IPreparedWriteField
+    private sealed class FoodStructureLedger : IReadableWriteField
     {
         private readonly JObject recorded;
         internal FoodStructureLedger(JObject recorded) { this.recorded = (JObject)recorded.DeepClone(); }
         public string ObjectId => "food_policies"; public string Field => "food_policy_structure";
-        public bool IsDestroyed => false; public bool MayChangeByGame => true; public object? NativeTarget => null;
+        public bool IsDestroyed => false; public bool MayChangeByGame => true;
         public JToken Read()
         {
             var state = PolicyReadings.Structure();
@@ -251,11 +205,8 @@ internal sealed partial class VerseWriteFieldResolver
             }
             return state;
         }
-        public void Validate(JToken value) => throw new NotSupportedException();
-        public void Write(JToken value) => throw new NotSupportedException();
-        public void Restore(JToken value) => throw new NotSupportedException();
     }
-    internal IPreparedWriteField? ResolvePolicyLedger(string id, string field, object? target, JToken value)
+    public IReadableWriteField? ResolveLedger(string id, string field, object? target, JToken value)
     {
         if (field == "food_policy" && target is Pawn pawn && pawn.GetUniqueLoadID() == id && pawn.foodRestriction != null) return new FoodAssignment(pawn);
         if (field == "food_policy_content" && target is FoodPolicy policy && PolicyReadings.Id(policy) == id) return new FoodContentUndo(policy);

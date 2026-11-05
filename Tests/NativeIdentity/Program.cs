@@ -34,7 +34,8 @@ namespace RimWorld {
     internal class FoodRestrictionDatabase {internal List<FoodPolicy> AllFoodRestrictions=new();}
 }
 namespace Neko.RimWorld {
-    internal class NekoGameComponent {internal readonly NativeObjectIdentityRegistry NativeIdentities=new();}
+    internal class NekoGameComponent {internal readonly NekoSaveState Save=new();}
+    internal class NekoSaveState {internal readonly NativeObjectIdentityRegistry NativeIdentities=new();}
     internal static class PolicyReadings {internal static string Id(global::RimWorld.FoodPolicy policy)=>"food_policy:"+NativeObjectIdentities.Token(policy);}
     internal sealed class WriteLedger {internal void RemoveConfirmedDestroyed(Func<string,bool> predicate) { }}
     internal static class Program {
@@ -46,7 +47,7 @@ namespace Neko.RimWorld {
         private static List<Dictionary<string,string?>> Records()=>Verse.Scribe.Saved["nekoNativeObjectIdentities"];
         private static void Main(){
             var policy=new global::RimWorld.FoodPolicy("FoodPolicy_1");Verse.Current.Game.foodRestrictionDatabase.AllFoodRestrictions.Add(policy);var map=new Verse.Map();Verse.Find.Maps.Add(map);var area=new Verse.Area("Area_1");map.areaManager.AllAreas.Add(area);var zone=new Verse.Zone("Zone_1");map.zoneManager.AllZones.Add(zone);
-            var registry=Verse.Current.Game.Component.NativeIdentities;var policyToken=NativeObjectIdentities.Token(policy);var areaToken=registry.Token(area);var zoneToken=registry.Token(zone);Check(registry.Token(policy)==policyToken,"Same original object retains token");Check(new[]{policyToken,areaToken,zoneToken}.Distinct().Count()==3,"Different native objects have distinct tokens");
+            var registry=Verse.Current.Game.Component.Save.NativeIdentities;var policyToken=NativeObjectIdentities.Token(policy);var areaToken=registry.Token(area);var zoneToken=registry.Token(zone);Check(registry.Token(policy)==policyToken,"Same original object retains token");Check(new[]{policyToken,areaToken,zoneToken}.Distinct().Count()==3,"Different native objects have distinct tokens");
             Save(registry);Check(Records().Count==3,"All supported observed live objects saved");
             var loadedPolicy=new global::RimWorld.FoodPolicy("FoodPolicy_1");var loadedArea=new Verse.Area("Area_1");var loadedZone=new Verse.Zone("Zone_1");Verse.Current.Game=new();Verse.Current.Game.foodRestrictionDatabase.AllFoodRestrictions.Add(loadedPolicy);Verse.Find.Maps.Clear();var loadedMap=new Verse.Map();Verse.Find.Maps.Add(loadedMap);loadedMap.areaManager.AllAreas.Add(loadedArea);loadedMap.zoneManager.AllZones.Add(loadedZone);Verse.Scribe.Bindings=new(){{"FoodPolicy_1",loadedPolicy},{"Area_1",loadedArea},{"Zone_1",loadedZone}};
             var loaded=Load();Check(loaded.Token(loadedPolicy)==policyToken,"Food-policy token survives native object reconstruction on save reload");Check(loaded.Token(loadedArea)==areaToken,"Area token survives save reload");Check(loaded.Token(loadedZone)==zoneToken,"Zone token survives save reload");
@@ -71,11 +72,11 @@ namespace Neko.RimWorld {
             var original=new global::RimWorld.FoodPolicy("FoodPolicy_Identity_77"){Label="Before"};Verse.Current.Game.foodRestrictionDatabase.AllFoodRestrictions.Add(original);
             string stable=PolicyReadings.Id(original),oldNative=original.GetUniqueLoadID();var index=new WriteTargetIndex(_=>false);index.BindMany(new[]{new KeyValuePair<string,object?>(stable,original)});var refs=new WriteTargetReferences();
             original.Label="After";Check(original.GetUniqueLoadID()!=oldNative&&PolicyReadings.Id(original)==stable,"Renaming changes the real Scribe ID but not the saved-token business ID");
-            Verse.Scribe.mode=Verse.LoadSaveMode.Saving;Verse.Current.Game.Component.NativeIdentities.ExposeData();refs.ExposeData(index);Verse.Scribe.mode=Verse.LoadSaveMode.Inactive;
+            Verse.Scribe.mode=Verse.LoadSaveMode.Saving;Verse.Current.Game.Component.Save.NativeIdentities.ExposeData();refs.ExposeData(index);Verse.Scribe.mode=Verse.LoadSaveMode.Inactive;
             var saved=Verse.Scribe.Saved["nekoWriteTargets"].Single();Check(saved["id"]==stable&&saved["target"]==original.GetUniqueLoadID(),"Ledger target saves stable business key separately from current native label-bearing Scribe ref");
             var restored=new global::RimWorld.FoodPolicy("FoodPolicy_Identity_77"){Label="After"};Verse.Current.Game=new();Verse.Current.Game.foodRestrictionDatabase.AllFoodRestrictions.Add(restored);Verse.Scribe.Bindings[restored.GetUniqueLoadID()]=restored;
             var restoredRefs=new WriteTargetReferences();var restoredIndex=new WriteTargetIndex(_=>false);
-            foreach(var mode in new[]{Verse.LoadSaveMode.LoadingVars,Verse.LoadSaveMode.ResolvingCrossRefs,Verse.LoadSaveMode.PostLoadInit}){Verse.Scribe.mode=mode;Verse.Current.Game.Component.NativeIdentities.ExposeData();restoredRefs.ExposeData(restoredIndex);}Verse.Scribe.mode=Verse.LoadSaveMode.Inactive;
+            foreach(var mode in new[]{Verse.LoadSaveMode.LoadingVars,Verse.LoadSaveMode.ResolvingCrossRefs,Verse.LoadSaveMode.PostLoadInit}){Verse.Scribe.mode=mode;Verse.Current.Game.Component.Save.NativeIdentities.ExposeData();restoredRefs.ExposeData(restoredIndex);}Verse.Scribe.mode=Verse.LoadSaveMode.Inactive;
             Check(PolicyReadings.Id(restored)==stable&&ReferenceEquals(restoredIndex.Find(stable),restored),"Restored identity precedes business-key binding of the exact policy Scribe reference");
             Check(restoredIndex.Find(oldNative)==null&&restoredIndex.Find(restored.GetUniqueLoadID())==null,"Mutable native IDs do not become implicit API aliases");
             restored.Label="Again";Check(PolicyReadings.Id(restored)==stable&&ReferenceEquals(restoredIndex.Find(stable),restored),"Another native UI rename retains the restored ledger original");

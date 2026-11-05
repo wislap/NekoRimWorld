@@ -29,12 +29,12 @@ internal static class TradeReadings
         var maps = mapSelector == null ? Find.Maps.Where(map => !map.Disposed) : new[] { GameWorldReferences.ResolveMap(mapSelector) };
         foreach (var map in maps)
         {
-            foreach (var pawn in map.mapPawns.AllPawnsSpawned.Where(pawn => pawn.trader?.traderKind != null && pawn.Faction != Faction.OfPlayer && !pawn.Position.Fogged(map)))
+            foreach (var pawn in map.mapPawns.AllPawnsSpawned.Where(pawn => pawn.trader?.traderKind != null && !NativeFactions.IsPlayer(pawn.Faction) && !pawn.Position.Fogged(map)))
                 yield return new Partner { Trader = pawn, Id = pawn.GetUniqueLoadID(), Name = pawn.LabelShort, Channel = "map_trader", Map = map };
             foreach (var ship in map.passingShipManager.passingShips.OfType<TradeShip>().Where(ship => ship.WasAnnounced && !ship.Departed))
                 yield return new Partner { Trader = ship, Id = ship.GetUniqueLoadID(), Name = ship.TraderName, Channel = "orbital", Map = map };
         }
-        foreach (var settlement in PlanetReadings.KnownObjects().OfType<Settlement>().Where(item => item.Faction != null && !item.Faction.IsPlayer && item.TraderKind != null && item.EverVisited))
+        foreach (var settlement in PlanetReadings.KnownObjects().OfType<Settlement>().Where(item => item.Faction != null && !NativeFactions.IsPlayer(item.Faction) && item.TraderKind != null && item.EverVisited))
             yield return new Partner { Trader = settlement, Id = settlement.GetUniqueLoadID(), Name = settlement.Label, Channel = "settlement", Settlement = settlement };
     }
 
@@ -143,7 +143,7 @@ internal static class TradeReadings
         else throw ReadContext.Error("invalid_arguments", "A negotiator requires id or name.");
         IEnumerable<Pawn> people = Find.Maps.SelectMany(map => map.mapPawns.AllPawnsSpawned).Concat(PlanetReadings.PlayerCaravans().SelectMany(caravan => caravan.PawnsListForReading));
         if (negotiatorSelector["map"] != null) { var map = GameWorldReferences.ResolveMap((string?)negotiatorSelector["map"]); people = people.Where(pawn => pawn.Map == map); }
-        var negotiator = ColonyReadContract.Select(people.Where(pawn => pawn.Faction == Faction.OfPlayer).Distinct(), negotiatorArgs, pawn => pawn.GetUniqueLoadID(), pawn => pawn.LabelShort).Single();
+        var negotiator = ColonyReadContract.Select(people.Where(pawn => NativeFactions.IsPlayer(pawn.Faction)).Distinct(), negotiatorArgs, pawn => pawn.GetUniqueLoadID(), pawn => pawn.LabelShort).Single();
         var stock = ExistingStock(partner, out bool materialized);
         if (!(args["buy"] is JArray buys && buys.Count > 0) && !(args["sell"] is JArray sells && sells.Count > 0)) throw ReadContext.Error("invalid_arguments", "Specify a buy or sell basket.");
         foreach (string direction in new[] { "buy", "sell" })

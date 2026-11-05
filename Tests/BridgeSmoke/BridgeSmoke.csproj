@@ -23,6 +23,7 @@
     <Compile Include="../../Source/NativePauseWindowRecords.cs" Link="NativePauseWindowRecords.cs" />
     <None Include="../fixtures/colony-events-v1/vectors.json" Link="colony-events-v1/vectors.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../../Source/NativeWriteSafety.cs" Link="NativeWriteSafety.cs" />
+    <Compile Include="../../Source/WriteFields.cs" Link="WriteFields.cs" />
     <Compile Include="../../Source/AtomicWriteOperation.cs" Link="AtomicWriteOperation.cs" />
     <Compile Include="../../Source/WriteLedger.cs" Link="WriteLedger.cs" />
     <Compile Include="../../Source/WriteTargetIndex.cs" Link="WriteTargetIndex.cs" />
@@ -60,7 +61,7 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Compile Include="../../Source/ObservationPolicies.cs" Link="ObservationPolicies.cs" />
     <Compile Include="../../Source/ColonyWriteContract.cs" Link="ColonyWriteContract.cs" />
-    <Compile Include="../../Source/VerseWriteCatalog.cs" Link="VerseWriteCatalog.cs" />
+    <Compile Include="../../Source/WriteCatalog.cs" Link="WriteCatalog.cs" />
     <None Include="../fixtures/colony-write-v1/catalog.json" Link="colony-write-v1/catalog.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="..\..\Source\Protocol.cs" Link="Protocol.cs" />
     <Compile Include="..\..\Source\BridgeRuntime.cs" Link="BridgeRuntime.cs" />

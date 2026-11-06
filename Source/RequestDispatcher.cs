@@ -180,8 +180,9 @@ internal sealed class RequestDispatcher
             activeRequest = request; activeSession = sampledSession;
             return;
         }
-        if (Array.IndexOf(ColonyManagementContract.Operations, request.Payload.Operation) >= 0 || Array.IndexOf(ColonyReadContract.Operations, request.Payload.Operation) >= 0 || request.Payload.Operation == SituationSnapshotContract.Operation || request.Payload.Operation == "query" || Array.IndexOf(WorldObservationContract.Operations, request.Payload.Operation) >= 0 || Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0) {
+        if (Array.IndexOf(ColonyManagementContract.Operations, request.Payload.Operation) >= 0 || Array.IndexOf(ColonyReadContract.Operations, request.Payload.Operation) >= 0 || request.Payload.Operation == SituationSnapshotContract.Operation || request.Payload.Operation == ColonyVitalsContract.Operation || request.Payload.Operation == "query" || Array.IndexOf(WorldObservationContract.Operations, request.Payload.Operation) >= 0 || Array.IndexOf(ActionInspectionContract.Operations, request.Payload.Operation) >= 0) {
             activeOperation = request.Payload.Operation == SituationSnapshotContract.Operation ? new SituationSnapshot(request.Payload.Arguments!, sampledSession)
+                : request.Payload.Operation == ColonyVitalsContract.Operation ? new ColonyVitals(request.Payload.Arguments!, sampledSession)
                 : Array.IndexOf(ColonyReadContract.Operations, request.Payload.Operation) >= 0 ? new ColonyReadOperation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession)
                 : Array.IndexOf(ColonyManagementContract.Operations, request.Payload.Operation) >= 0 ? new ColonyManagementOperation(request.Payload.Operation!, request.Payload.Arguments!, sampledSession)
                 : request.Payload.Operation == "query" ? QueryExecutor.BeginPublicQuery(request.Payload.Arguments!,sampledSession)

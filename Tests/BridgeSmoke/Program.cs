@@ -36,6 +36,7 @@ internal static class Program
             WriteLedgerTests.Run();
             LedgerSelectionTests.Run();
             SituationSnapshotContractTests.Run();
+            ColonyVitalsContractTests.Run();
             ColonyReadContractTests.Run();
             ColonyManagementTests.Run();
             SpatialCellGroupsTests.Run();

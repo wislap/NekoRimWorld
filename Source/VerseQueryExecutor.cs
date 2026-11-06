@@ -15,6 +15,7 @@ internal static class QueryExecutor
         if (operation == "query_catalog" && outcome.Data != null) {
             outcome.Data["native_behavior"] = ActionInspectionContract.Catalog();
             outcome.Data["situation_snapshot"] = SituationSnapshotContract.Catalog();
+            outcome.Data["colony_vitals"] = ColonyVitalsContract.Catalog();
             outcome.Data["colony_state"] = ColonyReadContract.Catalog();
             outcome.Data["colony_management"] = ColonyManagementContract.Catalog();
             outcome.Data["colony_observation"] = ColonyObservationContract.Catalog();

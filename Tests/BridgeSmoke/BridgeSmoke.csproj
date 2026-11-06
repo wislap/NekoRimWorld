@@ -29,6 +29,7 @@
     <Compile Include="../../Source/WriteTargetIndex.cs" Link="WriteTargetIndex.cs" />
     <Compile Include="../../Source/FrameQueryOperation.cs" Link="FrameQueryOperation.cs" />
     <Compile Include="../../Source/SituationSnapshotContract.cs" Link="SituationSnapshotContract.cs" />
+    <Compile Include="../../Source/ColonyVitalsContract.cs" Link="ColonyVitalsContract.cs" />
     <Compile Include="../../Source/ColonyReadContract.cs" Link="ColonyReadContract.cs" />
     <Compile Include="../../Source/ColonyManagementContract.cs" Link="ColonyManagementContract.cs" />
     <Compile Include="../../Source/SpatialCellGroups.cs" Link="SpatialCellGroups.cs" />

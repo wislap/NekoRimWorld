@@ -23,6 +23,7 @@ the detailed public and world contract versions.
 |survey_space / inspect_route / inspect_state|world_observation.v2.3|
 |inspect_actions / inspect_threats|native_behavior.v1|
 |read_situation|situation_snapshot.v1; internal consultation background, separate catalog key and no model tool|
+|read_colony_vitals|colony_vitals.v1; internal planner background, catalog key `colony_vitals`, no model tool and not advertised in hello|
 |inspect_planet / inspect_factions / inspect_quests / inspect_trade / inspect_research / inspect_resources|colony_state.v1; scoped native facts|
 |evaluate_journey / evaluate_trade|colony_state.v1; native read-only calculations|
 
@@ -32,6 +33,13 @@ cached alerts with observed culprit facts, actionable quests, and recent archive
 events. Per-section availability and original facts remain explicit. Alert report
 culprits are observed from the UI's existing native calculation; this read never
 recalculates alerts. Projection and consultation snapshot reuse belong to the plugin.
+
+`read_colony_vitals` accepts only optional `map`. It returns one sample of four
+domains (`life`, `food`, `shelter`, `labor`) for the native FreeColonistsSpawned
+population, each with `status`, `numbers`, `method` (the native source and
+caliber of every number), and at most 8 `worst` rows plus `worst_omitted`. It
+reports facts only: levels, thresholds, freshness and write suggestions belong to
+the plugin. A failed domain is `unavailable` with its error; the others remain.
 
 Only this operation set is dispatched. Other names return unsupported_operation;
 there is no compatibility execution route. Internal typed getter schema is also

@@ -214,5 +214,3 @@ internal sealed class PolicyWriteFields : IWriteFieldSet
         return null;
     }
 }
-
-

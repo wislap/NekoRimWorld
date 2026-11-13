@@ -16,6 +16,7 @@ internal static class ColonyVitalsFood
     {
         double ready = 0, raw = 0, forbidden = 0, unroofed = 0;
         int forbiddenUnits = 0, stacks = 0;
+        double? minUnroofedHp = null;
         var flagged = new List<(double nutrition, double hp, JObject row)>();
         foreach (var thing in map.listerThings.ThingsInGroup(ThingRequestGroup.FoodSourceNotPlantOrTree).ToArray()) {
             if (!Edible(thing, map)) continue;
@@ -27,7 +28,7 @@ internal static class ColonyVitalsFood
             if (isForbidden) { forbidden += nutrition; forbiddenUnits += thing.stackCount; }
             else {
                 if (thing.def.ingestible.IsMeal) ready += nutrition; else raw += nutrition;
-                if (!roofed) unroofed += nutrition;
+                if (!roofed) { unroofed += nutrition; minUnroofedHp = System.Math.Min(minUnroofedHp ?? 1.0, hp); }
             }
             var why = new JArray();
             if (isForbidden) why.Add("forbidden");
@@ -47,6 +48,7 @@ internal static class ColonyVitalsFood
             ["days_edible"] = ColonyVitalsContract.Days(ready + raw, need), ["days_ready"] = ColonyVitalsContract.Days(ready, need),
             ["ready_nutrition"] = System.Math.Round(ready, 2), ["raw_nutrition"] = System.Math.Round(raw, 2),
             ["unroofed_nutrition"] = System.Math.Round(unroofed, 2),
+            ["min_unroofed_hit_points_ratio"] = minUnroofedHp == null ? null : System.Math.Round(minUnroofedHp.Value, 2),
             ["forbidden_nutrition"] = System.Math.Round(forbidden, 2), ["forbidden_units"] = forbiddenUnits,
             ["daily_need"] = System.Math.Round(need, 3), ["stacks"] = stacks };
         domain["numbers"] = numbers;
@@ -58,6 +60,7 @@ internal static class ColonyVitalsFood
             ["daily_need"] = "Sum over colonists of native Need_Food.FoodFallPerTickAssumingCategory(Fed) x ticks per day.",
             ["days_*"] = "unforbidden nutrition / daily_need; no reachability, hauling or cooking loss. Null when daily_need is 0.",
             ["unroofed_nutrition"] = "Unforbidden edible nutrition on cells without a roof (map.roofGrid.Roofed), where items deteriorate. No time-to-loss estimate: weather changes the rate.",
+            ["min_unroofed_hit_points_ratio"] = "Lowest HitPoints / MaxHitPoints among those unroofed unforbidden stacks; null when none.",
             ["worst"] = "Forbidden, deteriorating unroofed or rotting within 2 days; nutrition at stake descending, then hit points ascending." };
         ColonyVitalsContract.SetWorst(domain, flagged.OrderByDescending(f => f.nutrition).ThenBy(f => f.hp).Select(f => f.row));
         foreach (var step in Crops(map, numbers, domain)) yield return step;
